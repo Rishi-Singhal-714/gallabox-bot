@@ -25,11 +25,9 @@ const openai = new OpenAI({
 // Store conversations
 let conversations = {};
 
-// ZULU CLUB INFORMATION
+// ZULU CLUB INFORMATION with categories and links
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
-
-We all love visiting a premium store — exploring new arrivals, discovering chic home pieces, finding stylish outfits, or picking adorable toys for kids. But we know making time for mall visits isn't always easy. Traffic, work, busy schedules… it happens.
 
 Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
 
@@ -46,19 +44,106 @@ Browse and shop high-quality lifestyle products across categories you love:
 
 And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
 
-We're bringing the magic of premium in-store shopping to your home — curated, fast, and elevated.
-
 Now live in Gurgaon
 Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
+
+// Category structure with dummy links
+const CATEGORIES = {
+  "Women's Fashion": {
+    link: "app.zulu.club/categories/womens-fashion",
+    subcategories: {
+      "Dresses": "app.zulu.club/categories/womens-fashion/dresses",
+      "Tops": "app.zulu.club/categories/womens-fashion/tops",
+      "Co-ords": "app.zulu.club/categories/womens-fashion/co-ords",
+      "Winterwear": "app.zulu.club/categories/womens-fashion/winterwear",
+      "Loungewear": "app.zulu.club/categories/womens-fashion/loungewear",
+      "Ethnic Wear": "app.zulu.club/categories/womens-fashion/ethnic-wear"
+    }
+  },
+  "Men's Fashion": {
+    link: "app.zulu.club/categories/mens-fashion",
+    subcategories: {
+      "Shirts": "app.zulu.club/categories/mens-fashion/shirts",
+      "Tees": "app.zulu.club/categories/mens-fashion/tees",
+      "Jackets": "app.zulu.club/categories/mens-fashion/jackets",
+      "Athleisure": "app.zulu.club/categories/mens-fashion/athleisure",
+      "Formal Wear": "app.zulu.club/categories/mens-fashion/formal-wear",
+      "Casual Wear": "app.zulu.club/categories/mens-fashion/casual-wear"
+    }
+  },
+  "Kids": {
+    link: "app.zulu.club/categories/kids",
+    subcategories: {
+      "Clothing": "app.zulu.club/categories/kids/clothing",
+      "Toys": "app.zulu.club/categories/kids/toys",
+      "Learning Kits": "app.zulu.club/categories/kids/learning-kits",
+      "Accessories": "app.zulu.club/categories/kids/accessories",
+      "Baby Care": "app.zulu.club/categories/kids/baby-care"
+    }
+  },
+  "Footwear": {
+    link: "app.zulu.club/categories/footwear",
+    subcategories: {
+      "Sneakers": "app.zulu.club/categories/footwear/sneakers",
+      "Heels": "app.zulu.club/categories/footwear/heels",
+      "Flats": "app.zulu.club/categories/footwear/flats",
+      "Sandals": "app.zulu.club/categories/footwear/sandals",
+      "Kids Shoes": "app.zulu.club/categories/footwear/kids-shoes",
+      "Sports Shoes": "app.zulu.club/categories/footwear/sports-shoes"
+    }
+  },
+  "Home Decor": {
+    link: "app.zulu.club/categories/home-decor",
+    subcategories: {
+      "Showpieces": "app.zulu.club/categories/home-decor/showpieces",
+      "Vases": "app.zulu.club/categories/home-decor/vases",
+      "Lamps": "app.zulu.club/categories/home-decor/lamps",
+      "Aroma Decor": "app.zulu.club/categories/home-decor/aroma-decor",
+      "Wall Art": "app.zulu.club/categories/home-decor/wall-art",
+      "Home Accessories": "app.zulu.club/categories/home-decor/accessories"
+    }
+  },
+  "Beauty & Self-Care": {
+    link: "app.zulu.club/categories/beauty-self-care",
+    subcategories: {
+      "Skincare": "app.zulu.club/categories/beauty-self-care/skincare",
+      "Bodycare": "app.zulu.club/categories/beauty-self-care/bodycare",
+      "Fragrances": "app.zulu.club/categories/beauty-self-care/fragrances",
+      "Grooming": "app.zulu.club/categories/beauty-self-care/grooming",
+      "Makeup": "app.zulu.club/categories/beauty-self-care/makeup",
+      "Hair Care": "app.zulu.club/categories/beauty-self-care/hair-care"
+    }
+  },
+  "Fashion Accessories": {
+    link: "app.zulu.club/categories/fashion-accessories",
+    subcategories: {
+      "Bags": "app.zulu.club/categories/fashion-accessories/bags",
+      "Jewelry": "app.zulu.club/categories/fashion-accessories/jewelry",
+      "Watches": "app.zulu.club/categories/fashion-accessories/watches",
+      "Sunglasses": "app.zulu.club/categories/fashion-accessories/sunglasses",
+      "Belts": "app.zulu.club/categories/fashion-accessories/belts",
+      "Wallets": "app.zulu.club/categories/fashion-accessories/wallets"
+    }
+  },
+  "Lifestyle Gifting": {
+    link: "app.zulu.club/categories/lifestyle-gifting",
+    subcategories: {
+      "Curated Gift Sets": "app.zulu.club/categories/lifestyle-gifting/gift-sets",
+      "Home Decor Gifts": "app.zulu.club/categories/lifestyle-gifting/home-decor",
+      "Personalized Gifts": "app.zulu.club/categories/lifestyle-gifting/personalized",
+      "Occasion Gifts": "app.zulu.club/categories/lifestyle-gifting/occasion",
+      "Corporate Gifting": "app.zulu.club/categories/lifestyle-gifting/corporate"
+    }
+  }
+};
 
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
     console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
     
-    // Gallabox API payload structure
     const payload = {
       channelId: gallaboxConfig.channelId,
       channelType: "whatsapp",
@@ -73,8 +158,6 @@ async function sendMessage(to, name, message) {
         }
       }
     };
-    
-    console.log('📦 Sending payload:', JSON.stringify(payload, null, 2));
     
     const response = await axios.post(
       `${gallaboxConfig.baseUrl}/messages/whatsapp`,
@@ -101,6 +184,59 @@ async function sendMessage(to, name, message) {
   }
 }
 
+// Function to detect if message is about products/categories
+function isProductQuery(message) {
+  const productKeywords = [
+    'product', 'products', 'category', 'categories', 'what do you have',
+    'what do you sell', 'items', 'collection', 'range', 'offer',
+    'shopping', 'buy', 'purchase', 'shop', 'store', 'fashion',
+    'clothes', 'clothing', 'dress', 'shirt', 'footwear', 'shoes',
+    'home', 'decor', 'beauty', 'accessories', 'gift', 'gifting',
+    'kids', 'children', 'men', 'women'
+  ];
+  
+  const msg = message.toLowerCase();
+  return productKeywords.some(keyword => msg.includes(keyword));
+}
+
+// Function to get category response with links
+function getCategoryResponse(userMessage) {
+  const msg = userMessage.toLowerCase();
+  
+  // Check for specific category mentions
+  for (const [category, data] of Object.entries(CATEGORIES)) {
+    if (msg.includes(category.toLowerCase()) || 
+        Object.keys(data.subcategories).some(sub => msg.includes(sub.toLowerCase()))) {
+      
+      // Return specific category with subcategories
+      let response = `🛍️ *${category}* \n\n`;
+      response += `Explore our ${category.toLowerCase()} collection:\n`;
+      response += `🔗 ${data.link}\n\n`;
+      response += `*Subcategories:*\n`;
+      
+      Object.entries(data.subcategories).forEach(([sub, link]) => {
+        response += `• ${sub}: ${link}\n`;
+      });
+      
+      response += `\nVisit the links to browse products! 🛒`;
+      return response;
+    }
+  }
+  
+  // General product query - show all categories
+  let response = `🛍️ *Our Product Categories* \n\n`;
+  response += `We have an amazing range of lifestyle products! Here are our main categories:\n\n`;
+  
+  Object.entries(CATEGORIES).forEach(([category, data]) => {
+    response += `• *${category}*: ${data.link}\n`;
+  });
+  
+  response += `\n💡 *Pro Tip:* You can ask about specific categories like "women's fashion" or "home decor" and I'll show you the subcategories!\n\n`;
+  response += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*`;
+  
+  return response;
+}
+
 // AI Chat Functionality
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -108,6 +244,11 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
   
   try {
+    // First check if it's a product query
+    if (isProductQuery(userMessage)) {
+      return getCategoryResponse(userMessage);
+    }
+    
     const messages = [];
     
     // System message with Zulu Club information
@@ -115,21 +256,24 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       role: "system",
       content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
       
-      Use ONLY the following information about Zulu Club to answer user questions:
-
       ZULU CLUB INFORMATION:
       ${companyInfo}
 
+      CATEGORIES AND LINKS:
+      ${Object.entries(CATEGORIES).map(([cat, data]) => 
+        `${cat}: ${data.link} (Subcategories: ${Object.keys(data.subcategories).join(', ')})`
+      ).join('\n')}
+
       IMPORTANT GUIDELINES:
-      1. Only answer questions based on the Zulu Club information provided above
+      1. If user asks about products, categories, shopping, or what we sell, provide the category list with links
       2. Be enthusiastic, helpful, and customer-focused
-      3. If asked about something not covered in the information, politely say: "I'm not sure about that, but I can tell you about Zulu Club's shopping experience, product categories, delivery, or locations!"
-      4. Highlight key benefits: 100-minute delivery, try-at-home, easy returns, premium products
-      5. Mention we're currently available in Gurgaon
-      6. Direct people to visit zulu.club or our pop-up stores at AIPL Joy Street & AIPL Central
-      7. Keep responses conversational and friendly
-      8. Don't make up any information not in the provided context
-      9. Keep responses under 300 characters for WhatsApp
+      3. Highlight key benefits: 100-minute delivery, try-at-home, easy returns, premium products
+      4. Mention we're currently available in Gurgaon
+      5. Direct people to visit zulu.club or our pop-up stores at AIPL Joy Street & AIPL Central
+      6. Keep responses conversational and friendly
+      7. For product queries, mention specific categories and encourage browsing
+      8. Keep responses under 300 characters for WhatsApp
+      9. Use emojis to make it engaging
       `
     };
     
@@ -137,7 +281,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     
     // Add conversation history if available
     if (conversationHistory && conversationHistory.length > 0) {
-      const recentHistory = conversationHistory.slice(-6); // Last 6 messages
+      const recentHistory = conversationHistory.slice(-6);
       recentHistory.forEach(msg => {
         if (msg.role && msg.content) {
           messages.push({
@@ -157,7 +301,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 150,
+      max_tokens: 200,
       temperature: 0.7
     });
     
@@ -165,6 +309,10 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
+    // Fallback to category response for product queries
+    if (isProductQuery(userMessage)) {
+      return getCategoryResponse(userMessage);
+    }
     return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery! What would you like to know?";
   }
 }
@@ -204,7 +352,11 @@ async function handleMessage(sessionId, userMessage) {
     
   } catch (error) {
     console.error('❌ Error handling message:', error);
-    return "Hello! Thanks for reaching out to Zulu Club. I'm currently having some technical difficulties. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
+    // Fallback response
+    if (isProductQuery(userMessage)) {
+      return getCategoryResponse(userMessage);
+    }
+    return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
 }
 
@@ -257,20 +409,29 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '1.0 - Integrated AI',
+    version: '2.0 - Smart Product Queries',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
-      zulu_club: 'Product information and customer service',
-      persistent_conversations: 'Session-based chat history',
+      product_categories: '8 main categories with subcategories',
+      smart_links: 'Dummy category links for browsing',
       whatsapp_integration: 'Gallabox API integration'
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
       test_message: 'POST /send-test-message',
-      zulu_info: 'GET /zulu-info'
+      categories: 'GET /categories'
     },
     timestamp: new Date().toISOString()
+  });
+});
+
+// Get all categories with links
+app.get('/categories', (req, res) => {
+  res.json({
+    categories: CATEGORIES,
+    total_categories: Object.keys(CATEGORIES).length,
+    total_subcategories: Object.values(CATEGORIES).reduce((acc, cat) => acc + Object.keys(cat.subcategories).length, 0)
   });
 });
 
@@ -285,7 +446,7 @@ app.post('/send-test-message', async (req, res) => {
         example: { 
           "to": "918368127760", 
           "name": "Rishi",
-          "message": "Hello test" 
+          "message": "What products do you have?" 
         }
       });
     }
@@ -310,60 +471,21 @@ app.post('/send-test-message', async (req, res) => {
   }
 });
 
-// Get Zulu Club information
-app.get('/zulu-info', (req, res) => {
-  res.json({
-    company_name: "Zulu Club",
-    description: "Premium lifestyle shopping experience",
-    features: [
-      "100-minute delivery",
-      "Try-at-home service", 
-      "Easy returns",
-      "Premium products",
-      "Multiple categories"
-    ],
-    categories: [
-      "Women's Fashion",
-      "Men's Fashion", 
-      "Kids",
-      "Footwear",
-      "Home Decor",
-      "Beauty & Self-Care",
-      "Fashion Accessories", 
-      "Lifestyle Gifting"
-    ],
-    locations: ["Gurgaon"],
-    popup_stores: ["AIPL Joy Street", "AIPL Central"],
-    website: "zulu.club"
-  });
-});
-
-// Get conversation history for a session (for debugging)
-app.get('/conversation/:sessionId', (req, res) => {
-  const sessionId = req.params.sessionId;
-  const conversation = conversations[sessionId];
+// Get specific category info
+app.get('/categories/:categoryName', (req, res) => {
+  const categoryName = req.params.categoryName.toLowerCase();
+  const category = Object.entries(CATEGORIES).find(([name]) => 
+    name.toLowerCase().replace(/\s+/g, '-') === categoryName
+  );
   
-  if (!conversation) {
-    return res.status(404).json({ error: 'Conversation not found' });
+  if (!category) {
+    return res.status(404).json({ error: 'Category not found' });
   }
   
   res.json({
-    sessionId: sessionId,
-    history: conversation.history,
-    message_count: conversation.history.length
+    category: category[0],
+    data: category[1]
   });
-});
-
-// Clear conversation history
-app.delete('/conversation/:sessionId', (req, res) => {
-  const sessionId = req.params.sessionId;
-  
-  if (conversations[sessionId]) {
-    delete conversations[sessionId];
-    res.json({ status: 'success', message: 'Conversation cleared' });
-  } else {
-    res.status(404).json({ error: 'Conversation not found' });
-  }
 });
 
 // Export for Vercel
