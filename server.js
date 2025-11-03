@@ -51,20 +51,23 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('Received webhook:', JSON.stringify(req.body, null, 2));
     
-    // Extract message data from webhook
-    const { contact, message } = req.body;
+    // Gallabox webhook structure ke hisab se data extract karo
+    const webhookData = req.body;
     
-    if (message && message.text && message.text.body) {
-      const userMessage = message.text.body.toLowerCase().trim();
-      const userPhone = contact.phone;
+    // Message type check karo
+    if (webhookData.type === 'message' && webhookData.message) {
+      const userMessage = webhookData.message.text?.body?.toLowerCase().trim();
+      const userPhone = webhookData.contact?.phone;
       
-      console.log(`Received message from ${userPhone}: ${userMessage}`);
-      
-      // Check if user said "hi"
-      if (userMessage === 'hi' || userMessage === 'hello' || userMessage === 'hey') {
-        // Send "hi" response
-        await sendMessage(userPhone, 'Hi! 👋 How can I help you today?');
-        console.log(`Sent response to ${userPhone}`);
+      if (userMessage && userPhone) {
+        console.log(`Received message from ${userPhone}: ${userMessage}`);
+        
+        // Check if user said "hi"
+        if (userMessage === 'hi' || userMessage === 'hello' || userMessage === 'hey' || userMessage === 'hii') {
+          // Send "hi" response
+          await sendMessage(userPhone, 'Hi! 👋 How can I help you today?');
+          console.log(`Sent response to ${userPhone}`);
+        }
       }
     }
     
