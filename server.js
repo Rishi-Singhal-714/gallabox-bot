@@ -1,16 +1,13 @@
-require('dotenv').config();
 const express = require('express');
-const bodyParser = require('body-parser');
 const axios = require('axios');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Gallabox API configuration
+// Gallabox API configuration - use environment variables
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
   apiKey: process.env.GALLABOX_API_KEY,
@@ -41,7 +38,7 @@ async function sendMessage(to, message) {
       }
     );
     
-    console.log('Message sent successfully:', response.data);
+    console.log('Message sent successfully');
     return response.data;
   } catch (error) {
     console.error('Error sending message:', error.response?.data || error.message);
@@ -81,7 +78,7 @@ app.post('/webhook', async (req, res) => {
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    status: 'Server is running', 
+    status: 'Server is running on Vercel', 
     service: 'Gallabox WhatsApp Bot',
     endpoints: {
       webhook: 'POST /webhook',
@@ -106,9 +103,5 @@ app.post('/send-test-message', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}`);
-  console.log(`📍 Webhook endpoint: http://localhost:${PORT}/webhook`);
-});
+// Export for Vercel
+module.exports = app;
