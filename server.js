@@ -51,27 +51,31 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('Received webhook:', JSON.stringify(req.body, null, 2));
     
-    // Gallabox webhook structure ke hisab se data extract karo
     const webhookData = req.body;
     
-    // Message type check karo
-    if (webhookData.type === 'message' && webhookData.message) {
-      const userMessage = webhookData.message.text?.body?.toLowerCase().trim();
-      const userPhone = webhookData.contact?.phone;
+    // Extract message and contact info from Gallabox webhook
+    const userMessage = webhookData.whatsapp?.text?.body?.toLowerCase().trim();
+    const userPhone = webhookData.whatsapp?.from; // This is the user's phone number
+    const userName = webhookData.contact?.name || 'there';
+    
+    console.log(`Received message from ${userPhone} (${userName}): ${userMessage}`);
+    
+    if (userMessage && userPhone) {
+      // Check if user said "hi"
+      if (userMessage === 'hi' || userMessage === 'hello' || userMessage === 'hey' || userMessage === 'hii') {
+        // Send welcome response
+        const welcomeMessage = `Hi ${userName}! 👋 Welcome! How can I help you today?`;
+        await sendMessage(userPhone, welcomeMessage);
+        console.log(`Sent welcome response to ${userPhone}`);
+      }
       
-      if (userMessage && userPhone) {
-        console.log(`Received message from ${userPhone}: ${userMessage}`);
-        
-        // Check if user said "hi"
-        if (userMessage === 'hi' || userMessage === 'hello' || userMessage === 'hey' || userMessage === 'hii') {
-          // Send "hi" response
-          await sendMessage(userPhone, 'Hi! 👋 How can I help you today?');
-          console.log(`Sent response to ${userPhone}`);
-        }
+      // You can add more commands here
+      else if (userMessage === 'help') {
+        await sendMessage(userPhone, `Here are available commands:\n- hi: Get welcome message\n- help: Show this help`);
       }
     }
     
-    res.status(200).json({ status: 'success' });
+    res.status(200).json({ status: 'success', message: 'Webhook processed' });
   } catch (error) {
     console.error('Webhook error:', error);
     res.status(500).json({ status: 'error', message: error.message });
@@ -86,7 +90,8 @@ app.get('/', (req, res) => {
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /'
-    }
+    },
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -99,11 +104,20 @@ app.post('/send-test-message', async (req, res) => {
       return res.status(400).json({ error: 'Missing "to" or "message" in request body' });
     }
     
-    const result = await sendMessage(to, message);
+    const result = await sendMessage(to, message || 'Test message from server');
     res.json({ status: 'success', data: result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Get webhook info
+app.get('/webhook-info', (req, res) => {
+  res.json({
+    webhook_url: `${req.protocol}://${req.get('host')}/webhook`,
+    method: 'POST',
+    content_type: 'application/json'
+  });
 });
 
 // Export for Vercel
