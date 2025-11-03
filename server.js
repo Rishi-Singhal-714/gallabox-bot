@@ -17,19 +17,23 @@ const gallaboxConfig = {
 };
 
 // Function to send message via Gallabox API
-async function sendMessage(to, message) {
+async function sendMessage(to, name, message) {
   try {
-    console.log(`📤 Attempting to send message to ${to}: ${message}`);
+    console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
     
     // ✅ CORRECT Gallabox API payload structure
     const payload = {
       channelId: gallaboxConfig.channelId,
+      channelType: "whatsapp", // ✅ Required field
       recipient: {
-        phone: to  // ✅ This is the correct field name
+        name: name,           // ✅ Required field
+        phone: to             // ✅ Required field
       },
-      type: "text",
-      content: {
-        text: message
+      whatsapp: {             // ✅ Required object
+        type: "text",         // ✅ Required field inside whatsapp
+        text: {               // ✅ Required field inside whatsapp
+          body: message
+        }
       }
     };
     
@@ -71,7 +75,7 @@ app.post('/webhook', async (req, res) => {
     // Extract message and contact info from Gallabox webhook
     const userMessage = webhookData.whatsapp?.text?.body?.toLowerCase().trim();
     const userPhone = webhookData.whatsapp?.from; // This is the user's phone number
-    const userName = webhookData.contact?.name || 'there';
+    const userName = webhookData.contact?.name || 'User';
     
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
     
@@ -82,11 +86,13 @@ app.post('/webhook', async (req, res) => {
         const welcomeMessage = `Hi ${userName}! 👋 Welcome! How can I help you today?`;
         console.log(`📤 Sending response to ${userPhone}: ${welcomeMessage}`);
         
-        await sendMessage(userPhone, welcomeMessage);
+        await sendMessage(userPhone, userName, welcomeMessage);
         console.log(`✅ Response sent successfully to ${userPhone}`);
       }
       else {
         console.log(`❓ No response configured for message: ${userMessage}`);
+        // Send default response for unknown messages
+        await sendMessage(userPhone, userName, "I'm a simple bot. Try saying 'hi'!");
       }
     } else {
       console.log('❓ No valid message or phone number found in webhook');
@@ -113,7 +119,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Gallabox WhatsApp Bot',
-    version: '5.0 - Fixed API Structure',
+    version: '6.0 - Final Fixed Structure',
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
@@ -127,16 +133,24 @@ app.get('/', (req, res) => {
 // Test endpoint to send a message manually
 app.post('/send-test-message', async (req, res) => {
   try {
-    const { to, message } = req.body;
+    const { to, name, message } = req.body;
     
     if (!to) {
       return res.status(400).json({ 
         error: 'Missing "to" in request body',
-        example: { "to": "918368127760", "message": "Hello test" }
+        example: { 
+          "to": "918368127760", 
+          "name": "Rishi",
+          "message": "Hello test" 
+        }
       });
     }
     
-    const result = await sendMessage(to, message || 'Hello! This is a test message from the Gallabox bot. 🚀');
+    const result = await sendMessage(
+      to, 
+      name || 'Test User', 
+      message || 'Hello! This is a test message from the Gallabox bot. 🚀'
+    );
     
     res.json({ 
       status: 'success', 
@@ -159,7 +173,8 @@ app.get('/webhook-info', (req, res) => {
   res.json({
     webhook_url: webhookUrl,
     method: 'POST',
-    content_type: 'application/json'
+    content_type: 'application/json',
+    note: 'Make sure to select message events in Gallabox webhook settings'
   });
 });
 
