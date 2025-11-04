@@ -49,7 +49,7 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Category structure with dummy links
+// Category structure with dummy links - FOR AI TO USE IN RESPONSES
 const CATEGORIES = {
   "Women's Fashion": {
     link: "app.zulu.club/categories/womens-fashion",
@@ -184,28 +184,14 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Function to detect if message is about products/categories
-function isProductQuery(message) {
-  const productKeywords = [
-    'product', 'products', 'category', 'categories', 'what do you have',
-    'what do you sell', 'items', 'collection', 'range', 'offer',
-    'shopping', 'buy', 'purchase', 'shop', 'store', 'fashion',
-    'clothes', 'clothing', 'dress', 'shirt', 'footwear', 'shoes',
-    'home', 'decor', 'beauty', 'accessories', 'gift', 'gifting',
-    'kids', 'children', 'men', 'women'
-  ];
-  
-  const msg = message.toLowerCase();
-  return productKeywords.some(keyword => msg.includes(keyword));
-}
-
-// Function to get category response with links
-function getCategoryResponse(userMessage) {
+// Function to generate category response (for AI to use in its responses)
+function generateCategoryResponse(userMessage = '') {
   const msg = userMessage.toLowerCase();
   
   // Check for specific category mentions
   for (const [category, data] of Object.entries(CATEGORIES)) {
-    if (msg.includes(category.toLowerCase()) || 
+    const categoryLower = category.toLowerCase();
+    if (msg.includes(categoryLower) || 
         Object.keys(data.subcategories).some(sub => msg.includes(sub.toLowerCase()))) {
       
       // Return specific category with subcategories
@@ -237,21 +223,28 @@ function getCategoryResponse(userMessage) {
   return response;
 }
 
-// AI Chat Functionality
+// Function to get category links for AI reference
+function getCategoryLinks() {
+  let links = "CATEGORY LINKS:\n";
+  Object.entries(CATEGORIES).forEach(([category, data]) => {
+    links += `- ${category}: ${data.link}\n`;
+    Object.entries(data.subcategories).forEach(([sub, link]) => {
+      links += `  • ${sub}: ${link}\n`;
+    });
+  });
+  return links;
+}
+
+// AI Chat Functionality - Let AI decide when to show categories
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
   try {
-    // First check if it's a product query
-    if (isProductQuery(userMessage)) {
-      return getCategoryResponse(userMessage);
-    }
-    
     const messages = [];
     
-    // System message with Zulu Club information
+    // System message with Zulu Club information and category format guidelines
     const systemMessage = {
       role: "system",
       content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
@@ -259,21 +252,27 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       ZULU CLUB INFORMATION:
       ${companyInfo}
 
-      CATEGORIES AND LINKS:
-      ${Object.entries(CATEGORIES).map(([cat, data]) => 
-        `${cat}: ${data.link} (Subcategories: ${Object.keys(data.subcategories).join(', ')})`
-      ).join('\n')}
+      AVAILABLE CATEGORIES WITH LINKS:
+      ${getCategoryLinks()}
 
-      IMPORTANT GUIDELINES:
-      1. If user asks about products, categories, shopping, or what we sell, provide the category list with links
-      2. Be enthusiastic, helpful, and customer-focused
-      3. Highlight key benefits: 100-minute delivery, try-at-home, easy returns, premium products
-      4. Mention we're currently available in Gurgaon
-      5. Direct people to visit zulu.club or our pop-up stores at AIPL Joy Street & AIPL Central
-      6. Keep responses conversational and friendly
-      7. For product queries, mention specific categories and encourage browsing
-      8. Keep responses under 300 characters for WhatsApp
-      9. Use emojis to make it engaging
+      IMPORTANT RESPONSE GUIDELINES:
+      1. **Use the category links naturally** in your responses when users ask about products
+      2. **Decide when to show categories** based on the conversation context
+      3. **For general product inquiries**, provide a brief overview and include relevant category links
+      4. **For specific category questions**, mention that category's link and its subcategories
+      5. **Keep responses conversational** - don't just list categories unless specifically asked
+      6. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
+      7. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+      8. **Use emojis** to make it engaging but professional
+      9. **Keep responses under 400 characters** for WhatsApp compatibility
+      10. **Be enthusiastic and helpful** - we're excited about our products!
+
+      CATEGORY USAGE EXAMPLES:
+      - If user asks "What products do you have?" → Briefly describe our range and include main category links
+      - If user asks "Do you have dresses?" → "Yes! Check our Women's Fashion collection: app.zulu.club/categories/womens-fashion We have dresses, tops, co-ords and more! 👗"
+      - If user asks specifically "Show me all categories" → Provide the full category list with links
+
+      Remember: Integrate category links naturally into the conversation flow. Let the user's interest guide how much category detail to provide.
       `
     };
     
@@ -301,19 +300,39 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 200,
+      max_tokens: 350,
       temperature: 0.7
     });
     
-    return completion.choices[0].message.content.trim();
+    let response = completion.choices[0].message.content.trim();
+    
+    // Fallback: If AI doesn't include categories but user clearly asks for them
+    const clearCategoryRequests = [
+      'categor', 'what do you sell', 'what do you have', 'products', 'items',
+      'show me everything', 'all products', 'your collection', 'what kind of'
+    ];
+    
+    const userMsgLower = userMessage.toLowerCase();
+    const shouldShowCategories = clearCategoryRequests.some(term => userMsgLower.includes(term));
+    const hasLinks = response.includes('app.zulu.club') || response.includes('zulu.club');
+    
+    if (shouldShowCategories && !hasLinks) {
+      console.log('🤖 AI missed category links, adding fallback...');
+      response += `\n\n${generateCategoryResponse(userMessage)}`;
+    }
+    
+    return response;
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
-    // Fallback to category response for product queries
-    if (isProductQuery(userMessage)) {
-      return getCategoryResponse(userMessage);
+    // Fallback to category response for clear product queries
+    const clearProductQueries = [
+      'product', 'categor', 'what do you sell', 'what do you have', 'buy', 'shop'
+    ];
+    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
+      return generateCategoryResponse(userMessage);
     }
-    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery! What would you like to know?";
+    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know about our products? 🛍️";
   }
 }
 
@@ -353,8 +372,11 @@ async function handleMessage(sessionId, userMessage) {
   } catch (error) {
     console.error('❌ Error handling message:', error);
     // Fallback response
-    if (isProductQuery(userMessage)) {
-      return getCategoryResponse(userMessage);
+    const clearProductQueries = [
+      'product', 'categor', 'what do you sell', 'what do you have'
+    ];
+    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
+      return generateCategoryResponse(userMessage);
     }
     return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
@@ -409,11 +431,12 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '2.0 - Smart Product Queries',
+    version: '3.0 - AI-Driven Category Display',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
-      product_categories: '8 main categories with subcategories',
-      smart_links: 'Dummy category links for browsing',
+      smart_categories: 'AI decides when to show categories',
+      category_links: '8 main categories with 40+ subcategories',
+      natural_integration: 'Category links integrated conversationally',
       whatsapp_integration: 'Gallabox API integration'
     },
     endpoints: {
@@ -431,7 +454,8 @@ app.get('/categories', (req, res) => {
   res.json({
     categories: CATEGORIES,
     total_categories: Object.keys(CATEGORIES).length,
-    total_subcategories: Object.values(CATEGORIES).reduce((acc, cat) => acc + Object.keys(cat.subcategories).length, 0)
+    total_subcategories: Object.values(CATEGORIES).reduce((acc, cat) => acc + Object.keys(cat.subcategories).length, 0),
+    approach: 'AI-driven category display - AI decides when and how to show categories based on conversation context'
   });
 });
 
