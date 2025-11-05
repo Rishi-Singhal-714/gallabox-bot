@@ -24,12 +24,23 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Store conversations
-let conversations = {};
+// Cache for CSV data (load once, use everywhere)
+let csvCache = {
+  categoriesData: [],
+  galleriesData: [],
+  lastUpdated: null,
+  isLoaded: false
+};
 
-// Store CSV data
-let categoriesData = [];
-let galleriesData = [];
+// Session storage with auto-cleanup
+let sessions = {};
+
+// Session configuration
+const SESSION_CONFIG = {
+  TIMEOUT: 3 * 60 * 1000, // 3 minutes in milliseconds
+  WARNING_TIME: 2 * 60 * 1000, // 2 minutes in milliseconds
+  CLEANUP_INTERVAL: 30 * 1000 // Cleanup every 30 seconds
+};
 
 // ZULU CLUB INFORMATION
 const ZULU_CLUB_INFO = `
@@ -46,10 +57,10 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Initialize CSV data
+// Initialize CSV data once and cache it
 async function initializeCSVData() {
   try {
-    console.log('🔄 Initializing CSV data from GitHub...');
+    console.log('🔄 Initializing CSV data cache...');
     
     const categoriesUrl = process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
     const galleriesUrl = process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
@@ -58,17 +69,23 @@ async function initializeCSVData() {
     
     // Load categories1.csv
     const categoriesResults = await loadCSVFromGitHub(categoriesUrl, 'categories1.csv');
-    categoriesData = categoriesResults || [];
     
     // Load galleries1.csv
     const galleriesResults = await loadCSVFromGitHub(galleriesUrl, 'galleries1.csv');
-    galleriesData = galleriesResults || [];
     
-    console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
-    console.log(`📊 Galleries data loaded: ${galleriesData.length} rows`);
+    // Update cache
+    csvCache = {
+      categoriesData: categoriesResults || [],
+      galleriesData: galleriesResults || [],
+      lastUpdated: new Date(),
+      isLoaded: true
+    };
+    
+    console.log(`✅ CSV Cache loaded: ${csvCache.categoriesData.length} categories, ${csvCache.galleriesData.length} galleries`);
     
   } catch (error) {
-    console.error('❌ Error initializing CSV data:', error);
+    console.error('❌ Error initializing CSV cache:', error);
+    // Don't throw - we'll use empty cache
   }
 }
 
@@ -114,47 +131,126 @@ async function loadCSVFromGitHub(csvUrl, csvType) {
   }
 }
 
-// Get category names from categories1.csv
+// Session Management Functions
+function createSession(sessionId) {
+  const now = Date.now();
+  sessions[sessionId] = {
+    id: sessionId,
+    history: [],
+    lastActivity: now,
+    createdAt: now,
+    warningSent: false,
+    data: {
+      // Store any temporary data for this session
+      categoryNames: [],
+      lastSearch: null
+    }
+  };
+  console.log(`🆕 Created new session: ${sessionId}`);
+  return sessions[sessionId];
+}
+
+function getSession(sessionId) {
+  const session = sessions[sessionId];
+  if (session) {
+    session.lastActivity = Date.now(); // Update activity timestamp
+  }
+  return session;
+}
+
+function updateSession(sessionId, updates = {}) {
+  const session = getSession(sessionId);
+  if (session) {
+    Object.assign(session, updates);
+    session.lastActivity = Date.now();
+  }
+  return session;
+}
+
+function deleteSession(sessionId) {
+  if (sessions[sessionId]) {
+    console.log(`🗑️ Deleting session: ${sessionId}`);
+    delete sessions[sessionId];
+    return true;
+  }
+  return false;
+}
+
+// Session cleanup job - runs periodically
+function startSessionCleanup() {
+  setInterval(() => {
+    const now = Date.now();
+    let cleanedCount = 0;
+    let warnedCount = 0;
+
+    Object.entries(sessions).forEach(([sessionId, session]) => {
+      const inactiveTime = now - session.lastActivity;
+      
+      // Send warning at 2 minutes
+      if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
+        console.log(`⏰ Sending timeout warning for session: ${sessionId}`);
+        session.warningSent = true;
+        warnedCount++;
+        
+        // In a real scenario, you might want to send a WhatsApp message here
+        // For now, we'll just log it
+      }
+      
+      // Delete session at 3 minutes
+      if (inactiveTime >= SESSION_CONFIG.TIMEOUT) {
+        deleteSession(sessionId);
+        cleanedCount++;
+        
+        // In a real scenario, send thanks message
+        console.log(`👋 Session ${sessionId} expired and cleaned up`);
+      }
+    });
+    
+    if (cleanedCount > 0 || warnedCount > 0) {
+      console.log(`🧹 Session cleanup: ${warnedCount} warned, ${cleanedCount} deleted. Active sessions: ${Object.keys(sessions).length}`);
+    }
+  }, SESSION_CONFIG.CLEANUP_INTERVAL);
+}
+
+// Start session cleanup
+startSessionCleanup();
+
+// Get category names from cached CSV data
 function getCategoryNames() {
-  if (!categoriesData.length) {
-    console.log('⚠️ No categories data available');
+  if (!csvCache.isLoaded || csvCache.categoriesData.length === 0) {
+    console.log('⚠️ No categories data available in cache');
     return [];
   }
   
   const categoryNames = [];
   
-  categoriesData.forEach((row) => {
-    // Get name from name column
+  csvCache.categoriesData.forEach((row) => {
     const name = row.name || row.Name;
     if (name && name.trim()) {
       categoryNames.push(name.trim());
     }
   });
   
-  console.log(`📋 Found ${categoryNames.length} category names:`, categoryNames);
+  console.log(`📋 Found ${categoryNames.length} category names from cache`);
   return categoryNames;
 }
 
-// Get category ID by name from categories1.csv
+// Get category ID by name from cached CSV data
 function getCategoryIdByName(categoryName) {
-  if (!categoriesData.length || !categoryName) {
+  if (!csvCache.isLoaded || !categoryName) {
     return null;
   }
   
-  console.log(`🔍 Looking for category ID for: "${categoryName}"`);
-  
-  for (const row of categoriesData) {
+  for (const row of csvCache.categoriesData) {
     const name = row.name || row.Name;
     if (name && name.trim() === categoryName) {
       const id = row.id || row.ID;
       if (id) {
-        console.log(`✅ Found category ID: ${id} for category: ${categoryName}`);
         return id.toString();
       }
     }
   }
   
-  console.log(`❌ No category ID found for: ${categoryName}`);
   return null;
 }
 
@@ -164,303 +260,104 @@ function parseCat1Data(cat1Value) {
   
   const strValue = cat1Value.toString().trim();
   
-  // Handle array format like [1980,1933,1888] or ["25721","25723"]
   if (strValue.startsWith('[') && strValue.endsWith(']')) {
     try {
-      // Remove brackets and split by comma
       const cleanStr = strValue.slice(1, -1);
       const items = cleanStr.split(',').map(item => item.trim().replace(/"/g, ''));
-      console.log(`📊 Parsed array from cat1: ${items}`);
       return items;
     } catch (error) {
-      console.log(`❌ Error parsing cat1 array: ${strValue}`, error);
       return [];
     }
   }
   
-  // Handle comma-separated values
   if (strValue.includes(',')) {
-    const items = strValue.split(',').map(item => item.trim());
-    console.log(`📊 Parsed CSV from cat1: ${items}`);
-    return items;
+    return strValue.split(',').map(item => item.trim());
   }
   
-  // Handle single value
   return [strValue];
 }
 
-// Get type2 data from galleries1.csv by matching category ID in cat1 column
+// Get type2 data from cached galleries data
 function getType2DataByCat1(categoryId) {
-  if (!galleriesData.length || !categoryId) {
+  if (!csvCache.isLoaded || !categoryId) {
     return [];
   }
   
-  console.log(`🔍 Searching galleries1.csv for cat1 containing: ${categoryId}`);
-  
   const type2Data = [];
   
-  galleriesData.forEach((row, index) => {
-    // Look for cat1 column specifically
+  csvCache.galleriesData.forEach((row) => {
     const cat1Value = row.cat1;
     
     if (cat1Value) {
-      // Parse the cat1 data which might be in array format
       const cat1Ids = parseCat1Data(cat1Value);
       
-      // Check if our categoryId is in the parsed array
       if (cat1Ids.includes(categoryId.toString())) {
-        // Get type2 data from the same row
         const type2 = row.type2;
         if (type2 && type2.trim()) {
           type2Data.push(type2.trim());
-          console.log(`✅ Row ${index}: cat1=${cat1Value} → type2="${type2}"`);
         }
       }
     }
   });
   
-  console.log(`📝 Found ${type2Data.length} type2 entries for category ID ${categoryId}`);
   return type2Data;
 }
 
 // Generate links from type2 data
 function generateLinksFromType2(type2Data) {
   return type2Data.map(name => {
-    // Replace spaces with %20 and create link
     const encodedName = name.replace(/\s+/g, '%20');
     return `app.zulu.club/${encodedName}`;
   });
 }
 
-// NEW: Get alternative categories when primary category has no products
-async function getAlternativeCategories(userMessage, primaryCategory, allCategories) {
-  if (!process.env.OPENAI_API_KEY) {
-    return [];
-  }
-  
-  try {
-    const messages = [{
-      role: "system",
-      content: `You are a product categorization assistant. When the primary category doesn't have products, suggest alternative related categories.
-
-AVAILABLE CATEGORIES:
-${allCategories.map(name => `- ${name}`).join('\n')}
-
-USER QUERY: "${userMessage}"
-PRIMARY CATEGORY: "${primaryCategory}"
-
-INSTRUCTIONS:
-1. Suggest 2-3 alternative categories that might have similar products
-2. Return ONLY category names as comma-separated values
-3. Only use categories from the available list
-
-Examples:
-User: "shoes", Primary: "Footwear" (no products) → "Men's Fashion,Women's Fashion,Sports"
-User: "vases", Primary: "Home Decor" (no products) → "Home Accessories,Lifestyle Gifting"`
-    }];
-    
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messages,
-      max_tokens: 100,
-      temperature: 0.5
-    });
-    
-    const response = completion.choices[0].message.content.trim();
-    console.log(`🤖 AI alternative categories: "${response}"`);
-    
-    // Parse comma-separated categories
-    const alternativeCategories = response.split(',').map(cat => cat.trim()).filter(cat => 
-      cat && allCategories.includes(cat) && cat !== primaryCategory
-    );
-    
-    console.log(`🔄 Alternative categories to try:`, alternativeCategories);
-    return alternativeCategories;
-    
-  } catch (error) {
-    console.error('❌ ChatGPT API error in alternative categories:', error);
-    return [];
-  }
-}
-
-// NEW: Smart product search with fallback to alternative categories
-async function smartProductSearch(userMessage, categoryNames) {
+// Smart product search with fallback
+async function smartProductSearch(userMessage, categoryNames, session) {
   console.log(`🧠 SMART SEARCH for: "${userMessage}"`);
   
-  // Step 1: Get primary category match
+  // Store search in session
+  if (session) {
+    session.data.lastSearch = userMessage;
+  }
+  
   const primaryCategory = await getAICategoryMatch(userMessage, categoryNames);
   if (!primaryCategory) {
-    console.log('❌ No primary category matched by AI');
     return { success: false, links: [], triedCategories: [] };
   }
   
   const triedCategories = [primaryCategory];
   
-  // Step 2: Try primary category
-  console.log(`🔄 Trying primary category: ${primaryCategory}`);
+  // Try primary category
   const primaryCategoryId = getCategoryIdByName(primaryCategory);
   if (primaryCategoryId) {
     const primaryType2Data = getType2DataByCat1(primaryCategoryId);
     if (primaryType2Data.length > 0) {
       const links = generateLinksFromType2(primaryType2Data);
-      console.log(`✅ Found ${links.length} products in primary category`);
       return { success: true, links: links, triedCategories: triedCategories, source: 'primary' };
     }
   }
   
-  console.log(`❌ No products found in primary category: ${primaryCategory}`);
-  
-  // Step 3: Get and try alternative categories
+  // Get and try alternative categories
   const alternativeCategories = await getAlternativeCategories(userMessage, primaryCategory, categoryNames);
   triedCategories.push(...alternativeCategories);
   
   for (const altCategory of alternativeCategories) {
-    console.log(`🔄 Trying alternative category: ${altCategory}`);
     const altCategoryId = getCategoryIdByName(altCategory);
     if (altCategoryId) {
       const altType2Data = getType2DataByCat1(altCategoryId);
       if (altType2Data.length > 0) {
         const links = generateLinksFromType2(altType2Data);
-        console.log(`✅ Found ${links.length} products in alternative category: ${altCategory}`);
         return { success: true, links: links, triedCategories: triedCategories, source: 'alternative' };
       }
     }
-    console.log(`❌ No products found in alternative category: ${altCategory}`);
   }
   
-  // Step 4: If still no products, try generic related categories based on keywords
-  const keywordCategories = getCategoriesByKeywords(userMessage, categoryNames);
-  const newCategories = keywordCategories.filter(cat => !triedCategories.includes(cat));
-  triedCategories.push(...newCategories);
-  
-  for (const keywordCat of newCategories) {
-    console.log(`🔄 Trying keyword-based category: ${keywordCat}`);
-    const keywordCatId = getCategoryIdByName(keywordCat);
-    if (keywordCatId) {
-      const keywordType2Data = getType2DataByCat1(keywordCatId);
-      if (keywordType2Data.length > 0) {
-        const links = generateLinksFromType2(keywordType2Data);
-        console.log(`✅ Found ${links.length} products in keyword category: ${keywordCat}`);
-        return { success: true, links: links, triedCategories: triedCategories, source: 'keyword' };
-      }
-    }
-  }
-  
-  console.log(`💔 No products found in any category for: "${userMessage}"`);
   return { success: false, links: [], triedCategories: triedCategories };
-}
-
-// NEW: Get categories by keyword matching (fallback when AI fails)
-function getCategoriesByKeywords(userMessage, categoryNames) {
-  const message = userMessage.toLowerCase();
-  const relatedCategories = [];
-  
-  // Keyword to category mapping
-  const keywordMap = {
-    'shoe': ['Footwear', 'Men\'s Fashion', 'Women\'s Fashion', 'Sports'],
-    'footwear': ['Footwear', 'Men\'s Fashion', 'Women\'s Fashion'],
-    'tshirt': ['Men\'s Fashion', 'Women\'s Fashion'],
-    'shirt': ['Men\'s Fashion', 'Women\'s Fashion'],
-    'dress': ['Women\'s Fashion'],
-    'vase': ['Home Decor', 'Home Accessories'],
-    'decor': ['Home Decor', 'Home Accessories'],
-    'home': ['Home Decor', 'Home Accessories'],
-    'beauty': ['Beauty & Self-Care'],
-    'skincare': ['Beauty & Self-Care'],
-    'gift': ['Lifestyle Gifting'],
-    'accessor': ['Fashion Accessories'],
-    'bag': ['Fashion Accessories'],
-    'watch': ['Fashion Accessories'],
-    'kids': ['Kids'],
-    'toy': ['Kids']
-  };
-  
-  // Check each keyword
-  Object.entries(keywordMap).forEach(([keyword, categories]) => {
-    if (message.includes(keyword)) {
-      categories.forEach(cat => {
-        if (categoryNames.includes(cat) && !relatedCategories.includes(cat)) {
-          relatedCategories.push(cat);
-        }
-      });
-    }
-  });
-  
-  console.log(`🔤 Keyword-based categories for "${userMessage}":`, relatedCategories);
-  return relatedCategories;
-}
-
-// MAIN LOGIC: Complete flow with smart fallback
-async function getProductLinksWithAICategory(userMessage) {
-  try {
-    console.log('\n🔍 STARTING SMART PRODUCT SEARCH');
-    console.log(`📝 User query: "${userMessage}"`);
-    
-    // Step 1: Get all category names from categories1.csv
-    const categoryNames = getCategoryNames();
-    if (categoryNames.length === 0) {
-      console.log('❌ No category names found in CSV');
-      return [];
-    }
-    
-    // Step 2: Use smart search with fallback categories
-    const searchResult = await smartProductSearch(userMessage, categoryNames);
-    
-    if (searchResult.success) {
-      console.log(`🎉 Smart search successful! Found ${searchResult.links.length} products via ${searchResult.source} category`);
-      return searchResult.links;
-    } else {
-      console.log(`💔 Smart search failed for: "${userMessage}"`);
-      console.log(`🔄 Tried categories:`, searchResult.triedCategories);
-      
-      // Provide helpful suggestion based on tried categories
-      return getHelpfulSuggestion(userMessage, searchResult.triedCategories);
-    }
-    
-  } catch (error) {
-    console.error('❌ Error in smart product search:', error);
-    return [];
-  }
-}
-
-// NEW: Get helpful suggestion when no products found
-function getHelpfulSuggestion(userMessage, triedCategories) {
-  const message = userMessage.toLowerCase();
-  
-  let suggestion = `I searched for "${userMessage}" in our ${triedCategories.length > 0 ? triedCategories.join(', ') : 'relevant'} categories but couldn't find specific products at the moment. 😔\n\n`;
-  
-  // Add specific suggestions based on query type
-  if (message.includes('shoe') || message.includes('footwear')) {
-    suggestion += `👟 For footwear, you might want to check our:\n`;
-    suggestion += `• Men's Fashion category for casual shoes\n`;
-    suggestion += `• Women's Fashion category for heels and flats\n`;
-    suggestion += `• Sports category for athletic footwear\n\n`;
-  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
-    suggestion += `👕 For clothing items, explore our:\n`;
-    suggestion += `• Men's Fashion for shirts and tees\n`;
-    suggestion += `• Women's Fashion for dresses and tops\n\n`;
-  } else if (message.includes('vase') || message.includes('decor') || message.includes('home')) {
-    suggestion += `🏠 For home items, check our:\n`;
-    suggestion += `• Home Decor category\n`;
-    suggestion += `• Home Accessories section\n\n`;
-  } else {
-    suggestion += `🔍 You can explore our main categories:\n`;
-    suggestion += `• Men's & Women's Fashion\n`;
-    suggestion += `• Home Decor & Accessories\n`;
-    suggestion += `• Beauty & Self-Care\n`;
-    suggestion += `• Footwear & Accessories\n\n`;
-  }
-  
-  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-  suggestion += `Visit zulu.club to browse our complete collection! 🛍️`;
-  
-  return [suggestion]; // Return as array to maintain consistency
 }
 
 // ChatGPT function to find matching category
 async function getAICategoryMatch(userMessage, categoryNames) {
   if (!process.env.OPENAI_API_KEY) {
-    console.log('❌ OpenAI API key not available');
     return null;
   }
   
@@ -482,12 +379,7 @@ ${categoryNames.map(name => `- ${name}`).join('\n')}
 IMPORTANT:
 - Return ONLY the category name, nothing else
 - Choose the best matching category
-- If no good match, return "no_match"
-
-Examples:
-User: "I need tshirt" → "Men's Fashion"
-User: "looking for vases" → "Home Decor"
-User: "show me dresses" → "Women's Fashion"`
+- If no good match, return "no_match"`
     }, {
       role: "user", 
       content: userMessage
@@ -501,15 +393,12 @@ User: "show me dresses" → "Women's Fashion"`
     });
     
     const response = completion.choices[0].message.content.trim();
-    console.log(`🤖 AI category match: "${response}"`);
     
-    // Check if the response matches any of our category names
     if (response === "no_match") {
       return null;
     }
     
-    const matchedCategory = categoryNames.find(cat => cat === response);
-    return matchedCategory || null;
+    return categoryNames.find(cat => cat === response) || null;
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
@@ -517,11 +406,109 @@ User: "show me dresses" → "Women's Fashion"`
   }
 }
 
+// Get alternative categories
+async function getAlternativeCategories(userMessage, primaryCategory, allCategories) {
+  if (!process.env.OPENAI_API_KEY) {
+    return [];
+  }
+  
+  try {
+    const messages = [{
+      role: "system",
+      content: `You are a product categorization assistant. When the primary category doesn't have products, suggest alternative related categories.
+
+AVAILABLE CATEGORIES:
+${allCategories.map(name => `- ${name}`).join('\n')}
+
+USER QUERY: "${userMessage}"
+PRIMARY CATEGORY: "${primaryCategory}"
+
+INSTRUCTIONS:
+1. Suggest 2-3 alternative categories that might have similar products
+2. Return ONLY category names as comma-separated values
+3. Only use categories from the available list`
+    }];
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: messages,
+      max_tokens: 100,
+      temperature: 0.5
+    });
+    
+    const response = completion.choices[0].message.content.trim();
+    
+    const alternativeCategories = response.split(',').map(cat => cat.trim()).filter(cat => 
+      cat && allCategories.includes(cat) && cat !== primaryCategory
+    );
+    
+    return alternativeCategories;
+    
+  } catch (error) {
+    console.error('❌ ChatGPT API error in alternative categories:', error);
+    return [];
+  }
+}
+
+// Get helpful suggestion when no products found
+function getHelpfulSuggestion(userMessage, triedCategories) {
+  const message = userMessage.toLowerCase();
+  
+  let suggestion = `I searched for "${userMessage}" in our ${triedCategories.length > 0 ? triedCategories.join(', ') : 'relevant'} categories but couldn't find specific products at the moment. 😔\n\n`;
+  
+  if (message.includes('shoe') || message.includes('footwear')) {
+    suggestion += `👟 For footwear, you might want to check our Men's Fashion or Women's Fashion categories for casual and formal shoes.\n\n`;
+  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
+    suggestion += `👕 For clothing items, explore our Men's Fashion and Women's Fashion categories.\n\n`;
+  } else if (message.includes('vase') || message.includes('decor') || message.includes('home')) {
+    suggestion += `🏠 For home items, check our Home Decor and Home Accessories categories.\n\n`;
+  } else {
+    suggestion += `🔍 You can explore our main categories: Men's & Women's Fashion, Home Decor, Beauty, and more.\n\n`;
+  }
+  
+  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+  suggestion += `Visit zulu.club to browse our complete collection! 🛍️`;
+  
+  return [suggestion];
+}
+
+// Main product search logic with session support
+async function getProductLinksWithAICategory(userMessage, session) {
+  try {
+    // Wait for CSV data to load if not ready
+    if (!csvCache.isLoaded) {
+      console.log('⏳ Waiting for CSV data to load...');
+      // In a real scenario, you might want to implement a proper waiting mechanism
+      return ["🔄 Our product catalog is loading, please wait a moment and try again..."];
+    }
+    
+    const categoryNames = getCategoryNames();
+    if (categoryNames.length === 0) {
+      return ["📦 Our product categories are currently being updated. Please try again in a moment."];
+    }
+    
+    // Store category names in session for faster access
+    if (session) {
+      session.data.categoryNames = categoryNames;
+    }
+    
+    const searchResult = await smartProductSearch(userMessage, categoryNames, session);
+    
+    if (searchResult.success) {
+      return searchResult.links;
+    } else {
+      return getHelpfulSuggestion(userMessage, searchResult.triedCategories);
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in product search:', error);
+    return ["😔 I'm having trouble accessing our product catalog right now. Please try again in a moment or visit zulu.club directly."];
+  }
+}
+
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
-    console.log(`📤 Sending message to ${to}`);
-    
     const payload = {
       channelId: gallaboxConfig.channelId,
       channelType: "whatsapp",
@@ -550,7 +537,6 @@ async function sendMessage(to, name, message) {
       }
     );
     
-    console.log('✅ Message sent successfully');
     return response.data;
   } catch (error) {
     console.error('❌ Error sending message:', error.message);
@@ -558,22 +544,15 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Main response handler
-async function getChatGPTResponse(userMessage, conversationHistory = []) {
+// Main response handler with session support
+async function getChatGPTResponse(userMessage, session) {
   // Always try the smart CSV logic first
-  const productLinks = await getProductLinksWithAICategory(userMessage);
+  const productLinks = await getProductLinksWithAICategory(userMessage, session);
   
-  // If we found product links or helpful suggestions, use them
   if (productLinks.length > 0) {
-    // Check if the first item is a suggestion (string) or actual links
     if (typeof productLinks[0] === 'string' && productLinks[0].includes('searched for')) {
-      // It's a helpful suggestion message
-      console.log(`💡 Showing helpful suggestion to user`);
       return productLinks[0];
     } else {
-      // It's actual product links
-      console.log(`🛍️ Using product links, found ${productLinks.length} items`);
-      
       let response = `Great choice! 🎯\n\n`;
       response += `Here are the products you're looking for:\n\n`;
       
@@ -593,8 +572,6 @@ async function getChatGPTResponse(userMessage, conversationHistory = []) {
   }
   
   // Only use AI for general conversation if no products found
-  console.log('🤖 No products found, using AI for general query');
-  
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
   }
@@ -605,9 +582,9 @@ async function getChatGPTResponse(userMessage, conversationHistory = []) {
       content: `You are a friendly customer service assistant for Zulu Club. ${ZULU_CLUB_INFO} Keep responses under 300 characters. Be enthusiastic and highlight 100-minute delivery, try-at-home, and easy returns.`
     }];
     
-    // Add conversation history
-    if (conversationHistory && conversationHistory.length > 0) {
-      const recentHistory = conversationHistory.slice(-6);
+    // Add conversation history from session
+    if (session && session.history.length > 0) {
+      const recentHistory = session.history.slice(-6);
       recentHistory.forEach(msg => {
         if (msg.role && msg.content) {
           messages.push({
@@ -618,7 +595,6 @@ async function getChatGPTResponse(userMessage, conversationHistory = []) {
       });
     }
     
-    // Add current user message
     messages.push({
       role: "user",
       content: userMessage
@@ -639,28 +615,49 @@ async function getChatGPTResponse(userMessage, conversationHistory = []) {
   }
 }
 
-// Handle user message
+// Handle user message with session management
 async function handleMessage(sessionId, userMessage) {
   try {
-    if (!conversations[sessionId]) {
-      conversations[sessionId] = { history: [] };
+    // Get or create session
+    let session = getSession(sessionId);
+    if (!session) {
+      session = createSession(sessionId);
     }
     
-    conversations[sessionId].history.push({
+    // Check if session is about to expire and send warning
+    const now = Date.now();
+    const inactiveTime = now - session.lastActivity;
+    
+    if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
+      // Send warning message
+      await sendTimeoutWarning(sessionId, session);
+      session.warningSent = true;
+    }
+    
+    // Add user message to session history
+    session.history.push({
       role: "user",
-      content: userMessage
+      content: userMessage,
+      timestamp: now
     });
     
-    const response = await getChatGPTResponse(userMessage, conversations[sessionId].history);
+    // Get AI response
+    const response = await getChatGPTResponse(userMessage, session);
     
-    conversations[sessionId].history.push({
+    // Add AI response to session history
+    session.history.push({
       role: "assistant",
-      content: response
+      content: response,
+      timestamp: Date.now()
     });
     
-    if (conversations[sessionId].history.length > 10) {
-      conversations[sessionId].history = conversations[sessionId].history.slice(-10);
+    // Keep history manageable (last 10 messages)
+    if (session.history.length > 10) {
+      session.history = session.history.slice(-10);
     }
+    
+    // Update session
+    updateSession(sessionId, { lastActivity: Date.now() });
     
     return response;
     
@@ -670,23 +667,38 @@ async function handleMessage(sessionId, userMessage) {
   }
 }
 
-// Webhook endpoint
+// Send timeout warning message
+async function sendTimeoutWarning(sessionId, session) {
+  try {
+    const warningMessage = `⏰ You've been inactive for 2 minutes. If you don't respond in the next minute, this session will expire.`;
+    
+    // In a real implementation, you would send this to the user's WhatsApp
+    // For now, we'll just log it
+    console.log(`⚠️ Timeout warning for session ${sessionId}: ${warningMessage}`);
+    
+    // If you want to actually send the message, uncomment below:
+    // await sendMessage(sessionId, 'User', warningMessage);
+    
+  } catch (error) {
+    console.error('❌ Error sending timeout warning:', error);
+  }
+}
+
+// Webhook endpoint with session management
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('📩 Received webhook');
-    
     const webhookData = req.body;
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
     
-    console.log(`💬 Message from ${userPhone}: ${userMessage}`);
+    console.log(`💬 Message from ${userPhone} (${userName}): ${userMessage}`);
     
     if (userMessage && userPhone) {
       const sessionId = userPhone;
       const aiResponse = await handleMessage(sessionId, userMessage);
       await sendMessage(userPhone, userName, aiResponse);
-      console.log(`✅ Response sent to ${userPhone}`);
+      console.log(`✅ Response sent to ${userPhone}. Active sessions: ${Object.keys(sessions).length}`);
     }
     
     res.status(200).json({ status: 'success', message: 'Webhook processed' });
@@ -702,51 +714,86 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '11.0 - Smart Category Fallback',
-    csv_data: {
-      categories_loaded: categoriesData.length,
-      galleries_loaded: galleriesData.length
+    version: '12.0 - Session Management & Caching',
+    cache: {
+      csv_loaded: csvCache.isLoaded,
+      categories_count: csvCache.categoriesData.length,
+      galleries_count: csvCache.galleriesData.length,
+      last_updated: csvCache.lastUpdated
+    },
+    sessions: {
+      active_sessions: Object.keys(sessions).length,
+      session_timeout: `${SESSION_CONFIG.TIMEOUT / 60000} minutes`,
+      warning_time: `${SESSION_CONFIG.WARNING_TIME / 60000} minutes`
+    },
+    endpoints: {
+      webhook: 'POST /webhook',
+      health: 'GET /',
+      sessions: 'GET /sessions',
+      cache: 'GET /cache-status',
+      refresh: 'POST /refresh-cache'
     }
   });
 });
 
-// Test the smart search logic
-app.get('/test-smart-search', async (req, res) => {
-  const query = req.query.q || 'shoes';
+// Session management endpoint
+app.get('/sessions', (req, res) => {
+  const sessionList = Object.entries(sessions).map(([id, session]) => ({
+    id,
+    history_length: session.history.length,
+    last_activity: new Date(session.lastActivity).toISOString(),
+    created: new Date(session.createdAt).toISOString(),
+    warning_sent: session.warningSent,
+    inactive_minutes: ((Date.now() - session.lastActivity) / 60000).toFixed(2)
+  }));
   
-  try {
-    console.log(`\n🧪 TESTING SMART SEARCH FOR: "${query}"`);
-    
-    const categoryNames = getCategoryNames();
-    const searchResult = await smartProductSearch(query, categoryNames);
-    
-    res.json({
-      query: query,
-      search_result: searchResult,
-      smart_features: {
-        primary_category_search: true,
-        alternative_categories_fallback: true,
-        keyword_based_fallback: true,
-        helpful_suggestions: true
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Smart search test failed', details: error.message });
-  }
+  res.json({
+    total_sessions: sessionList.length,
+    sessions: sessionList
+  });
 });
 
-// Refresh CSV data endpoint
-app.post('/refresh-csv-data', async (req, res) => {
+// Cache status endpoint
+app.get('/cache-status', (req, res) => {
+  res.json({
+    csv_cache: {
+      is_loaded: csvCache.isLoaded,
+      categories_count: csvCache.categoriesData.length,
+      galleries_count: csvCache.galleriesData.length,
+      last_updated: csvCache.lastUpdated,
+      age_minutes: csvCache.lastUpdated ? 
+        ((Date.now() - new Date(csvCache.lastUpdated).getTime()) / 60000).toFixed(2) : 'N/A'
+    }
+  });
+});
+
+// Refresh cache endpoint
+app.post('/refresh-cache', async (req, res) => {
   try {
     await initializeCSVData();
     res.json({ 
       status: 'success', 
-      categories_count: categoriesData.length,
-      galleries_count: galleriesData.length
+      message: 'Cache refreshed successfully',
+      cache: {
+        categories_count: csvCache.categoriesData.length,
+        galleries_count: csvCache.galleriesData.length,
+        last_updated: csvCache.lastUpdated
+      }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to refresh CSV data' });
+    res.status(500).json({ error: 'Failed to refresh cache' });
   }
+});
+
+// Clear sessions endpoint (for testing)
+app.delete('/sessions', (req, res) => {
+  const count = Object.keys(sessions).length;
+  sessions = {};
+  res.json({ 
+    status: 'success', 
+    message: `Cleared ${count} sessions`,
+    active_sessions: 0
+  });
 });
 
 module.exports = app;
