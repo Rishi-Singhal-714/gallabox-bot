@@ -458,7 +458,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
           });
         }
       });
-    });
+    }
     
     // Add current user message
     messages.push({
