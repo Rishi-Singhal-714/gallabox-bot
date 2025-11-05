@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
 const csv = require('csv-parser');
+const { Readable } = require('stream');
 
 const app = express();
 
@@ -23,11 +24,14 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Store conversations and product data
+// Store conversations
 let conversations = {};
-let productData = [];
 
-// ZULU CLUB INFORMATION with categories and links
+// Store CSV data
+let categoriesData = [];
+let galleriesData = [];
+
+// ZULU CLUB INFORMATION
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
 
@@ -51,160 +55,139 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Category structure with dummy links - FOR AI TO USE IN RESPONSES
-const CATEGORIES = {
-  "Women's Fashion": {
-    link: "app.zulu.club/categories/womens-fashion",
-    subcategories: {
-      "Dresses": "app.zulu.club/categories/womens-fashion/dresses",
-      "Tops": "app.zulu.club/categories/womens-fashion/tops",
-      "Co-ords": "app.zulu.club/categories/womens-fashion/co-ords",
-      "Winterwear": "app.zulu.club/categories/womens-fashion/winterwear",
-      "Loungewear": "app.zulu.club/categories/womens-fashion/loungewear",
-      "Ethnic Wear": "app.zulu.club/categories/womens-fashion/ethnic-wear"
-    }
-  },
-  "Men's Fashion": {
-    link: "app.zulu.club/categories/mens-fashion",
-    subcategories: {
-      "Shirts": "app.zulu.club/categories/mens-fashion/shirts",
-      "Tees": "app.zulu.club/categories/mens-fashion/tees",
-      "Jackets": "app.zulu.club/categories/mens-fashion/jackets",
-      "Athleisure": "app.zulu.club/categories/mens-fashion/athleisure",
-      "Formal Wear": "app.zulu.club/categories/mens-fashion/formal-wear",
-      "Casual Wear": "app.zulu.club/categories/mens-fashion/casual-wear"
-    }
-  },
-  "Kids": {
-    link: "app.zulu.club/categories/kids",
-    subcategories: {
-      "Clothing": "app.zulu.club/categories/kids/clothing",
-      "Toys": "app.zulu.club/categories/kids/toys",
-      "Learning Kits": "app.zulu.club/categories/kids/learning-kits",
-      "Accessories": "app.zulu.club/categories/kids/accessories",
-      "Baby Care": "app.zulu.club/categories/kids/baby-care"
-    }
-  },
-  "Footwear": {
-    link: "app.zulu.club/categories/footwear",
-    subcategories: {
-      "Sneakers": "app.zulu.club/categories/footwear/sneakers",
-      "Heels": "app.zulu.club/categories/footwear/heels",
-      "Flats": "app.zulu.club/categories/footwear/flats",
-      "Sandals": "app.zulu.club/categories/footwear/sandals",
-      "Kids Shoes": "app.zulu.club/categories/footwear/kids-shoes",
-      "Sports Shoes": "app.zulu.club/categories/footwear/sports-shoes"
-    }
-  },
-  "Home Decor": {
-    link: "app.zulu.club/categories/home-decor",
-    subcategories: {
-      "Showpieces": "app.zulu.club/categories/home-decor/showpieces",
-      "Vases": "app.zulu.club/categories/home-decor/vases",
-      "Lamps": "app.zulu.club/categories/home-decor/lamps",
-      "Aroma Decor": "app.zulu.club/categories/home-decor/aroma-decor",
-      "Wall Art": "app.zulu.club/categories/home-decor/wall-art",
-      "Home Accessories": "app.zulu.club/categories/home-decor/accessories"
-    }
-  },
-  "Beauty & Self-Care": {
-    link: "app.zulu.club/categories/beauty-self-care",
-    subcategories: {
-      "Skincare": "app.zulu.club/categories/beauty-self-care/skincare",
-      "Bodycare": "app.zulu.club/categories/beauty-self-care/bodycare",
-      "Fragrances": "app.zulu.club/categories/beauty-self-care/fragrances",
-      "Grooming": "app.zulu.club/categories/beauty-self-care/grooming",
-      "Makeup": "app.zulu.club/categories/beauty-self-care/makeup",
-      "Hair Care": "app.zulu.club/categories/beauty-self-care/hair-care"
-    }
-  },
-  "Fashion Accessories": {
-    link: "app.zulu.club/categories/fashion-accessories",
-    subcategories: {
-      "Bags": "app.zulu.club/categories/fashion-accessories/bags",
-      "Jewelry": "app.zulu.club/categories/fashion-accessories/jewelry",
-      "Watches": "app.zulu.club/categories/fashion-accessories/watches",
-      "Sunglasses": "app.zulu.club/categories/fashion-accessories/sunglasses",
-      "Belts": "app.zulu.club/categories/fashion-accessories/belts",
-      "Wallets": "app.zulu.club/categories/fashion-accessories/wallets"
-    }
-  },
-  "Lifestyle Gifting": {
-    link: "app.zulu.club/categories/lifestyle-gifting",
-    subcategories: {
-      "Curated Gift Sets": "app.zulu.club/categories/lifestyle-gifting/gift-sets",
-      "Home Decor Gifts": "app.zulu.club/categories/lifestyle-gifting/home-decor",
-      "Personalized Gifts": "app.zulu.club/categories/lifestyle-gifting/personalized",
-      "Occasion Gifts": "app.zulu.club/categories/lifestyle-gifting/occasion",
-      "Corporate Gifting": "app.zulu.club/categories/lifestyle-gifting/corporate"
-    }
-  }
-};
-
-// Function to fetch and parse CSV from GitHub
-async function loadCSVFromGitHub() {
+// Function to load CSV data from GitHub
+async function loadCSVFromGitHub(csvUrl) {
   try {
-    // Replace with your actual GitHub raw CSV URL
-    const csvUrl = process.env.CSV_URL || 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
-    
-    console.log('📥 Fetching CSV from GitHub...');
+    console.log(`📥 Loading CSV from: ${csvUrl}`);
     const response = await axios.get(csvUrl);
-    const csvData = response.data;
-    
-    // Parse CSV data
     const results = [];
-    const lines = csvData.split('\n');
     
-    // Get headers (first line)
-    const headers = lines[0].split(',').map(header => header.trim());
-    
-    // Process each line
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      
-      const values = line.split(',').map(value => value.trim());
-      const row = {};
-      
-      headers.forEach((header, index) => {
-        row[header] = values[index] || '';
-      });
-      
-      // Filter out null type1 values and remove deals/offers from type2
-      if (row.type1 && row.type1.trim() !== '' && row.type1 !== 'null') {
-        // Clean type2 - remove deals/offers keywords
-        let cleanType2 = row.type2 || '';
-        if (cleanType2) {
-          const dealKeywords = ['deal', 'offer', 'discount', 'sale', 'promo', 'special'];
-          const hasDeal = dealKeywords.some(keyword => 
-            cleanType2.toLowerCase().includes(keyword)
-          );
-          if (hasDeal) {
-            cleanType2 = '';
-          }
-        }
-        
-        results.push({
-          type1: row.type1.trim(),
-          type2: cleanType2,
-          category: row.category || '',
-          description: row.description || ''
+    return new Promise((resolve, reject) => {
+      const stream = Readable.from(response.data);
+      stream
+        .pipe(csv())
+        .on('data', (data) => results.push(data))
+        .on('end', () => {
+          console.log(`✅ Loaded ${results.length} rows from CSV`);
+          resolve(results);
+        })
+        .on('error', (error) => {
+          console.error('❌ CSV parsing error:', error);
+          reject(error);
         });
-      }
-    }
-    
-    console.log(`✅ Loaded ${results.length} products from CSV`);
-    productData = results;
-    return results;
-    
+    });
   } catch (error) {
     console.error('❌ Error loading CSV from GitHub:', error.message);
     return [];
   }
 }
 
-// Initialize CSV data on startup
-loadCSVFromGitHub();
+// Initialize CSV data
+async function initializeCSVData() {
+  try {
+    console.log('🔄 Initializing CSV data from GitHub...');
+    
+    // Load categories1.csv
+    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/blob/main/categories1.csv';
+    categoriesData = await loadCSVFromGitHub(categoriesUrl);
+    
+    // Load galleries1.csv
+    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
+    galleriesData = await loadCSVFromGitHub(galleriesUrl);
+    
+    console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
+    console.log(`📊 Galleries data loaded: ${galleriesData.length} rows`);
+  } catch (error) {
+    console.error('❌ Error initializing CSV data:', error);
+  }
+}
+
+// Initialize on startup
+initializeCSVData();
+
+// Function to find matching category IDs based on user message
+function findMatchingCategoryIds(userMessage) {
+  if (!categoriesData.length) return [];
+  
+  const message = userMessage.toLowerCase();
+  const matchingIds = new Set();
+  
+  categoriesData.forEach(row => {
+    // Check if any column contains keywords that match the user message
+    Object.values(row).forEach(value => {
+      if (value && typeof value === 'string') {
+        const keywords = value.toLowerCase().split(/[,\s]+/);
+        keywords.forEach(keyword => {
+          if (keyword.length > 2 && message.includes(keyword)) {
+            if (row.id) {
+              matchingIds.add(row.id.toString());
+            }
+          }
+        });
+      }
+    });
+  });
+  
+  return Array.from(matchingIds);
+}
+
+// Function to get type2 names from galleries based on category IDs
+function getType2NamesFromGalleries(categoryIds) {
+  if (!galleriesData.length || !categoryIds.length) return [];
+  
+  const type2Names = new Set();
+  
+  galleriesData.forEach(row => {
+    if (row.cat1 && categoryIds.includes(row.cat1.toString()) && row.type2) {
+      type2Names.add(row.type2.trim());
+    }
+  });
+  
+  return Array.from(type2Names);
+}
+
+// Function to generate links from type2 names
+function generateLinksFromType2(type2Names) {
+  return type2Names.map(name => {
+    // Replace spaces with %20 and create link
+    const encodedName = name.replace(/\s+/g, '%20');
+    return `app.zulu.club/${encodedName}`;
+  });
+}
+
+// NEW LOGIC: Function to get product links based on user message
+function getProductLinksFromCSV(userMessage) {
+  try {
+    console.log('🔍 Searching for products in CSV data...');
+    
+    // Step 1: Find matching category IDs
+    const matchingCategoryIds = findMatchingCategoryIds(userMessage);
+    console.log(`📋 Matching category IDs:`, matchingCategoryIds);
+    
+    if (!matchingCategoryIds.length) {
+      console.log('❌ No matching category IDs found');
+      return [];
+    }
+    
+    // Step 2: Get type2 names from galleries
+    const type2Names = getType2NamesFromGalleries(matchingCategoryIds);
+    console.log(`📝 Found type2 names:`, type2Names);
+    
+    if (!type2Names.length) {
+      console.log('❌ No type2 names found for the category IDs');
+      return [];
+    }
+    
+    // Step 3: Generate links
+    const links = generateLinksFromType2(type2Names);
+    console.log(`🔗 Generated links:`, links);
+    
+    return links;
+  } catch (error) {
+    console.error('❌ Error in getProductLinksFromCSV:', error);
+    return [];
+  }
+}
 
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
@@ -251,292 +234,25 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Function to search products in CSV data
-function searchProducts(searchTerm) {
-  const term = searchTerm.toLowerCase().trim();
-  
-  if (!term || productData.length === 0) return [];
-  
-  // Search in type1 (primary) and type2 (secondary)
-  const results = productData.filter(product => {
-    const type1Match = product.type1.toLowerCase().includes(term);
-    const type2Match = product.type2 && product.type2.toLowerCase().includes(term);
-    const categoryMatch = product.category && product.category.toLowerCase().includes(term);
-    
-    return type1Match || type2Match || categoryMatch;
-  });
-  
-  // Remove duplicates based on type1
-  const uniqueResults = results.filter((product, index, self) => 
-    index === self.findIndex(p => p.type1 === product.type1)
-  );
-  
-  return uniqueResults.slice(0, 5); // Return max 5 results
-}
-
-// Function to generate product link
-function generateProductLink(productName) {
-  // Replace spaces with %20 and create simple link
-  const encodedProduct = productName.replace(/\s+/g, '%20');
-  return `app.zulu.club/${encodedProduct}`;
-}
-
-// Function to format product response
-function formatProductResponse(products, searchTerm) {
-  if (products.length === 0) {
-    return `🔍 Sorry, I couldn't find any products matching "${searchTerm}".\n\nTry searching for different products or categories! 🛍️`;
-  }
-  
-  if (products.length === 1) {
-    const product = products[0];
-    const productLink = generateProductLink(product.type1);
-    
-    let response = `🎯 Found: *${product.type1}*\n\n`;
-    
-    if (product.category) {
-      response += `📦 *Category:* ${product.category}\n`;
-    }
-    if (product.description) {
-      response += `📝 *Description:* ${product.description}\n`;
-    }
-    if (product.type2) {
-      response += `🏷️ *Type:* ${product.type2}\n`;
-    }
-    
-    response += `\n🔗 Browse ${product.type1}:\n`;
-    response += `${productLink}\n\n`;
-    response += `🛒 Happy shopping!`;
-    
-    return response;
-  }
-  
-  let response = `🔍 I found ${products.length} products matching "${searchTerm}":\n\n`;
-  
-  products.forEach((product, index) => {
-    const productLink = generateProductLink(product.type1);
-    response += `${index + 1}. *${product.type1}*`;
-    
-    if (product.category) {
-      response += ` (${product.category})`;
-    }
-    
-    response += `\n   ${productLink}\n\n`;
-  });
-  
-  response += `💡 *Tip:* Tell me which product you're interested in, and I'll show you more details!`;
-  
-  return response;
-}
-
-// Function to detect product intent using AI
-async function detectProductIntent(userMessage) {
-  if (!process.env.OPENAI_API_KEY) {
-    // Fallback simple detection
-    const productKeywords = [
-      'looking for', 'search for', 'find', 'buy', 'shop', 'product', 
-      'item', 'want', 'need', 'get', 'purchase'
-    ];
-    return productKeywords.some(keyword => userMessage.toLowerCase().includes(keyword));
-  }
-  
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: `You are a product search detection assistant. Analyze if the user is asking about specific products or looking to search for items.
-          
-          Respond with ONLY "YES" or "NO".
-          
-          Examples:
-          User: "Do you have running shoes?" → YES
-          User: "Looking for jeans" → YES  
-          User: "I want to buy a watch" → YES
-          User: "Search for skincare products" → YES
-          User: "What categories do you have?" → NO
-          User: "Tell me about your delivery" → NO
-          User: "Hello" → NO
-          User: "How are you?" → NO`
-        },
-        {
-          role: "user",
-          content: userMessage
-        }
-      ],
-      max_tokens: 10,
-      temperature: 0.1
-    });
-    
-    const response = completion.choices[0].message.content.trim().toUpperCase();
-    return response === 'YES';
-    
-  } catch (error) {
-    console.error('❌ Product detection AI error:', error);
-    // Fallback to simple detection
-    const productKeywords = ['looking for', 'search for', 'find', 'buy', 'shop', 'product'];
-    return productKeywords.some(keyword => userMessage.toLowerCase().includes(keyword));
-  }
-}
-
-// Function to extract search query using AI
-async function extractSearchQuery(userMessage) {
-  if (!process.env.OPENAI_API_KEY) {
-    // Simple extraction - return the message as is for searching
-    return userMessage;
-  }
-  
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "g3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: `Extract the main product or search query from the user's message. Remove greetings and unnecessary words.
-          
-          Examples:
-          User: "Hi, I'm looking for running shoes" → running shoes
-          User: "Do you have blue jeans?" → blue jeans
-          User: "Search for skincare products" → skincare products
-          User: "I want to buy a watch" → watch
-          User: "Hello, can you help me find a laptop bag?" → laptop bag
-          User: "What do you have?" → NOT_SPECIFIED
-          
-          Respond with ONLY the search query or "NOT_SPECIFIED".`
-        },
-        {
-          role: "user",
-          content: userMessage
-        }
-      ],
-      max_tokens: 20,
-      temperature: 0.1
-    });
-    
-    const response = completion.choices[0].message.content.trim();
-    return response === 'NOT_SPECIFIED' ? null : response;
-    
-  } catch (error) {
-    console.error('❌ Search query extraction AI error:', error);
-    return userMessage; // Fallback to using the whole message
-  }
-}
-
-// Function to properly format links for WhatsApp
-function formatLinksForWhatsApp(text) {
-  if (!text) return text;
-  
-  const linkPattern = /(app\.zulu\.club\/[^\s]+)/g;
-  let formattedText = text;
-  
-  const links = text.match(linkPattern);
-  if (links) {
-    links.forEach(link => {
-      const linkWithContext = new RegExp(`([^\\n]|^)${link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\s]|$)`);
-      
-      if (linkWithContext.test(formattedText)) {
-        formattedText = formattedText.replace(
-          new RegExp(`([^\\n])${link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
-          `$1\n${link}`
-        );
-        
-        formattedText = formattedText.replace(
-          new RegExp(`${link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\n])`, 'g'),
-          `${link}\n$1`
-        );
-      }
-    });
-  }
-  
-  formattedText = formattedText.replace(/\n\s*\n\s*\n/g, '\n\n');
-  return formattedText.trim();
-}
-
-// Function to generate category response (for AI to use in its responses)
-function generateCategoryResponse(userMessage = '') {
-  const msg = userMessage.toLowerCase();
-  
-  // Check for specific category mentions
-  for (const [category, data] of Object.entries(CATEGORIES)) {
-    const categoryLower = category.toLowerCase();
-    if (msg.includes(categoryLower) || 
-        Object.keys(data.subcategories).some(sub => msg.includes(sub.toLowerCase()))) {
-      
-      // Return specific category with subcategories
-      let response = `🛍️ *${category}* \n\n`;
-      response += `Explore our ${category.toLowerCase()} collection:\n`;
-      response += `🔗 ${data.link}\n\n`;
-      response += `*Subcategories:*\n`;
-      
-      Object.entries(data.subcategories).forEach(([sub, link]) => {
-        response += `• ${sub}: ${link}\n`;
-      });
-      
-      response += `\nVisit the links to browse products! 🛒`;
-      return response;
-    }
-  }
-  
-  // General product query - show all categories
-  let response = `🛍️ *Our Product Categories* \n\n`;
-  response += `We have an amazing range of lifestyle products! Here are our main categories:\n\n`;
-  
-  Object.entries(CATEGORIES).forEach(([category, data]) => {
-    response += `• *${category}*: ${data.link}\n`;
-  });
-  
-  response += `\n💡 *Pro Tip:* You can ask about specific categories like "women's fashion" or "home decor" and I'll show you the subcategories!\n\n`;
-  response += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*`;
-  
-  return response;
-}
-
-// Function to get category links for AI reference
-function getCategoryLinks() {
-  let links = "CATEGORY LINKS:\n";
-  Object.entries(CATEGORIES).forEach(([category, data]) => {
-    links += `- ${category}: ${data.link}\n`;
-    Object.entries(data.subcategories).forEach(([sub, link]) => {
-      links += `  • ${sub}: ${link}\n`;
-    });
-  });
-  return links;
-}
-
-// AI Chat Functionality with Product Search
+// Enhanced AI Chat Functionality with CSV Integration
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
   try {
-    // Check if this is a product search query
-    const isProductQuery = await detectProductIntent(userMessage);
-    
-    if (isProductQuery) {
-      const searchQuery = await extractSearchQuery(userMessage);
-      
-      if (searchQuery && searchQuery !== 'NOT_SPECIFIED') {
-        // User mentioned a specific product to search for
-        const productResults = searchProducts(searchQuery);
-        return formatLinksForWhatsApp(formatProductResponse(productResults, searchQuery));
-      } else {
-        // User asking about products but no specific query mentioned
-        return formatLinksForWhatsApp(
-          `🔍 *Product Search*\n\nI can help you find specific products! 🛍️\n\n` +
-          `Just tell me what you're looking for, for example:\n` +
-          `• "Looking for running shoes"\n` +
-          `• "Do you have jeans?"\n` +
-          `• "Search for skincare products"\n\n` +
-          `What product are you looking for?`
-        );
-      }
-    }
-    
-    // Continue with normal AI response for non-product queries
     const messages = [];
     
-    // System message with Zulu Club information and category format guidelines
+    // NEW: Get product links from CSV based on user message
+    const productLinks = getProductLinksFromCSV(userMessage);
+    let csvContext = "";
+    
+    if (productLinks.length > 0) {
+      csvContext = `\n\nPRODUCT LINKS FROM DATABASE:\n${productLinks.map(link => `• ${link}`).join('\n')}`;
+      console.log(`🤖 Providing ${productLinks.length} product links to AI`);
+    }
+    
+    // System message with enhanced CSV integration
     const systemMessage = {
       role: "system",
       content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
@@ -544,33 +260,20 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       ZULU CLUB INFORMATION:
       ${companyInfo}
 
-      PRODUCT SEARCH CAPABILITY:
-      - Users can search for specific products from our catalog
-      - If users ask about specific items, guide them to use product search
-      - We have a wide range of lifestyle products available
-      - Product links format: app.zulu.club/ProductName (spaces become %20)
-
-      AVAILABLE CATEGORIES WITH LINKS:
-      ${getCategoryLinks()}
-
       IMPORTANT RESPONSE GUIDELINES:
-      1. **Use the category links naturally** in your responses when users ask about products
-      2. **For product searches**, help users find specific items from our catalog
-      3. **Decide when to show categories** based on the conversation context
-      4. **Keep responses conversational** - don't just list categories unless specifically asked
+      1. **Use product links from database** when available in the context below
+      2. **For product inquiries**, check if there are product links provided and include them naturally
+      3. **If no specific links match**, provide general category guidance
+      4. **Keep responses conversational** and helpful
       5. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
       6. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
       7. **Use emojis** to make it engaging but professional
       8. **Keep responses under 400 characters** for WhatsApp compatibility
       9. **Be enthusiastic and helpful** - we're excited about our products!
 
-      RESPONSE EXAMPLES:
-      - If user asks "What products do you have?" → Briefly describe our range and include main category links
-      - If user asks "Do you have dresses?" → "Yes! Check our Women's Fashion collection: app.zulu.club/categories/womens-fashion We have dresses, tops, co-ords and more! 👗"
-      - If user asks "Looking for running shoes" → Use product search to find matching items
-      - If user asks specifically "Show me all categories" → Provide the full category list with links
+      ${csvContext ? `CURRENT PRODUCT LINKS FOR USER QUERY:${csvContext}\n\nUse these links when responding about products.` : 'No specific product links found for this query. Provide general assistance.'}
 
-      Remember: Integrate category links naturally into the conversation flow. Let the user's interest guide how much category detail to provide.
+      Remember: Always be helpful and guide users to the best shopping experience!
       `
     };
     
@@ -604,32 +307,32 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     
     let response = completion.choices[0].message.content.trim();
     
-    // Fallback: If AI doesn't include categories but user clearly asks for them
-    const clearCategoryRequests = [
-      'categor', 'what do you sell', 'what do you have', 'products', 'items',
-      'show me everything', 'all products', 'your collection', 'what kind of'
-    ];
-    
-    const userMsgLower = userMessage.toLowerCase();
-    const shouldShowCategories = clearCategoryRequests.some(term => userMsgLower.includes(term));
-    const hasLinks = response.includes('app.zulu.club') || response.includes('zulu.club');
-    
-    if (shouldShowCategories && !hasLinks) {
-      console.log('🤖 AI missed category links, adding fallback...');
-      response += `\n\n${generateCategoryResponse(userMessage)}`;
+    // Fallback: If AI doesn't include product links but we have them, append them
+    if (productLinks.length > 0 && !response.includes('app.zulu.club')) {
+      console.log('🤖 AI missed product links, adding them...');
+      response += `\n\n🛍️ *Quick Links Based on Your Search:*\n`;
+      productLinks.forEach(link => {
+        response += `• ${link}\n`;
+      });
+      response += `\nVisit these links to explore products! 🚀`;
     }
     
     return response;
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
-    // Fallback to category response for clear product queries
-    const clearProductQueries = [
-      'product', 'categor', 'what do you sell', 'what do you have', 'buy', 'shop'
-    ];
-    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
-      return generateCategoryResponse(userMessage);
+    
+    // Fallback to CSV-based response for product queries
+    const productLinks = getProductLinksFromCSV(userMessage);
+    if (productLinks.length > 0) {
+      let fallbackResponse = `I found these products matching your search:\n\n`;
+      productLinks.forEach(link => {
+        fallbackResponse += `• ${link}\n`;
+      });
+      fallbackResponse += `\nVisit these links to explore! 🛍️`;
+      return fallbackResponse;
     }
+    
     return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know about our products? 🛍️";
   }
 }
@@ -669,13 +372,17 @@ async function handleMessage(sessionId, userMessage) {
     
   } catch (error) {
     console.error('❌ Error handling message:', error);
-    // Fallback response
-    const clearProductQueries = [
-      'product', 'categor', 'what do you sell', 'what do you have'
-    ];
-    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
-      return generateCategoryResponse(userMessage);
+    
+    // Fallback to CSV-based response
+    const productLinks = getProductLinksFromCSV(userMessage);
+    if (productLinks.length > 0) {
+      let fallbackResponse = `I found these products for you:\n\n`;
+      productLinks.forEach(link => {
+        fallbackResponse += `• ${link}\n`;
+      });
+      return fallbackResponse;
     }
+    
     return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
 }
@@ -729,54 +436,128 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - GitHub CSV Product Search',
+    version: '4.0 - CSV Integration',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
-      product_search: 'AI-powered product detection and search',
-      csv_integration: 'GitHub CSV data integration',
-      data_cleaning: 'Removed null values and deals/offers',
-      simple_links: 'Product links: app.zulu.club/ProductName',
-      categories: '8 main categories with subcategories',
+      csv_integration: 'Dynamic product links from GitHub CSVs',
+      smart_matching: 'Keyword-based category matching',
       whatsapp_integration: 'Gallabox API integration'
+    },
+    csv_data: {
+      categories_loaded: categoriesData.length,
+      galleries_loaded: galleriesData.length,
+      status: categoriesData.length > 0 ? 'Active' : 'Loading'
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
-      products: 'GET /products'
+      test_message: 'POST /send-test-message',
+      csv_status: 'GET /csv-status',
+      search_products: 'GET /search-products'
     },
-    product_count: productData.length,
     timestamp: new Date().toISOString()
   });
 });
 
-// Get all products
-app.get('/products', async (req, res) => {
-  const search = req.query.search;
+// New endpoint: CSV data status
+app.get('/csv-status', (req, res) => {
+  res.json({
+    categories: {
+      count: categoriesData.length,
+      sample: categoriesData.slice(0, 3)
+    },
+    galleries: {
+      count: galleriesData.length,
+      sample: galleriesData.slice(0, 3)
+    },
+    last_updated: new Date().toISOString()
+  });
+});
+
+// New endpoint: Test product search
+app.get('/search-products', async (req, res) => {
+  const query = req.query.q;
   
-  // Reload CSV data if needed
-  if (productData.length === 0) {
-    await loadCSVFromGitHub();
+  if (!query) {
+    return res.status(400).json({ 
+      error: 'Missing query parameter "q"',
+      example: '/search-products?q=dress' 
+    });
   }
   
-  if (search) {
-    const results = searchProducts(search);
+  try {
+    const productLinks = getProductLinksFromCSV(query);
+    
     res.json({
-      search_query: search,
-      results: results,
-      result_count: results.length,
-      links: results.map(product => ({
-        product: product.type1,
-        link: generateProductLink(product.type1),
-        category: product.category,
-        type2: product.type2
-      }))
+      query: query,
+      matching_links: productLinks,
+      total_found: productLinks.length,
+      search_process: {
+        step1: 'Find matching category IDs in categories1.csv',
+        step2: 'Look up type2 names in galleries1.csv using cat1 column',
+        step3: 'Generate links with app.zulu.club/ prefix and %20 for spaces'
+      }
     });
-  } else {
-    res.json({
-      products: productData.slice(0, 50), // Show first 50 products
-      total_products: productData.length,
-      link_format: 'app.zulu.club/ProductName (spaces encoded as %20)',
-      search_example: 'Use ?search=query to search products'
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Search failed',
+      details: error.message 
+    });
+  }
+});
+
+// Test endpoint to send a message manually
+app.post('/send-test-message', async (req, res) => {
+  try {
+    const { to, name, message } = req.body;
+    
+    if (!to) {
+      return res.status(400).json({ 
+        error: 'Missing "to" in request body',
+        example: { 
+          "to": "918368127760", 
+          "name": "Rishi",
+          "message": "What products do you have?" 
+        }
+      });
+    }
+    
+    const result = await sendMessage(
+      to, 
+      name || 'Test User', 
+      message || 'Hello! This is a test message from Zulu Club AI Assistant. 🚀'
+    );
+    
+    res.json({ 
+      status: 'success', 
+      message: 'Test message sent successfully',
+      data: result 
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to send test message',
+      details: error.message
+    });
+  }
+});
+
+// Refresh CSV data endpoint
+app.post('/refresh-csv-data', async (req, res) => {
+  try {
+    await initializeCSVData();
+    res.json({ 
+      status: 'success', 
+      message: 'CSV data refreshed successfully',
+      data: {
+        categories_count: categoriesData.length,
+        galleries_count: galleriesData.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to refresh CSV data',
+      details: error.message
     });
   }
 });
