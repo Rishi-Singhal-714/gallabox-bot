@@ -55,100 +55,15 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Static fallback categories in case CSV loading fails
-const STATIC_CATEGORIES = {
-  "Women's Fashion": {
-    link: "app.zulu.club/categories/womens-fashion",
-    subcategories: {
-      "Dresses": "app.zulu.club/categories/womens-fashion/dresses",
-      "Tops": "app.zulu.club/categories/womens-fashion/tops",
-      "Co-ords": "app.zulu.club/categories/womens-fashion/co-ords",
-      "Winterwear": "app.zulu.club/categories/womens-fashion/winterwear",
-      "Loungewear": "app.zulu.club/categories/womens-fashion/loungewear"
-    }
-  },
-  "Men's Fashion": {
-    link: "app.zulu.club/categories/mens-fashion",
-    subcategories: {
-      "Shirts": "app.zulu.club/categories/mens-fashion/shirts",
-      "Tees": "app.zulu.club/categories/mens-fashion/tees",
-      "Jackets": "app.zulu.club/categories/mens-fashion/jackets",
-      "Athleisure": "app.zulu.club/categories/mens-fashion/athleisure"
-    }
-  },
-  "Home Decor": {
-    link: "app.zulu.club/categories/home-decor",
-    subcategories: {
-      "Showpieces": "app.zulu.club/categories/home-decor/showpieces",
-      "Vases": "app.zulu.club/categories/home-decor/vases",
-      "Lamps": "app.zulu.club/categories/home-decor/lamps"
-    }
-  }
-};
-
-// Function to load CSV data from GitHub with better error handling
-async function loadCSVFromGitHub(csvUrl, csvType) {
-  try {
-    console.log(`📥 Loading ${csvType} from: ${csvUrl}`);
-    
-    if (!csvUrl) {
-      throw new Error(`No URL provided for ${csvType}`);
-    }
-    
-    const response = await axios.get(csvUrl, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'ZuluClub-Bot/1.0',
-        'Accept': 'text/csv'
-      }
-    });
-    
-    const results = [];
-    
-    return new Promise((resolve, reject) => {
-      const stream = Readable.from(response.data);
-      stream
-        .pipe(csv())
-        .on('data', (data) => {
-          // Clean the data - remove empty rows
-          if (Object.keys(data).length > 0 && Object.values(data).some(val => val && val.trim() !== '')) {
-            results.push(data);
-          }
-        })
-        .on('end', () => {
-          console.log(`✅ Loaded ${results.length} rows from ${csvType}`);
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error(`❌ CSV parsing error for ${csvType}:`, error);
-          reject(error);
-        });
-    });
-  } catch (error) {
-    console.error(`❌ Error loading ${csvType} from GitHub:`, {
-      message: error.message,
-      status: error.response?.status,
-      url: csvUrl
-    });
-    
-    // Return empty array but don't crash
-    return [];
-  }
-}
-
-// Initialize CSV data with fallback
+// Initialize CSV data
 async function initializeCSVData() {
   try {
     console.log('🔄 Initializing CSV data from GitHub...');
     
-    // Use environment variables for CSV URLs with fallbacks to YOUR actual raw GitHub URLs
     const categoriesUrl = process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
     const galleriesUrl = process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
     
-    console.log('📁 CSV URLs:', {
-      categories: categoriesUrl,
-      galleries: galleriesUrl
-    });
+    console.log('📁 CSV URLs:', { categories: categoriesUrl, galleries: galleriesUrl });
     
     // Load categories1.csv
     const categoriesResults = await loadCSVFromGitHub(categoriesUrl, 'categories1.csv');
@@ -169,50 +84,58 @@ async function initializeCSVData() {
       console.log('📋 Sample galleries data:', galleriesData[0]);
     }
     
-    // If no CSV data loaded, use static fallback
-    if (categoriesData.length === 0 || galleriesData.length === 0) {
-      console.log('⚠️ Using static fallback categories due to CSV loading issues');
-    }
-    
   } catch (error) {
     console.error('❌ Error initializing CSV data:', error);
-    // Don't throw - we'll use static fallback
-  }
-}
-
-// Initialize on startup with retry
-let csvInitialized = false;
-async function initializeWithRetry(retries = 3, delay = 5000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await initializeCSVData();
-      if (categoriesData.length > 0 && galleriesData.length > 0) {
-        csvInitialized = true;
-        console.log('✅ CSV data initialized successfully');
-        break;
-      } else {
-        console.log(`🔄 Retry ${i + 1}/${retries} in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    } catch (error) {
-      console.log(`🔄 Retry ${i + 1}/${retries} after error...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-  
-  if (!csvInitialized) {
-    console.log('⚠️ CSV data not loaded, using static categories as fallback');
   }
 }
 
 // Start initialization
-initializeWithRetry();
+initializeCSVData();
 
-// Function to find matching category IDs based on user message
+// Function to load CSV data from GitHub
+async function loadCSVFromGitHub(csvUrl, csvType) {
+  try {
+    console.log(`📥 Loading ${csvType} from: ${csvUrl}`);
+    
+    const response = await axios.get(csvUrl, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'ZuluClub-Bot/1.0',
+        'Accept': 'text/csv'
+      }
+    });
+    
+    const results = [];
+    
+    return new Promise((resolve, reject) => {
+      const stream = Readable.from(response.data);
+      stream
+        .pipe(csv())
+        .on('data', (data) => {
+          if (Object.keys(data).length > 0 && Object.values(data).some(val => val && val.trim() !== '')) {
+            results.push(data);
+          }
+        })
+        .on('end', () => {
+          console.log(`✅ Loaded ${results.length} rows from ${csvType}`);
+          resolve(results);
+        })
+        .on('error', (error) => {
+          console.error(`❌ CSV parsing error for ${csvType}:`, error);
+          reject(error);
+        });
+    });
+  } catch (error) {
+    console.error(`❌ Error loading ${csvType} from GitHub:`, error.message);
+    return [];
+  }
+}
+
+// IMPROVED LOGIC: Find matching category IDs based on user message
 function findMatchingCategoryIds(userMessage) {
   if (!categoriesData.length) {
-    console.log('⚠️ No categories data available, using static matching');
-    return findMatchingStaticCategories(userMessage);
+    console.log('⚠️ No categories data available');
+    return [];
   }
   
   const message = userMessage.toLowerCase();
@@ -220,7 +143,7 @@ function findMatchingCategoryIds(userMessage) {
   
   console.log(`🔍 Searching in ${categoriesData.length} categories for: "${message}"`);
   
-  categoriesData.forEach((row, index) => {
+  categoriesData.forEach((row) => {
     // Check all columns for matching keywords
     Object.entries(row).forEach(([key, value]) => {
       if (value && typeof value === 'string') {
@@ -248,41 +171,18 @@ function findMatchingCategoryIds(userMessage) {
   return result;
 }
 
-// Static category matching fallback
-function findMatchingStaticCategories(userMessage) {
-  const message = userMessage.toLowerCase();
-  const matchingCategories = [];
-  
-  Object.entries(STATIC_CATEGORIES).forEach(([category, data]) => {
-    const categoryLower = category.toLowerCase();
-    if (message.includes(categoryLower)) {
-      matchingCategories.push(category);
-    }
-    
-    // Check subcategories
-    Object.keys(data.subcategories).forEach(subcategory => {
-      const subLower = subcategory.toLowerCase();
-      if (message.includes(subLower)) {
-        matchingCategories.push(category);
-      }
-    });
-  });
-  
-  return matchingCategories;
-}
-
-// Function to get type2 names from galleries based on category IDs
+// IMPROVED LOGIC: Get type2 names from galleries based on category IDs
 function getType2NamesFromGalleries(categoryIds) {
   if (!galleriesData.length || !categoryIds.length) {
-    console.log('⚠️ No galleries data or category IDs, using static fallback');
-    return getType2NamesFromStatic(categoryIds);
+    console.log('⚠️ No galleries data or category IDs');
+    return [];
   }
   
   const type2Names = new Set();
   
   console.log(`🔍 Searching ${galleriesData.length} galleries for category IDs:`, categoryIds);
   
-  galleriesData.forEach((row, index) => {
+  galleriesData.forEach((row) => {
     // Try different possible category ID field names
     const categoryId = row.cat1 || row.Cat1 || row.category_id || row.CategoryID || row.id || row.ID;
     
@@ -300,22 +200,6 @@ function getType2NamesFromGalleries(categoryIds) {
   return result;
 }
 
-// Static type2 names fallback
-function getType2NamesFromStatic(categoryIds) {
-  const type2Names = [];
-  
-  categoryIds.forEach(categoryName => {
-    const category = STATIC_CATEGORIES[categoryName];
-    if (category) {
-      Object.keys(category.subcategories).forEach(subcategory => {
-        type2Names.push(subcategory);
-      });
-    }
-  });
-  
-  return type2Names;
-}
-
 // Function to generate links from type2 names
 function generateLinksFromType2(type2Names) {
   return type2Names.map(name => {
@@ -325,12 +209,12 @@ function generateLinksFromType2(type2Names) {
   });
 }
 
-// Function to get product links based on user message
+// IMPROVED LOGIC: Get product links based on user message
 function getProductLinksFromCSV(userMessage) {
   try {
-    console.log('🔍 Searching for products in CSV data...');
+    console.log('🔍 CSV LOGIC: Searching for products...');
     
-    // Step 1: Find matching category IDs
+    // Step 1: Find matching category IDs from categories1.csv
     const matchingCategoryIds = findMatchingCategoryIds(userMessage);
     
     if (!matchingCategoryIds.length) {
@@ -338,7 +222,7 @@ function getProductLinksFromCSV(userMessage) {
       return [];
     }
     
-    // Step 2: Get type2 names from galleries
+    // Step 2: Get type2 names from galleries1.csv using cat1 column
     const type2Names = getType2NamesFromGalleries(matchingCategoryIds);
     
     if (!type2Names.length) {
@@ -346,7 +230,7 @@ function getProductLinksFromCSV(userMessage) {
       return [];
     }
     
-    // Step 3: Generate links
+    // Step 3: Generate links with app.zulu.club/ prefix and %20 for spaces
     const links = generateLinksFromType2(type2Names);
     console.log(`🔗 Generated ${links.length} links:`, links);
     
@@ -360,7 +244,7 @@ function getProductLinksFromCSV(userMessage) {
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
-    console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
+    console.log(`📤 Sending message to ${to}: ${message}`);
     
     const payload = {
       channelId: gallaboxConfig.channelId,
@@ -393,61 +277,65 @@ async function sendMessage(to, name, message) {
     console.log('✅ Message sent successfully');
     return response.data;
   } catch (error) {
-    console.error('❌ Error sending message:', {
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message
-    });
+    console.error('❌ Error sending message:', error.message);
     throw error;
   }
 }
 
-// Enhanced AI Chat Functionality with CSV Integration
+// IMPROVED AI Chat Functionality - Force CSV logic for product queries
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
+  // FIRST: Check if this is a product query and get links from CSV
+  const productLinks = getProductLinksFromCSV(userMessage);
+  
+  // If we found product links, use them directly instead of AI
+  if (productLinks.length > 0) {
+    console.log(`🛍️ Using CSV logic for product query, found ${productLinks.length} links`);
+    
+    let response = `Great! I found these products for you:\n\n`;
+    
+    productLinks.slice(0, 8).forEach(link => {
+      response += `• ${link}\n`;
+    });
+    
+    if (productLinks.length > 8) {
+      response += `• ... and ${productLinks.length - 8} more options\n`;
+    }
+    
+    response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+    response += `Visit these links to explore and shop!`;
+    
+    return response;
+  }
+  
+  // If no product links found, use AI for general conversation
   if (!process.env.OPENAI_API_KEY) {
-    return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
+    return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
   
   try {
     const messages = [];
     
-    // Get product links from CSV based on user message
-    const productLinks = getProductLinksFromCSV(userMessage);
-    let csvContext = "";
-    
-    if (productLinks.length > 0) {
-      csvContext = `\n\nPRODUCT LINKS FROM DATABASE:\n${productLinks.map(link => `• ${link}`).join('\n')}`;
-      console.log(`🤖 Providing ${productLinks.length} product links to AI`);
-    }
-    
-    // System message with enhanced CSV integration
+    // System message
     const systemMessage = {
       role: "system",
-      content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
-      
+      content: `You are a friendly customer service assistant for Zulu Club. 
+
       ZULU CLUB INFORMATION:
       ${companyInfo}
 
-      IMPORTANT RESPONSE GUIDELINES:
-      1. **Use product links from database** when available in the context below
-      2. **For product inquiries**, check if there are product links provided and include them naturally
-      3. **If no specific links match**, provide general category guidance
-      4. **Keep responses conversational** and helpful
-      5. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
-      6. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-      7. **Use emojis** to make it engaging but professional
-      8. **Keep responses under 400 characters** for WhatsApp compatibility
-      9. **Be enthusiastic and helpful** - we're excited about our products!
+      RESPONSE GUIDELINES:
+      1. Keep responses under 300 characters for WhatsApp
+      2. Be enthusiastic and helpful
+      3. Highlight: 100-minute delivery, try-at-home, easy returns
+      4. Mention we're in Gurgaon with pop-ups at AIPL Joy Street & AIPL Central
+      5. Use emojis to make it engaging
 
-      ${csvContext ? `CURRENT PRODUCT LINKS FOR USER QUERY:${csvContext}\n\nUse these links when responding about products.` : 'No specific product links found for this query. Provide general assistance.'}
-
-      Remember: Always be helpful and guide users to the best shopping experience!
-      `
+      If users ask about specific products, let the system handle product links automatically.`
     };
     
     messages.push(systemMessage);
     
-    // Add conversation history if available
+    // Add conversation history
     if (conversationHistory && conversationHistory.length > 0) {
       const recentHistory = conversationHistory.slice(-6);
       recentHistory.forEach(msg => {
@@ -469,49 +357,19 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 350,
+      max_tokens: 200,
       temperature: 0.7
     });
     
-    let response = completion.choices[0].message.content.trim();
-    
-    // Fallback: If AI doesn't include product links but we have them, append them
-    if (productLinks.length > 0 && !response.includes('app.zulu.club')) {
-      console.log('🤖 AI missed product links, adding them...');
-      response += `\n\n🛍️ *Quick Links Based on Your Search:*\n`;
-      productLinks.slice(0, 5).forEach(link => { // Limit to 5 links to avoid overwhelming
-        response += `• ${link}\n`;
-      });
-      if (productLinks.length > 5) {
-        response += `• ... and ${productLinks.length - 5} more\n`;
-      }
-      response += `\nVisit these links to explore products! 🚀`;
-    }
-    
-    return response;
+    return completion.choices[0].message.content.trim();
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
-    
-    // Fallback to CSV-based response for product queries
-    const productLinks = getProductLinksFromCSV(userMessage);
-    if (productLinks.length > 0) {
-      let fallbackResponse = `I found these products matching your search:\n\n`;
-      productLinks.slice(0, 5).forEach(link => {
-        fallbackResponse += `• ${link}\n`;
-      });
-      if (productLinks.length > 5) {
-        fallbackResponse += `• ... and ${productLinks.length - 5} more\n`;
-      }
-      fallbackResponse += `\nVisit these links to explore! 🛍️`;
-      return fallbackResponse;
-    }
-    
-    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know about our products? 🛍️";
+    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know? 🛍️";
   }
 }
 
-// Handle user message with AI
+// Handle user message
 async function handleMessage(sessionId, userMessage) {
   try {
     // Initialize conversation if not exists
@@ -525,136 +383,65 @@ async function handleMessage(sessionId, userMessage) {
       content: userMessage
     });
     
-    // Get AI response
-    const aiResponse = await getChatGPTResponse(
-      userMessage, 
-      conversations[sessionId].history
-    );
+    // Get response
+    const response = await getChatGPTResponse(userMessage, conversations[sessionId].history);
     
-    // Add AI response to history
+    // Add response to history
     conversations[sessionId].history.push({
       role: "assistant",
-      content: aiResponse
+      content: response
     });
     
-    // Keep history manageable (last 10 messages)
+    // Keep history manageable
     if (conversations[sessionId].history.length > 10) {
       conversations[sessionId].history = conversations[sessionId].history.slice(-10);
     }
     
-    return aiResponse;
+    return response;
     
   } catch (error) {
     console.error('❌ Error handling message:', error);
-    
-    // Fallback to CSV-based response
-    const productLinks = getProductLinksFromCSV(userMessage);
-    if (productLinks.length > 0) {
-      let fallbackResponse = `I found these products for you:\n\n`;
-      productLinks.slice(0, 5).forEach(link => {
-        fallbackResponse += `• ${link}\n`;
-      });
-      return fallbackResponse;
-    }
-    
     return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
 }
 
-// Webhook endpoint to receive messages
+// Webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
     
     const webhookData = req.body;
-    
-    // Extract message and contact info from Gallabox webhook
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
     
-    console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
+    console.log(`💬 Message from ${userPhone} (${userName}): ${userMessage}`);
     
     if (userMessage && userPhone) {
-      // Use phone number as session ID
       const sessionId = userPhone;
-      
-      // Get AI response
       const aiResponse = await handleMessage(sessionId, userMessage);
-      
-      // Send response via Gallabox
       await sendMessage(userPhone, userName, aiResponse);
-      console.log(`✅ AI response sent to ${userPhone}`);
-    } else {
-      console.log('❓ No valid message or phone number found in webhook');
+      console.log(`✅ Response sent to ${userPhone}`);
     }
     
-    res.status(200).json({ 
-      status: 'success', 
-      message: 'Webhook processed successfully',
-      processed: true 
-    });
+    res.status(200).json({ status: 'success', message: 'Webhook processed' });
     
   } catch (error) {
     console.error('💥 Webhook error:', error.message);
-    res.status(500).json({ 
-      status: 'error', 
-      message: error.message,
-      processed: false 
-    });
+    res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    status: 'Server is running on Vercel', 
+    status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '4.2 - Fixed CSV Integration',
-    features: {
-      ai_chat: 'OpenAI GPT-3.5 powered responses',
-      csv_integration: 'Dynamic product links from GitHub CSVs',
-      smart_matching: 'Keyword-based category matching',
-      fallback_system: 'Static categories when CSV fails',
-      whatsapp_integration: 'Gallabox API integration'
-    },
+    version: '5.0 - Enhanced CSV Logic',
     csv_data: {
       categories_loaded: categoriesData.length,
-      galleries_loaded: galleriesData.length,
-      status: csvInitialized ? 'Active' : 'Fallback Mode',
-      csv_urls: {
-        categories: process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv',
-        galleries: process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv'
-      }
-    },
-    endpoints: {
-      webhook: 'POST /webhook',
-      health: 'GET /',
-      test_message: 'POST /send-test-message',
-      csv_status: 'GET /csv-status',
-      search_products: 'GET /search-products',
-      refresh_data: 'POST /refresh-csv-data'
-    },
-    timestamp: new Date().toISOString()
-  });
-});
-
-// CSV data status endpoint
-app.get('/csv-status', (req, res) => {
-  res.json({
-    initialized: csvInitialized,
-    categories: {
-      count: categoriesData.length,
-      sample: categoriesData.slice(0, 2),
-      source: process.env.CATEGORIES_CSV_URL || 'Using default URL'
-    },
-    galleries: {
-      count: galleriesData.length,
-      sample: galleriesData.slice(0, 2),
-      source: process.env.GALLERIES_CSV_URL || 'Using default URL'
-    },
-    static_fallback: !csvInitialized,
-    last_updated: new Date().toISOString()
+      galleries_loaded: galleriesData.length
+    }
   });
 });
 
@@ -663,10 +450,7 @@ app.get('/search-products', async (req, res) => {
   const query = req.query.q;
   
   if (!query) {
-    return res.status(400).json({ 
-      error: 'Missing query parameter "q"',
-      example: '/search-products?q=dress' 
-    });
+    return res.status(400).json({ error: 'Missing query parameter "q"' });
   }
   
   try {
@@ -676,81 +460,29 @@ app.get('/search-products', async (req, res) => {
       query: query,
       matching_links: productLinks,
       total_found: productLinks.length,
-      data_sources: {
-        categories_used: categoriesData.length,
-        galleries_used: galleriesData.length,
-        using_fallback: !csvInitialized
-      },
-      search_process: {
+      logic: {
         step1: 'Find matching category IDs in categories1.csv',
-        step2: 'Look up type2 names in galleries1.csv using cat1 column',
+        step2: 'Look up type2 names in galleries1.csv using cat1 column', 
         step3: 'Generate links with app.zulu.club/ prefix and %20 for spaces'
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Search failed',
-      details: error.message 
-    });
-  }
-});
-
-// Test endpoint to send a message manually
-app.post('/send-test-message', async (req, res) => {
-  try {
-    const { to, name, message } = req.body;
-    
-    if (!to) {
-      return res.status(400).json({ 
-        error: 'Missing "to" in request body',
-        example: { 
-          "to": "918368127760", 
-          "name": "Rishi",
-          "message": "What products do you have?" 
-        }
-      });
-    }
-    
-    const result = await sendMessage(
-      to, 
-      name || 'Test User', 
-      message || 'Hello! This is a test message from Zulu Club AI Assistant. 🚀'
-    );
-    
-    res.json({ 
-      status: 'success', 
-      message: 'Test message sent successfully',
-      data: result 
-    });
-    
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Failed to send test message',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Search failed', details: error.message });
   }
 });
 
 // Refresh CSV data endpoint
 app.post('/refresh-csv-data', async (req, res) => {
   try {
-    await initializeWithRetry();
+    await initializeCSVData();
     res.json({ 
       status: 'success', 
-      message: 'CSV data refreshed successfully',
-      data: {
-        categories_count: categoriesData.length,
-        galleries_count: galleriesData.length,
-        csv_initialized: csvInitialized
-      }
+      categories_count: categoriesData.length,
+      galleries_count: galleriesData.length
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Failed to refresh CSV data',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to refresh CSV data' });
   }
 });
 
-// Export for Vercel
 module.exports = app;
