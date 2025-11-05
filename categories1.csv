@@ -1,0 +1,269 @@
+"id","name","parent_id","slug","image","banner","banner1","banner2","row_order","priority","business","status","clicks","by_default"
+"1869","Men","0","men","uploads/media/2025/1756803692884-0k8jo3.png","uploads/media/2024/FASHION_NEAR_YOU_(18).png",NULL,NULL,"0",NULL,"Fashion","1","25136","1"
+"1870","Women","0","women","uploads/media/2025/1756803727725-1hc73k.png","uploads/media/2024/FASHION_NEAR_YOU_(18)1.png",NULL,NULL,"0",NULL,"Fashion","1","31522","1"
+"1871","Topwear","1869","topwear","uploads/media/2025/1758798423559-iq1stp.png","uploads/media/2024/mens-topwear-tshirt1.png",NULL,NULL,"0",NULL,"Fashion","1","308","1"
+"1872","Westernwear","1870","westernwear","uploads/media/2025/1758798517415-j509lc.png","uploads/media/2024/women_(43).png",NULL,NULL,"0",NULL,"Fashion","1","262","1"
+"1873","Kids","0","kids","uploads/media/2025/1756803755634-w7s1gs.png","uploads/media/2024/FASHION_NEAR_YOU_(18)1.png",NULL,NULL,"0",NULL,"Fashion","1","3286","1"
+"1874","Home","0","home","uploads/media/2025/1758800121136-qkwy16.png","uploads/media/2024/home_-_bath_linen_-_bed_runners_(2).png",NULL,NULL,"0",NULL,"Fashion","1","833",NULL
+"1876","Boys","1873","boys","uploads/category/23.png","uploads/media/2024/men_topwear_suits1.png",NULL,NULL,"0","0","Fashion","1","16",NULL
+"1877","Accessories","1873","girls","uploads/category/89.png","uploads/media/2024/Kids_-_girl_-_dresses_1.png",NULL,NULL,"0","0","Fashion","1","143",NULL
+"1879","Bed & Linen","1874","bed-linen","uploads/category/158.png","uploads/media/2024/home_-_bath_linen_-_bed_runners_(3).png",NULL,NULL,"0","0","HOME","1","0",NULL
+"1880","Bath","1874","bath","uploads/media/2025/1758379294927-jk42ap.png","uploads/media/2024/home_-_bath_-_towels_sets.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1883","Fragrances","1875","fragrances","uploads/media/2025/1758797556971-v220ed.png","uploads/media/2024/beauty_-_fragrances.png",NULL,NULL,"0",NULL,"BEAUTY","1","19",NULL
+"1885","Mens Grooming","1875","mens-grooming","uploads/category/280.png","uploads/media/2024/beauty_-_mens_grooming1.png",NULL,NULL,"0","0","BEAUTY","1","0",NULL
+"1886","Health and Wellness Supplements","1875","wellness","uploads/category/301.png","uploads/media/2024/beauty_-_wellness1.png",NULL,NULL,"0","0","BEAUTY","1","0",NULL
+"1887","Bottomwear","1869","bottomwear","uploads/media/2025/1758800944288-pc3opc.png","uploads/media/2025/Untitled_design_(3).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1888","Men Footwear","1869","footwear","uploads/category/32.png","uploads/media/2024/men_footwear_-_formalshoes1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1889","Festivewear","1869","festivewear","uploads/category/34.png","uploads/media/2024/bottomwear6.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1890","Sportswear","1869","sportswear","uploads/category/33.png","uploads/media/2024/men_-_sport_wear-_active_t_shirt1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1891","Innerwear","1869","innerwear","uploads/category/35.png","uploads/media/2024/men_-_inner_wear-_brief_trunk1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1892","Accessories","1869","accessories","uploads/media/2025/1758797845759-jcak0y.png","uploads/media/2024/men_-_accessories_-_wallets1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1893","Indianwear","1870","indianwear","uploads/media/2025/1758797657167-lhwxcc.png","uploads/media/2024/women3.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1894","Footwear","1870","footwear-1","uploads/media/2025/1756374551407-72xxj9.png","uploads/media/2025/1756383184001-9h5g29.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1895","Sleepwear","1870","sleepwear","uploads/media/2025/1756490634645-bmen4n.png","uploads/media/2025/1756536959719-rgn3qo.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1896","Sports & Activewear","1870","sports-activewear","uploads/category/416.png","uploads/media/2024/women_(2)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1897","Maternity","1870","maternity","uploads/category/379.png","uploads/media/2024/women_(1)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1898","Accessories","1870","accessories-1","uploads/media/2025/1758797812601-bktgla.png","uploads/media/2024/women_-_accessories_-_bags_and_wallets1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1899","Infants","1873","infants","uploads/category/80.png","uploads/media/2024/Kids_-_infants_-_bodysuit_(9).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1900","Footwear","1873","footwear-2","uploads/media/2025/1756378228390-635u33.png","uploads/media/2025/1756490315695-gl6qal.png","uploads/media/2025/1756379819200-2s6tcf.png",NULL,"0",NULL,"Fashion","1","0",NULL
+"1901","Accessories","1873","accessories-2","uploads/category/125.png","uploads/media/2024/Kids_-_accessories_-_sunglasses2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1902","Homedecor","1874","homedecor","uploads/media/2025/1758540481024-3gozk4.png","uploads/media/2024/home_-_home_décor_-_wall_decor_(1).png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1903","Flooring","1874","flooring","uploads/media/2025/1758378786206-mvvvss.png","uploads/media/2024/home_-_flooring_-_floor_mats_dhurries4.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1904","Lighting","1874","lighting","uploads/media/2025/1758540516486-1u4gre.png","uploads/media/2024/home_-_lighting_-_outdoor_lamps2.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1905","Kitchen & Dining","1874","kitchen-dining","uploads/media/2025/1758540566735-q531jl.png","uploads/media/2024/home_-_kitchen_dining_-_kitchen_storage_tools5.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1906","Storage","1874","storage","uploads/media/2025/1758378826320-g4akuh.png","uploads/media/2024/home_-_kitchen_dining_-_kitchen_storage_tools_(1)1.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"1907","T Shirts","1871","t-shirts","uploads/media/2025/1756381032575-0aqebh.png","uploads/media/2025/1756489307470-qdlugt.png",NULL,NULL,"0",NULL,"Fashion","1","2872",NULL
+"1908","Casual Shirts","1871","casual-shirts","uploads/media/2025/1756467224086-k9gh93.png","uploads/media/2025/1756489234232-to7oik.png",NULL,NULL,"0",NULL,"Fashion","1","568",NULL
+"1909","Formal Shirts","1871","formal-shirts","uploads/media/2025/1756381074638-lejmql.png","uploads/media/2025/1756489128720-l2w0t4.png",NULL,NULL,"0",NULL,"Fashion","1","635",NULL
+"1910","Co-ord Sets","1871","Co-ord sets","uploads/media/2025/download__8_-removebg-preview1.png","uploads/media/2025/download__9_-removebg-preview.png",NULL,NULL,"0","0","Fashion","1","88",NULL
+"1911","Sweaters","1871","sweaters","uploads/media/2024/men_(4).png","uploads/media/2025/Untitled_design4.png",NULL,NULL,"0","0","Fashion","1","268",NULL
+"1912","Jackets","1871","jackets","uploads/media/2024/men_(5).png","uploads/media/2025/Untitled_design_(1)1.png",NULL,NULL,"0","0","Fashion","1","94",NULL
+"1913","Blazers","1871","blazers","uploads/media/2024/men_(6).png","uploads/media/2024/men_topwear_blazer1.png",NULL,NULL,"0","0","Fashion","1","44",NULL
+"1914","Suits","1871","suits","uploads/media/2024/men_(7).png","uploads/media/2024/men_topwear_suits2.png",NULL,NULL,"0","0","Fashion","1","126",NULL
+"1915","Rain Jackets","1871","rain-jackets","uploads/media/2024/men_(8).png","uploads/media/2025/Untitled_design_(2)2.png",NULL,NULL,"0","0","Fashion","1","35",NULL
+"1916","Bottomwear","1887","bottomwear-2","uploads/media/2025/1756467068654-8q0c4h.png","uploads/media/2025/1756536123229-p0mdte.png",NULL,NULL,"0",NULL,"Fashion","1","241",NULL
+"1917","Casual Trousers","1887","casual-trousers","uploads/media/2025/1756467270747-dky3o3.png","uploads/media/2025/1756488969138-10vl0s.png",NULL,NULL,"0",NULL,"Fashion","1","58",NULL
+"1918","Formal Trousers","1887","formal-trousers","uploads/media/2025/1756381198704-9viyyl.png","uploads/media/2024/men_bottomwear_-_formal_trousers_1.png",NULL,NULL,"0",NULL,"Fashion","1","15",NULL
+"1919","Shorts","1887","shorts","uploads/media/2025/1756490684905-r48p8e.png","uploads/media/2025/Untitled_design_(5).png",NULL,NULL,"0",NULL,"Fashion","1","78",NULL
+"1920","Track pants & Joggers","1887","track-pants-joggers","uploads/media/2025/1756490573952-1vrjka.png","uploads/media/2024/men_bottomwear_-_track_pants_joggers_1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1921","Briefs & Trunks","1891","briefs-trunks","uploads/media/2025/1756490808257-4ent4b.png","uploads/media/2024/men_-_inner_wear-_brief_trunk_(1)1.png",NULL,NULL,"0",NULL,"Fashion","1","26",NULL
+"1922","Boxers","1891","boxers","uploads/media/2025/1756455889091-2ndd3v.png","uploads/media/2025/Untitled_design_(10).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1923","Vests","1891","vests","uploads/media/2024/236.png","uploads/media/2025/Untitled_design_(8).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1924","Sleep & Loungewear","1891","sleep-loungewear","uploads/media/2024/men_-_inner_wear-_sleep_loungewear1.png","uploads/media/2024/men_-_inner_wear-_sleep_loungewear_(1).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1925","Thermals","1891","thermals","uploads/media/2024/2381.png","uploads/media/2025/Untitled_design_(9).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1926","Kurta & Kurta Sets","1889","kurta-kurta-sets","uploads/media/2025/1756455973309-pnrg56.png","uploads/media/2025/1756489174187-ue1a2g.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1927","Sherwanis","1889","sherwanis","uploads/media/2024/men_-_festive_wear_-_sherwanis3.png","uploads/media/2024/men_-_festive_wear_-_sherwanis2.png",NULL,NULL,"0","0","Fashion","1","11",NULL
+"1928","Nehru Jackets","1889","nehru-jackets","uploads/media/2024/men_-_festive_wear_-_nehru_jacket2.png","uploads/media/2024/men_-_festive_wear_-_nehru_jacket1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1929","Dhotis","1889","dhotis","uploads/media/2024/men_-_festive_wear_-_dhotis2.png","uploads/media/2024/men_-_festive_wear_-_dhotis1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1930","Casual Shoes","1888","casual-shoes","uploads/media/2025/1758797481742-k1quej.png","uploads/media/2024/men_-_sport_wear-_sport_shoes_(1)1.png",NULL,NULL,"0",NULL,"Fashion","1","8",NULL
+"1931","Sports Shoes","1888","sports-shoes","uploads/media/2024/1_Men.png","uploads/media/2025/Untitled_design_(11).png",NULL,NULL,"0","0","Fashion","1","271",NULL
+"1932","Formal Shoes","1888","formal-shoes","uploads/media/2025/1758798381303-ay15q1.png","uploads/media/2025/Untitled_design_(12).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1933","Footwear","1888","footwear-4","uploads/media/2025/1756381101540-kdhws6.png","uploads/media/2025/1756536836120-5r7hq8.png",NULL,NULL,"0",NULL,"Fashion","1","12",NULL
+"1934","Sandals & Floaters","1888","sandals-floaters","uploads/media/2024/men_footwear_-flip_flops2.png","uploads/media/2024/men_footwear_-_sandals_floaters1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1935","Flip Flops","1888","flip-flops","uploads/media/2025/1756490732341-r2vwzr.png","uploads/media/2025/1756536751398-mueaow.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1936","Socks","1888","socks","uploads/media/2025/1756456058354-ast3qh.png","uploads/media/2024/men_footwear_-socks1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1937","Sports Shoes","1890","sports-shoes-1","uploads/media/2024/1_Men.png","uploads/media/2024/men_-_sport_wear-_sport_shoes_1.png",NULL,NULL,"0","0","Fashion","1","23",NULL
+"1938","Sports Sandals","1890","sports-sandals","uploads/media/2024/men_-_sport_wear-_sport_sandals2.png","uploads/media/2024/men_-_sport_wear-_sport_sandals1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1939","Active T Shirts","1890","active-t-shirts","uploads/media/2025/1758378947367-dpmgol.png","uploads/media/2024/men_-_sport_wear-_active_t_shirt2.png",NULL,NULL,"0",NULL,"Fashion","1","8",NULL
+"1940","Track pants & Shorts","1890","track-pants-shorts","uploads/media/2025/1756490707151-vf2n1w.png","uploads/media/2024/men_-_sport_wear-_track_pants_shorts1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1941","Tracksuits","1890","tracksuits","uploads/media/2024/1921.png","uploads/media/2024/men_-_sport_wear-_tracksuits1.png",NULL,NULL,"0","0","Fashion","1","14",NULL
+"1942","Jackets & Sweatshirts","1890","jackets-sweatshirts","uploads/media/2024/1931.png","uploads/media/2025/Untitled_design_(6).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1943","Sports Accessories","1890","sports-accessories","uploads/media/2024/men_-_sport_wear-_sport_accessories2.png","uploads/media/2024/men_-_sport_wear-_sport_accessories1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1944","Swimwear","1890","swimwear","uploads/media/2025/1756456030303-1h7xnh.png","uploads/media/2025/Untitled_design_(7).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1945","Jewellery & Accessories","1892","wallets","uploads/media/2025/1756491062058-u40n8y.png","uploads/media/2025/1756382745143-w96hf1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1946","Belts","1892","belts","uploads/media/2024/men_-_accessories_-_belts2.png","uploads/media/2024/men_-_accessories_-_belts1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1947","Perfumes","1892","perfumes","uploads/media/2024/men_-_accessories_-_perfume2.png","uploads/media/2024/men_-_accessories_-_perfume1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1948","Trimmers","1892","trimmers","uploads/media/2024/men_-_accessories_-_trimmer2.png","uploads/media/2024/men_-_accessories_-_trimmer1.png",NULL,NULL,"0","0","ELECTRONICS","1","0",NULL
+"1949","Deaodrants","1892","deaodrants","uploads/media/2025/1758379107700-jmy9w2.png","uploads/media/2024/men_-_accessories_-_deodorants1.png",NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"1950","Ties, Cufflinks & Pocket Squares","1892","ties-cufflinks-pocket-squares","uploads/media/2024/276.png","uploads/media/2024/men_-_accessories_-_ties,_cufflinks_and_pocket_squares1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1951","Accessory Gift Set","1892","accessory-gift-set","uploads/media/2025/1756994607204-clzn1p.png","uploads/media/2024/men_-_accessories_-_accessory_gift_set1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1952","Caps & Hats","1892","caps-hats","uploads/media/2024/men_-_accessories_-cap_hats2.png","uploads/media/2024/men_-_accessories_-cap_hats1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1953","Mufflers, Scarves & Gloves","1892","mufflers-scarves-gloves","uploads/media/2024/279.png","uploads/media/2024/men_-_accessories_-_mufflers,_scarves_gloves1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1954","Phone Cases","2135","phone-cases","uploads/media/2024/men_-_accessories_-_phone_case2.png","uploads/media/2024/men_-_accessories_-_phone_case1.png",NULL,NULL,"0","0","ELECTRONICS","1","0",NULL
+"1955","Accessories","1892","accessories-3","uploads/media/2025/1756467452468-xtre5n.png","uploads/media/2025/1756488863271-tk0pe5.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1956","Helmets","1892","helmets","uploads/media/2024/men_-_accessories_-_helmets2.png","uploads/media/2024/men_-_accessories_-_helmets1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1957","Dresses","1872","dresses","uploads/media/2025/1756491031875-5eyktx.png","uploads/media/2025/1756382850887-oihjzz.png",NULL,NULL,"0",NULL,"Fashion","1","1339",NULL
+"1958","Tops","1872","tops","uploads/media/2025/1756490990904-hbc4h7.png","uploads/media/2025/1756382793103-hkxota.png",NULL,NULL,"0",NULL,"Fashion","1","84",NULL
+"1959","T Shirts","1872","t-shirts-1","uploads/media/2025/1758800564228-8sevrq.png","uploads/media/2025/Untitled_design_(18).png",NULL,NULL,"0",NULL,"Fashion","1","102",NULL
+"1960","Jeans","1872","jeans-1","uploads/media/2025/1758797687039-6vbkcb.png","uploads/media/2025/Untitled_design_(17).png",NULL,NULL,"0",NULL,"Fashion","1","260",NULL
+"1961","Trousers","1872","trousers","uploads/media/2025/1756456382087-3eh5nm.png","uploads/media/2025/Untitled_design_(19).png",NULL,NULL,"0",NULL,"Fashion","1","75",NULL
+"1962","Shorts & Skirts","1872","shorts-skirts","uploads/media/2025/1758622148692-caicud.png","uploads/media/2024/women_(3)3.png",NULL,NULL,"0",NULL,"Fashion","1","47",NULL
+"1963","Co-ords","1872","co-ords","uploads/media/2025/1756379186994-h753l1.png","uploads/media/2025/1756383140050-67r6pr.png",NULL,NULL,"0",NULL,"Fashion","1","486",NULL
+"1964","Playsuits","1872","playsuits","uploads/media/2024/women_-_western_wear_-_playsuits.png","uploads/media/2025/Playsuit_1.png",NULL,NULL,"0","0","Fashion","1","2",NULL
+"1965","Jumpsuits","1872","jumpsuits","uploads/media/2024/women_-_western_wear_-_jumpsuits.png","uploads/media/2024/women_(2)2.png",NULL,NULL,"0","0","Fashion","1","126",NULL
+"1966","Shrugs","1872","shrugs","uploads/media/2024/women_-_western_wear_-_shrugs.png","uploads/media/2024/women_(3)2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1967","Sweaters & Sweatshirts","1872","sweaters-sweatshirts","uploads/media/2024/women_-_western_wear_-_sweaters_sweatshirts.png","uploads/media/2024/women_(4)2.png",NULL,NULL,"0","0","Fashion","1","10",NULL
+"1968","Jackets & Coats","1872","jackets-coats","uploads/media/2024/women_-_western_wear_-_jackets_coats_.png","uploads/media/2025/Untitled_design_(20).png",NULL,NULL,"0","0","Fashion","1","68",NULL
+"1969","Blazers & Waistcoats","1872","blazers-waistcoats","uploads/media/2024/2_Women.png","uploads/media/2025/Untitled_design_(21).png",NULL,NULL,"0","0","Fashion","1","84",NULL
+"1970","Kurtas & Suits","1893","kurtas-suits","uploads/media/2025/1756379045345-6pb8kz.png","uploads/media/2025/1756382917567-w1tceh.png",NULL,NULL,"0",NULL,"Fashion","1","632",NULL
+"1971","Kurtis, Tunics & Tops","1893","kurtis-tunics-tops","uploads/media/2025/1758798238065-yyvh3e.png","uploads/media/2025/1756382646218-p4tkyx.png",NULL,NULL,"0",NULL,"Fashion","1","25",NULL
+"1972","Sarees","1893","sarees","uploads/media/2025/1756378875115-4939fi.png","uploads/media/2025/1756383041827-jzz7d4.png",NULL,NULL,"0",NULL,"Fashion","1","181",NULL
+"1973","Ethnicwear","1893","ethnicwear","uploads/media/2025/1758799993344-66zp0u.png","uploads/media/2025/Untitled_design_(24).png",NULL,NULL,"0",NULL,"Fashion","1","116",NULL
+"1974","Leggings, Salwars & Chudidaars","1893","leggings-salwars-chudidaars","uploads/media/2024/women_-_Indian_wear_-_leggings,_salwars_chudidaars.png","uploads/media/2025/Untitled_design_(26).png",NULL,NULL,"0","0","Fashion","1","12",NULL
+"1975","Skirts & Palazzos","1893","skirts-palazzos","uploads/media/2024/women_-_Indian_wear_-_skirts_palazzos.png","uploads/media/2024/women_(16)1.png",NULL,NULL,"0","0","Fashion","1","37",NULL
+"1976","Dress Materials","1893","dress-materials","uploads/media/2024/women_-_Indian_wear_-_dress_materials.png","uploads/media/2024/women_(25)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1977","Lehenga Cholis","1893","lehenga-cholis","uploads/media/2025/1758800197589-tz7b3v.png","uploads/media/2024/women_(17)1.png",NULL,NULL,"0",NULL,"Fashion","1","20",NULL
+"1978","Dupattas & Shawls","1893","dupattas-shawls","uploads/media/2024/women_-_Indian_wear_-_dupattas_shawls.png","uploads/media/2025/Untitled_design_(28).png",NULL,NULL,"0","0","Fashion","1","11",NULL
+"1979","Jackets","1893","jackets-1","uploads/media/2024/women_-_Indian_wear_-_jackets.png","uploads/media/2024/women_(10)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1980","Flats","1894","flats","uploads/media/2025/1758800051342-z3p8sh.png","uploads/media/2024/women_-_footwear-_flats1.png",NULL,NULL,"0",NULL,"Fashion","1","60",NULL
+"1981","Casual Shoes","1894","casual-shoes-1","uploads/media/2024/women_-_footwear_-_casual_shoes.png","uploads/media/2024/women_(18)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1982","Heels","1894","heels","uploads/media/2024/women_-_footwear_-_heels.png","uploads/media/2025/Untitled_design_(27).png",NULL,NULL,"0","0","Fashion","1","104",NULL
+"1983","Boots","1894","boots","uploads/media/2024/164.png","uploads/media/2024/women_(21)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1984","Sports Shoes & Floaters","1894","sports-shoes-floaters","uploads/media/2024/1651.png","uploads/media/2025/Untitled_design_(23).png",NULL,NULL,"0","0","Fashion","1","110",NULL
+"1985","Clothing","1896","clothing","uploads/media/2024/197.png","uploads/media/2024/women_(6)1.png",NULL,NULL,"0","0","Fashion","1","63",NULL
+"1986","Footwear","1896","footwear-3","uploads/media/2025/1756534867944-u5nyps.png","uploads/media/2024/women_(20)1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1987","Sports Accessories","1896","sports-accessories-1","uploads/media/2024/199.png","uploads/media/2024/women_(19)1.png",NULL,NULL,"0","0","Fashion","1","31",NULL
+"1988","Sports Equipment","1896","sports-equipment","uploads/media/2024/200.png","uploads/media/2024/women_(22)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1989","Bra","1895","bra","uploads/media/2025/1758797405187-o0xrsx.png","uploads/media/2024/women_(11)1.png",NULL,NULL,"0",NULL,"Fashion","1","16",NULL
+"1990","Briefs","1895","briefs","uploads/media/2025/1758797430586-7bvbip.png","uploads/media/2024/women_(24).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1991","Shapewear","1895","shapewear","uploads/media/2024/women_-_sleepwear_-_shapewear.png","uploads/media/2024/women_(9)1.png",NULL,NULL,"0","0","Fashion","1","16",NULL
+"1992","Sleepwear & Loungewear","1895","sleepwear-loungewear","uploads/media/2025/1756490602670-yor0v8.png","uploads/media/2025/1756536941983-yyfsdu.png",NULL,NULL,"0",NULL,"Fashion","1","19",NULL
+"1993","Swimwear","1895","swimwear-1","uploads/media/2025/1756456010841-9cej4h.png","uploads/media/2025/Untitled_design_(31)1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1994","Thermals","1895","thermals-1","uploads/media/2024/2_Women1.png","uploads/media/2025/Untitled_design_(34)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"1995","Belts, Scarves & More","1898","belts-scarves-more","uploads/media/2025/1758800319922-oyn9ce.png","uploads/media/2025/Untitled_design_(29).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1996","Handbags","1898","handbags","uploads/media/2025/1756379124428-rco3zs.png","uploads/media/2025/1756383090519-lj9o81.png",NULL,NULL,"0",NULL,"Fashion","1","37",NULL
+"1997","Bags & Wallets","1898","bags-wallets","uploads/media/2025/1758799894443-jr1dvg.png","uploads/media/2024/women_-_accessories_-_bags_and_wallets2.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"1998","T Shirts","1876","t-shirts-2","uploads/media/2025/1756456253162-jxnuko.png","uploads/media/2025/1756490057801-76oi4l.png",NULL,NULL,"0",NULL,"Fashion","1","11",NULL
+"1999","Shirts","1876","shirts","uploads/media/2025/1758797738005-ypfae6.png","uploads/media/2025/Untitled_design_(32)1.png",NULL,NULL,"0",NULL,"Fashion","1","94",NULL
+"2000","Shorts","1876","shorts-1","uploads/media/2025/1756455942247-vni6px.png","uploads/media/2025/Untitled_design_(44).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2001","Jeans","1876","jeans-2","uploads/media/2024/712.png","uploads/media/2025/Untitled_design_(33)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2002","Trousers","1876","trousers","uploads/media/2024/86.png","uploads/media/2025/Untitled_design_(48).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2003","Clothing Sets","1876","clothing-sets","uploads/media/2025/1756378553096-85eivs.png","uploads/media/2025/1756489942823-lns7xr.png",NULL,NULL,"0",NULL,"Fashion","1","14",NULL
+"2004","Ethnicwear","1876","ethnicwear-1","uploads/media/2025/1756378624919-k5wbts.png","uploads/media/2025/1756490013097-08ag1l.png",NULL,NULL,"0",NULL,"Fashion","1","43",NULL
+"2005","Track pants & Payjamas","1876","track-pants-payjamas","uploads/media/2024/1316.png","uploads/media/2025/Untitled_design_(42).png",NULL,NULL,"0","0","Fashion","1","24",NULL
+"2006","Jackets, Sweaters & Sweatshirts","1876","jackets-sweaters-sweatshirts","uploads/media/2024/1210.png","uploads/media/2025/Untitled_design_(36).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2007","Partywear","1876","partywear","uploads/media/2024/1315.png","uploads/media/2024/Kids_-_boys_-_partywear2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2008","Innerwear & Thermals","1876","innerwear-thermals","uploads/media/2024/145.png","uploads/media/2024/Kids_-_boys_-_innerwear_thermals1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2009","Nightwear & Loungewear","1876","nightwear-loungewear","uploads/media/2024/154.png","uploads/media/2024/Kids_-_boys_-_trousers_(1)1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2010","Value Packs","1876","value-packs","uploads/media/2024/163.png","uploads/media/2024/Kids_-_boys_-_value_packs1.png",NULL,NULL,"0","0","Fashion","1","13",NULL
+"2011","Dresses","1877","dresses-1","uploads/media/2025/1756378815859-322mqw.png","uploads/media/2025/1756489980228-85nb2i.png",NULL,NULL,"0",NULL,"Fashion","1","90",NULL
+"2012","Tops","1877","tops-1","uploads/media/2024/801.png","uploads/media/2025/Untitled_design_(37).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2013","T Shirts","1877","t-shirts-3","uploads/media/2024/812.png","uploads/media/2025/1756490088645-6xg1tp.png",NULL,NULL,"0",NULL,"Fashion","1","13",NULL
+"2014","Clothing Sets","1877","clothing-sets-1","uploads/media/2024/821.png","uploads/media/2024/Kids_-_girl_-_clothing_set_1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2015","Lehenga Choli","1877","lehenga-choli","uploads/media/2025/1758800246512-latu14.png","uploads/media/2024/Kids_-_girl_-_lehnga_choli.png",NULL,NULL,"0",NULL,"Fashion","1","15",NULL
+"2016","Kurta Sets","1877","kurta-sets","uploads/media/2024/Kids_-_girl_-_kurta_set2.png","uploads/media/2024/Kids_-_girl_-_kurta_set1.png",NULL,NULL,"0","0","Fashion","1","12",NULL
+"2017","Party Wear","1877","party-wear","uploads/media/2025/1758800296201-3gdcl0.png","uploads/media/2024/Kids_-_girl_-_party_wear_(9).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2018","Dungarees & Jumpsuits","1877","dungarees-jumpsuits","uploads/media/2024/Kids_-_girl_-_dungarees_jumpsuit2.png","uploads/media/2025/Untitled_design_(43).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2019","Skirts & Shorts","1877","skirts-shorts","uploads/media/2025/1756378750560-us2ml4.png","uploads/media/2025/1756490353587-u5myqu.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2020","Tights & Leggings","1877","tights-leggings","uploads/media/2024/891.png","uploads/media/2024/Kids_-_girl_-_tights_leggings1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2021","Jeans, Trousers & Capris","1877","jeans-trousers-capris","uploads/media/2024/881.png","uploads/media/2025/Untitled_design_(40).png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2022","Jacket, Sweater & Sweatshirts","1877","jacket-sweater-sweatshirts","uploads/media/2024/902.png","uploads/media/2025/Untitled_design_(41).png",NULL,NULL,"0","0","Fashion","1","15",NULL
+"2023","Innerwear & Thermals","1877","innerwear-thermals-1","uploads/media/2024/912.png","uploads/media/2024/Kids_-_girl_-_innerwear_thermals1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2024","Nightwear & Loungewear","1877","nightwear-loungewear-1","uploads/media/2024/922.png","uploads/media/2024/Kids_-_girl_-_nightwear_loungewear1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2025","Back to school","1877","value-packs-1","uploads/media/2025/1758608036651-81p4v0.png","uploads/media/2024/Kids_-_girl_-_clothing_set_(1).png",NULL,NULL,"0",NULL,"Fashion","1","11",NULL
+"2026","Bodysuits","1899","bodysuits","uploads/media/2024/Kids_-_infants_-_bodysuit2.png","uploads/media/2024/Kids_-_infants_-_bodysuit_(4).png",NULL,NULL,"0","0","Fashion","1","114",NULL
+"2027","Rompers & Sleepsuits","1899","rompers-sleepsuits","uploads/media/2024/Kids_-_infants_-_rompers_sleepsuits2.png","uploads/media/2024/Kids_-_infants_-_rompers_sleepsuits1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2028","Clothing Sets","1899","clothing-sets-2","uploads/media/2024/Kids_-_infants_-_clothing_set2.png","uploads/media/2024/Kids_-_infants_-_clothing_set1.png",NULL,NULL,"0","0","Fashion","1","9",NULL
+"2029","T shirts & tops","1899","t-shirts-tops","uploads/media/2024/Kids_-_infants_-_t_shirtss_top2.png","uploads/media/2025/1756490260116-kqa7sb.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2030","Dresses","1899","dresses-2","uploads/media/2025/1756374500222-988d63.png","uploads/media/2024/Kids_-_infants_-_dresses1.png",NULL,NULL,"0","1","Fashion","1","0",NULL
+"2031","Bottomwear","1899","bottomwear-1","uploads/media/2024/Kids_-_infants_-_bottomwear2.png","uploads/media/2024/Kids_-_infants_-_bottomwear1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2032","Winterwear","1899","winterwear","uploads/media/2024/Kids_-_infants_-_winterwear2.png","uploads/media/2024/Kids_-_infants_-_winterwear1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2033","Innerwear & Sleepwear","1899","innerwear-sleepwear","uploads/media/2024/Kids_-_infants_-_innerwear_sleepwear3.png","uploads/media/2024/Kids_-_infants_-_innerwear_sleepwear2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2034","Infant Care","1899","infant-care","uploads/media/2024/Kids_-_infants_-_infant_care2.png","uploads/media/2024/Kids_-_infants_-_infant_care1.png",NULL,NULL,"0","0","Fashion","1","16",NULL
+"2035","Casual Shoes","1900","casual-shoes-2","uploads/media/2025/1758797872940-qtkbve.png","uploads/media/2024/Kids_-_footwear_-_casual_shoes1.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2036","Flipflops","1900","flipflops","uploads/media/2025/1756537424425-1yr0u6.png","uploads/media/2025/1756537311038-ne4xp7.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2037","Sports Shoes","1900","sports-shoes-2","uploads/media/2024/246.png","uploads/media/2024/Kids_-_footwear_-_sportshoes2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2038","Flats","1900","flats-1","uploads/media/2025/1758800073038-6jtiwr.png","uploads/media/2024/Kids_-_footwear_-_flats_(9).png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2039","Sandals","1900","sandals","uploads/media/2025/1756537391606-s9wz62.png","uploads/media/2025/1756537344253-pjignr.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2040","Heels","1900","heels-1","uploads/media/2024/Kids_-_footwear_-_heels2.png","uploads/media/2024/Kids_-_footwear_-_heels1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2041","School Shoes","1900","school-shoes","uploads/media/2024/Kids_-_footwear_-_school_shoes2.png","uploads/media/2024/Kids_-_footwear_-_school_shoes1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2042","Socks","1900","socks-1","uploads/media/2024/2511.png","uploads/media/2024/Kids_-_footwear_-_socks1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2043","Bags & Backpacks","1901","bags-backpacks","uploads/media/2025/1756378339755-lab42s.png","uploads/media/2025/1756489890415-k3x7v2.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2044","Watches","1901","watches","uploads/media/2024/302.png","uploads/media/2024/Kids_-_accessories_-_watches1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2045","Jewellery & Hair Accessories","1901","jewellery-hair-accessories","uploads/media/2024/Kids_-_accessories_-_jewellery_hair_accessories2.png","uploads/media/2024/Kids_-_accessories_-_jewellery_hair_accessories1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2046","Sunglasses","1901","sunglasses","uploads/media/2024/Kids_-_accessories_-_sunglasses4.png","uploads/media/2024/Kids_-_accessories_-_sunglasses3.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2047","Masks & Protective Gears","1901","masks-protective-gears","uploads/media/2024/304.png","uploads/media/2024/Kids_-_accessories_-_masks_protective_gears1.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2048","Caps & Hats","1901","caps-hats-1","uploads/media/2024/Kids_-_accessories_-_caps_and_hats3.png","uploads/media/2024/Kids_-_accessories_-_caps_and_hats2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2049","Home","1901","home-bath","uploads/media/2024/Kids_-_accessories_-_home_bath3.png","uploads/media/2024/Kids_-_accessories_-_home_bath2.png",NULL,NULL,"0","0","Fashion","1","0",NULL
+"2050","Bed Runners","1879","bed-runners","uploads/category/home_-_bath_linen_-_bad_runner.png","uploads/media/2024/home_-_bath_linen_-_bed_runners_(2)1.png",NULL,NULL,"0","0","HOME","1","11",NULL
+"2051","Bedsheets","1879","besdheets","uploads/category/home_-_bath_linen_-_bedsheets_-_indian_bedsheet.png","uploads/media/2024/home_-_bath_linen_-_bedsheets1.png",NULL,NULL,"0","0","HOME","1","38",NULL
+"2052","Mattress Protectors","1879","mattress-protectors","uploads/category/home_-_bath_linen_-_mattress_protector_-_mattress_white_protector.png","uploads/media/2024/home_-_bath_linen_-_bedding_sets2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2053","Bedding Sets","1879","bedding-sets","uploads/category/home_-_bath_linen_-_bedding_sets_-_off_white_bedding_set.png","uploads/media/2024/home_-_bath_linen_-_bedding_sets_(2).png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2054","Blankets, Quilts & Dohars","1879","blankets-quilts-dohars","uploads/category/home_-_bath_linen_-_blankets,_quilts_dehairs_-_white_bath_rug.png","uploads/media/2024/home_-_bath_linen_-_blankets,_quilts_dehairs1.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2055","Pillows & Pillow Covers","1879","pillows-pillow-covers","uploads/category/155.png","uploads/media/2024/home_-_bath_linen_-_pillow_pillow_covers1.png",NULL,NULL,"0","0","HOME","1","94",NULL
+"2056","Bed Covers","1879","bed-covers","uploads/category/153.png","uploads/media/2024/home_-_bath_linen_-_bedding_sets3.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2057","Diwan Sets","1879","diwan-sets","uploads/category/159.png","uploads/media/2024/home_-_bath_linen_-_diwan_sets2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2058","Chair Pads & Covers","1879","chair-pads-covers","uploads/category/161.png","uploads/media/2024/home_-_bath_linen_-_chair_pads_cover2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2059","Sofa Covers","1879","sofa-covers","uploads/category/164.png","uploads/media/2024/home_-_bath_linen_-_sofa_covers1.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2060","Bath Towels","1880","bath-towels","uploads/category/171.png","uploads/media/2024/home_-_bath_-_bath_towels_.png",NULL,NULL,"0","0","HOME","1","15",NULL
+"2061","Hand & Face Towels","1880","hand-face-towels","uploads/category/167.png","uploads/media/2024/home_-_bath_-_hand_face_towels1.png",NULL,NULL,"0","0","HOME","1","14",NULL
+"2062","Beach Towels","1880","beach-towels","uploads/category/169.png","uploads/media/2024/home_-_bath_-_beach_towel2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2063","Towels Sets","1880","towels-sets","uploads/category/175.png","uploads/media/2024/home_-_bath_-_towels_sets_(1).png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2064","Bath rugs","1880","bath-rugs","uploads/category/home_-_bath_linen_-_blankets,_quilts_dehairs_-_white_bath_rug1.png","uploads/media/2024/home_-_bath_-bath_rugs2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2065","Bath Robes","1880","bath-robes","uploads/category/172.png","uploads/media/2024/home_-_bath_-_bath_towels_.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2066","Bathroom Accessories","1880","bathroom-accessories","uploads/category/180.png","uploads/media/2024/home_-_bath_-_bathroom_accessories3.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2067","Shower Curtains","1880","shower-curtains","uploads/category/182.png","uploads/media/2024/home_-_bath_-_shower_curtains3.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2068","Floor Runners","1903","floor-runners","uploads/category/213.png","uploads/media/2024/home_-_flooring_-_floor_runner3.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2069","Decor","1903","carpets","uploads/media/2025/1758797528445-twtedo.png","uploads/media/2024/home_-_flooring_-_carpets3.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2070","Furniture","1903","floor-mats-dhurries","uploads/media/2025/1758012248297-n1k3zu.png","uploads/media/2024/home_-_flooring_-_floor_mats_dhurries_(1).png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2071","Crockery","1903","door-mats","uploads/media/2025/1758011815175-i4aebx.png","uploads/media/2024/home_-_flooring_-_door_mat3.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2072","Lights","1904","floor-lamps","uploads/media/2025/1758011937301-galu00.png","uploads/media/2024/home_-_lighting_-_floor_lamps_(1).png",NULL,NULL,"0",NULL,"HOME","1","11",NULL
+"2073","Handloom","1904","ceiling-lamps","uploads/media/2025/1758011972479-95fk5l.png","uploads/media/2024/home_-_lighting_-_celling_lamps3.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2074","Table Lamps","1904","table-lamps","uploads/category/home_-_lighting_-_table_lamps_-_yello_table_lamp.png","uploads/media/2024/home_-_lighting_-_table_lamps1.png",NULL,NULL,"0","0","HOME","1","19",NULL
+"2075","Wall Lamps","1904","wall-lamps","uploads/media/2025/1758800421819-r40zlw.png","uploads/media/2024/home_-_lighting_-_wall_lamps2.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2076","Outdoor Lamps","1904","outdoor-lamps","uploads/category/home_-_lighting_-_outdoor_lamps_-_yellow_outdoor_lamp.png","uploads/media/2024/home_-_lighting_-_outdoor_lamps_(1).png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2077","String Lights","1904","string-lights","uploads/category/home_-_lighting_-_string_lights_-_yellow_string_light.png","uploads/media/2024/home_-_lighting_-_string_lights1.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2078","Plants & Planters","1902","plants-planters","uploads/media/2025/1758012012025-16b032.png","uploads/media/2024/home_-_home_décor_-_plants_planters2.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2079","Aromas & Candles","1902","aromas-candles","uploads/media/2025/1758799868044-cngbyv.png","uploads/media/2024/home_-_home_décor_-_aroma_candles2.png",NULL,NULL,"0",NULL,"HOME","1","9",NULL
+"2080","Clocks","1902","clocks","uploads/category/home_-_home_décor_-_clocks_-_wall_clock.png","uploads/media/2024/home_-_home_décor_-_clocks1.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2081","Mirrors","1902","mirrors","uploads/media/2025/1758800220503-xq75c3.png","uploads/media/2024/home_-_home_décor_-_mirrors1.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2082","Wall Decor","1902","wall-decor","uploads/media/2025/1758800397550-p44rgw.png","uploads/media/2024/home_-_home_décor_-_wall_decor2.png",NULL,NULL,"0",NULL,"HOME","1","20",NULL
+"2083","Festive Decor","1902","festive-decor","uploads/media/2025/1758800018424-teikgt.png","uploads/media/2024/home_-_home_décor_-_festive_decor1.png",NULL,NULL,"0",NULL,"HOME","1","29",NULL
+"2084","Pooja Essentials","1902","pooja-essentials","uploads/media/2025/1758540627138-bylw7i.png","uploads/media/2024/home_-_home_décor_-_pooja_essentials1.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2085","Wall Shelves","1902","wall-shelves","uploads/category/home_-_home_décor_-_wall_shelves_-_hite_wall_shelves.png","uploads/media/2024/home_-_home_décor_-_wall_shelves2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2086","Fountains","1902","fountains","uploads/category/home_-_home_décor_-_fountains_-_off_white_fountain.png","uploads/media/2024/home_-_home_décor_-_fountains2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2087","Showpieces & Vases","1902","showpieces-vases","uploads/category/home_-_home_décor_-_showpieces_vases_-_off_white_showpieces.png","uploads/media/2024/home_-_home_décor_-_showpieces_vases2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2088","Ottoman","1902","ottoman","uploads/media/2025/1758800269116-hz3twd.png","uploads/media/2024/home_-_home_décor_-_ottoman2.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2089","Table Runners","1905","table-runners","uploads/media/2025/1758800345572-0pemgz.png","uploads/media/2024/home_-_kitchen_dining_-_table_runner3.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2090","Dinnerware & Serveware","1905","dinnerware-serveware","uploads/media/2025/1758799943396-jwqs8g.png","uploads/media/2024/home_-_kitchen_dining_-_dinnerware_serve_ware_(1).png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2091","Cups & Mugs","1905","cups-mugs","uploads/media/2025/1758799922908-qrvpez.png","uploads/media/2024/home_-_kitchen_dining_-_cups_mugs3.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2092","Bakeware & Cookware","1905","bakeware-cookware","uploads/category/home_-_kitchen_dining_-_bakeware_cookware_-_petal_bakeware.png","uploads/media/2024/home_-_kitchen_dining_-_bakeware_cookware2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2093","Kitchen Storage & Tools","1905","kitchen-storage-tools","uploads/media/2025/1758800144637-dqf03b.png","uploads/media/2024/home_-_kitchen_dining_-_kitchen_storage_tools_(2).png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2094","Bar & Drinkware","1905","bar-drinkware","uploads/category/home_-_kitchen_dining_-_bar_drinkware_-_golden_bar.png","uploads/media/2024/home_-_kitchen_dining_-_bar_drinkware3.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2095","Table Covers & Furnishings","1905","table-covers-furnishings","uploads/category/home_-_kitchen_dining_-_tables_covers_furnishings_-_off_white_table.png","uploads/media/2024/home_-_kitchen_dining_-_tables_covers_furnishings4.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2096","Bins","1906","bins","uploads/category/home_-_storage_-_bins_-_pink_and_blue_bins.png","uploads/media/2024/home_-_storage_-_bins2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2097","Hangers","1906","hangers","uploads/category/home_-_storage_-_hangers_-_clothe_hanging.png","uploads/media/2024/home_-_storage_-_hangers2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2098","Organisers","1906","organisers","uploads/category/home_-_storage_-_organisers.png","uploads/media/2024/home_-_storage_-_organisers2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2099","Hooks & Holders","1906","hooks-holders","uploads/category/home_-_storage_-_hooks_holders_-_pestal_holder.png","uploads/media/2024/home_-_storage_-_hooks_holders2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2100","Laundry Bags","1906","laundry-bags","uploads/category/home_-_storage_-_laundry_bags_-_off_white_laundry_bag.png","uploads/media/2024/home_-_storage_-_laundry_bags2.png",NULL,NULL,"0","0","HOME","1","0",NULL
+"2101","Test image","1869","test-image","uploads/category/51.png","uploads/media/2024/1000002140.jpg",NULL,NULL,"0","0",NULL,"1","0",NULL
+"2102","Laptops","2132","laptops-and-accessories","uploads/media/2025/1758800170408-p7ll5g.png","uploads/media/2025/Screenshot_2025-07-23_at_7_26_02_PM-removebg-preview.png",NULL,NULL,"0",NULL,"ELECTRONICS","1","0",NULL
+"2103","Eyewear","1869","eyeware","uploads/media/2025/1758797579038-1erq7p.png","uploads/media/2025/Screenshot_2025-07-23_at_7_37_25_PM-removebg-preview.png",NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2104","Flowers","1870","flowers","uploads/media/2025/1758797600095-dvzlzl.png","uploads/media/2025/Screenshot_2025-07-23_at_7_46_36 PM.png",NULL,NULL,"0",NULL,"HOME","1","0",NULL
+"2105","Wellness","0","beauty-wellness","uploads/media/2025/1758378702401-v6bqya.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2106","Skincare","2105","skincare-1","uploads/media/2025/1758010192906-4mjicc.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2107","Cosmetics & Makeup","2105","cosmetics-makeup","uploads/media/2025/1758010219827-vd01rn.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2108","Personal Care & Hygiene","2105","personal-care-hygiene","uploads/media/2025/1758010250196-dcpd92.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2109","Cleansers","2106","cleansers-exfoliators","uploads/media/2025/1758010352153-ynszxp.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2110","Sunscreens ","2106","sun-protection","uploads/media/2025/1758010383246-gn8n2t.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2111","Toners","2106","toners-essences","uploads/media/2025/1758010164009-rgjg5k.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2112","Serums","2106","treatments-serums","uploads/media/2025/1758010425662-7xncwg.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2113","Moisturizers","2106","moisturizers-creams","uploads/media/2025/1758010467446-o5xa7f.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2114","Body Care","2108","body-care","uploads/media/2025/1758010495155-a52vma.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2115","Face Makeup","2107","face-makeup","uploads/media/2025/1758010522620-5fni58.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2116","Hair Care","2108","hair-care","uploads/media/2025/1758010578885-rzr0zn.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2117","Lip Makeup","2107","lip-makeup","uploads/media/2025/1758010612102-sff5li.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2118","Makeup Tools & Accessories","2107","makeup-tools-accessories","uploads/media/2025/1758010650373-camp2q.png",NULL,NULL,NULL,"0",NULL,"BEAUTY","1","0",NULL
+"2119","Metals","0","jewellery","uploads/media/2025/1756541596724-acwn7e.png",NULL,NULL,NULL,"0",NULL,"Fashion","1","0",NULL
+"2120","Gold","2119","gold","uploads/media/2025/coin.jpeg",NULL,NULL,NULL,"0","0","Metals","1","0",NULL
+"2121","Silver","2119","silver","uploads/media/2025/bar.jpeg",NULL,NULL,NULL,"0","0","Metals","1","0",NULL
+"2122","Gold Coin","2120","gold-coin","uploads/media/2025/1758545949945-0qqqr7.png",NULL,NULL,NULL,"0",NULL,"Metals","1","0",NULL
+"2123","Gold Bar","2120","gold-bar","uploads/media/2025/1758545977073-kd5jq3.png",NULL,NULL,NULL,"0",NULL,"Metals","0","0",NULL
+"2124","Silver Coin","2121","silver-coin","uploads/media/2025/1758546011432-1i3g8z.png",NULL,NULL,NULL,"0",NULL,"Metals","1","0",NULL
+"2125","Silver Bar","2121","silver-bar","uploads/media/2025/1758546034546-hysyix.png",NULL,NULL,NULL,"0",NULL,"Metals","1","0",NULL
+"2126","Platinum","2119","platinum","uploads/media/2025/1758546057864-z987s1.png",NULL,NULL,NULL,"0",NULL,"Metals","1","0",NULL
+"2127","Stationary","1873","stationary","uploads/media/2025/stationary.jpeg",NULL,NULL,NULL,"0","0","Kids","1","0",NULL
+"2128","Toys","1873","toys","uploads/media/2025/1758800368250-ws8rva.png",NULL,NULL,NULL,"0",NULL,"Kids","1","0",NULL
+"2129","Gift Items","0","gift-items","uploads/media/2025/Giftitems.jpeg",NULL,NULL,NULL,"0","0","Kids","1","0",NULL
+"2130","Food","0","food","uploads/media/2025/1758797629966-j8d50v.png",NULL,NULL,NULL,"0",NULL,"Food","1","0",NULL
+"2131","Fashion","0","fashion","uploads/media/2025/fashion.jpeg",NULL,NULL,NULL,"0","0","Fashion","1","0",NULL
+"2132","Electronics","0","electronics","uploads/media/2025/1758799965015-yxu1dd.png",NULL,NULL,NULL,"0",NULL,"ELECTRONICS","1","0",NULL
+"2133","Mobile","2132","mobile","uploads/media/2025/mobile.jpeg",NULL,NULL,NULL,"0","0","ELECTRONICS","1","0",NULL
+"2134","Cameras","2132","camerass","uploads/media/2025/cameras.jpeg",,,,"0","0","ELECTRONICS","1","0",NULL
+"2135","Gadgets","2132","peripheralss","uploads/media/2025/1758028360136-6ohkfr.png",NULL,NULL,NULL,"0","1","ELECTRONICS","1","0",NULL
+"2136","Discover","0","discover","uploads/media/2025/1758692007423-c9gu71.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
+"2137","Munchies","0","munchies","uploads/media/2025/1758028418708-rc0fzh.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
+"2138","Electronics","0","gourmet","uploads/media/2025/1758543768405-rz7ll7.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
+"2139","Collectibles","0","collectibles","uploads/media/2025/1758028495292-v9zzuj.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
+"2140","Jewellery","0","jewellery-1","uploads/media/2025/1758028528576-x0uiw8.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
+"2141","Appliances","2132","appliances","uploads/media/2025/1758028559619-qf7jis.png",NULL,NULL,NULL,"0",NULL,NULL,"1","0",NULL
