@@ -32,14 +32,15 @@ let csvCache = {
   isLoaded: false
 };
 
-// Session storage with auto-cleanup
+// Session storage
 let sessions = {};
 
-// Session configuration
+// Session configuration - UPDATED
 const SESSION_CONFIG = {
-  TIMEOUT: 3 * 60 * 1000, // 3 minutes in milliseconds
-  WARNING_TIME: 2 * 60 * 1000, // 2 minutes in milliseconds
-  CLEANUP_INTERVAL: 30 * 1000 // Cleanup every 30 seconds
+  ACTIVE_TIMEOUT: 60 * 60 * 1000, // 1 hour for active sessions
+  INACTIVE_TIMEOUT: 3 * 60 * 1000, // 3 minutes for inactive sessions
+  WARNING_TIME: 2 * 60 * 1000, // Warn at 2 minutes of inactivity
+  CLEANUP_INTERVAL: 60 * 1000 // Cleanup every 1 minute (reduced frequency)
 };
 
 // ZULU CLUB INFORMATION
@@ -57,6 +58,12 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
+// Greeting detection
+const GREETINGS = [
+  'hi', 'hello', 'hey', 'hola', 'namaste', 'good morning', 'good afternoon', 
+  'good evening', 'hi there', 'hello there', 'hey there', 'whats up', 'sup'
+];
+
 // Initialize CSV data once and cache it
 async function initializeCSVData() {
   try {
@@ -64,8 +71,6 @@ async function initializeCSVData() {
     
     const categoriesUrl = process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
     const galleriesUrl = process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
-    
-    console.log('📁 CSV URLs:', { categories: categoriesUrl, galleries: galleriesUrl });
     
     // Load categories1.csv
     const categoriesResults = await loadCSVFromGitHub(categoriesUrl, 'categories1.csv');
@@ -85,7 +90,6 @@ async function initializeCSVData() {
     
   } catch (error) {
     console.error('❌ Error initializing CSV cache:', error);
-    // Don't throw - we'll use empty cache
   }
 }
 
@@ -140,8 +144,8 @@ function createSession(sessionId) {
     lastActivity: now,
     createdAt: now,
     warningSent: false,
+    messageCount: 0,
     data: {
-      // Store any temporary data for this session
       categoryNames: [],
       lastSearch: null
     }
@@ -153,7 +157,8 @@ function createSession(sessionId) {
 function getSession(sessionId) {
   const session = sessions[sessionId];
   if (session) {
-    session.lastActivity = Date.now(); // Update activity timestamp
+    session.lastActivity = Date.now();
+    session.messageCount++;
   }
   return session;
 }
@@ -176,7 +181,26 @@ function deleteSession(sessionId) {
   return false;
 }
 
-// Session cleanup job - runs periodically
+// NEW: Check if message is a greeting
+function isGreeting(message) {
+  const cleanMessage = message.toLowerCase().trim();
+  return GREETINGS.some(greeting => cleanMessage.includes(greeting));
+}
+
+// NEW: Check if message is asking for products/categories
+function isProductQuery(message) {
+  const cleanMessage = message.toLowerCase().trim();
+  const productKeywords = [
+    'product', 'category', 'buy', 'shop', 'purchase', 'looking for',
+    'want', 'need', 'show me', 'find', 'search', 'tshirt', 'shirt',
+    'dress', 'vase', 'shoe', 'footwear', 'decor', 'home', 'fashion',
+    'beauty', 'accessory', 'gift', 'kids', 'men', 'women'
+  ];
+  
+  return productKeywords.some(keyword => cleanMessage.includes(keyword));
+}
+
+// Session cleanup job - UPDATED with new logic
 function startSessionCleanup() {
   setInterval(() => {
     const now = Date.now();
@@ -185,24 +209,27 @@ function startSessionCleanup() {
 
     Object.entries(sessions).forEach(([sessionId, session]) => {
       const inactiveTime = now - session.lastActivity;
+      const sessionAge = now - session.createdAt;
       
-      // Send warning at 2 minutes
+      // Check for inactive timeout (3 minutes of no response)
       if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
-        console.log(`⏰ Sending timeout warning for session: ${sessionId}`);
+        console.log(`⏰ Sending timeout warning for inactive session: ${sessionId}`);
         session.warningSent = true;
         warnedCount++;
         
-        // In a real scenario, you might want to send a WhatsApp message here
-        // For now, we'll just log it
+        // Send warning message to user
+        sendTimeoutWarning(sessionId, session);
       }
       
-      // Delete session at 3 minutes
-      if (inactiveTime >= SESSION_CONFIG.TIMEOUT) {
+      // Delete session if inactive for 3 minutes OR session age exceeds 1 hour
+      if (inactiveTime >= SESSION_CONFIG.INACTIVE_TIMEOUT || sessionAge >= SESSION_CONFIG.ACTIVE_TIMEOUT) {
+        const reason = inactiveTime >= SESSION_CONFIG.INACTIVE_TIMEOUT ? 'inactivity' : 'max duration';
         deleteSession(sessionId);
         cleanedCount++;
         
-        // In a real scenario, send thanks message
-        console.log(`👋 Session ${sessionId} expired and cleaned up`);
+        // Send thanks message for expired sessions
+        sendSessionExpiredMessage(sessionId, session, reason);
+        console.log(`👋 Session ${sessionId} expired due to ${reason}`);
       }
     });
     
@@ -215,15 +242,48 @@ function startSessionCleanup() {
 // Start session cleanup
 startSessionCleanup();
 
+// Send timeout warning message
+async function sendTimeoutWarning(sessionId, session) {
+  try {
+    const warningMessage = `⏰ Hey! You've been inactive for 2 minutes. This session will expire in 1 minute if there's no response.\n\nJust send a message to keep shopping with me! 🛍️`;
+    
+    await sendMessage(sessionId, 'User', warningMessage);
+    console.log(`⚠️ Timeout warning sent to ${sessionId}`);
+    
+  } catch (error) {
+    console.error('❌ Error sending timeout warning:', error);
+  }
+}
+
+// Send session expired message
+async function sendSessionExpiredMessage(sessionId, session, reason) {
+  try {
+    let message = `👋 Thank you for chatting with Zulu Club! `;
+    
+    if (reason === 'inactivity') {
+      message += `Your session has expired due to inactivity.\n\n`;
+    } else {
+      message += `Your session has reached the maximum duration.\n\n`;
+    }
+    
+    message += `🚀 Remember - *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+    message += `Feel free to start a new conversation anytime to continue shopping! 🛍️`;
+    
+    await sendMessage(sessionId, 'User', message);
+    console.log(`✅ Session expired message sent to ${sessionId}`);
+    
+  } catch (error) {
+    console.error('❌ Error sending session expired message:', error);
+  }
+}
+
 // Get category names from cached CSV data
 function getCategoryNames() {
   if (!csvCache.isLoaded || csvCache.categoriesData.length === 0) {
-    console.log('⚠️ No categories data available in cache');
     return [];
   }
   
   const categoryNames = [];
-  
   csvCache.categoriesData.forEach((row) => {
     const name = row.name || row.Name;
     if (name && name.trim()) {
@@ -231,7 +291,6 @@ function getCategoryNames() {
     }
   });
   
-  console.log(`📋 Found ${categoryNames.length} category names from cache`);
   return categoryNames;
 }
 
@@ -254,7 +313,7 @@ function getCategoryIdByName(categoryName) {
   return null;
 }
 
-// Parse cat1 column data which might be in array format
+// Parse cat1 column data
 function parseCat1Data(cat1Value) {
   if (!cat1Value) return [];
   
@@ -263,8 +322,7 @@ function parseCat1Data(cat1Value) {
   if (strValue.startsWith('[') && strValue.endsWith(']')) {
     try {
       const cleanStr = strValue.slice(1, -1);
-      const items = cleanStr.split(',').map(item => item.trim().replace(/"/g, ''));
-      return items;
+      return cleanStr.split(',').map(item => item.trim().replace(/"/g, ''));
     } catch (error) {
       return [];
     }
@@ -284,13 +342,11 @@ function getType2DataByCat1(categoryId) {
   }
   
   const type2Data = [];
-  
   csvCache.galleriesData.forEach((row) => {
     const cat1Value = row.cat1;
     
     if (cat1Value) {
       const cat1Ids = parseCat1Data(cat1Value);
-      
       if (cat1Ids.includes(categoryId.toString())) {
         const type2 = row.type2;
         if (type2 && type2.trim()) {
@@ -313,42 +369,19 @@ function generateLinksFromType2(type2Data) {
 
 // Smart product search with fallback
 async function smartProductSearch(userMessage, categoryNames, session) {
-  console.log(`🧠 SMART SEARCH for: "${userMessage}"`);
-  
-  // Store search in session
-  if (session) {
-    session.data.lastSearch = userMessage;
-  }
-  
   const primaryCategory = await getAICategoryMatch(userMessage, categoryNames);
   if (!primaryCategory) {
     return { success: false, links: [], triedCategories: [] };
   }
   
   const triedCategories = [primaryCategory];
-  
-  // Try primary category
   const primaryCategoryId = getCategoryIdByName(primaryCategory);
+  
   if (primaryCategoryId) {
     const primaryType2Data = getType2DataByCat1(primaryCategoryId);
     if (primaryType2Data.length > 0) {
       const links = generateLinksFromType2(primaryType2Data);
       return { success: true, links: links, triedCategories: triedCategories, source: 'primary' };
-    }
-  }
-  
-  // Get and try alternative categories
-  const alternativeCategories = await getAlternativeCategories(userMessage, primaryCategory, categoryNames);
-  triedCategories.push(...alternativeCategories);
-  
-  for (const altCategory of alternativeCategories) {
-    const altCategoryId = getCategoryIdByName(altCategory);
-    if (altCategoryId) {
-      const altType2Data = getType2DataByCat1(altCategoryId);
-      if (altType2Data.length > 0) {
-        const links = generateLinksFromType2(altType2Data);
-        return { success: true, links: links, triedCategories: triedCategories, source: 'alternative' };
-      }
     }
   }
   
@@ -406,79 +439,110 @@ IMPORTANT:
   }
 }
 
-// Get alternative categories
-async function getAlternativeCategories(userMessage, primaryCategory, allCategories) {
+// Get helpful suggestion when no products found
+function getHelpfulSuggestion(userMessage, triedCategories) {
+  const message = userMessage.toLowerCase();
+  
+  let suggestion = `I searched for "${userMessage}" but couldn't find specific products at the moment. 😔\n\n`;
+  
+  if (message.includes('shoe') || message.includes('footwear')) {
+    suggestion += `👟 For footwear, check our Men's Fashion or Women's Fashion categories.\n\n`;
+  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
+    suggestion += `👕 For clothing, explore our Men's Fashion and Women's Fashion categories.\n\n`;
+  } else {
+    suggestion += `🔍 You can explore our main categories or visit zulu.club for our complete collection.\n\n`;
+  }
+  
+  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*`;
+  
+  return [suggestion];
+}
+
+// NEW: Improved response handler with greeting detection
+async function getChatGPTResponse(userMessage, session) {
+  // Check if it's a greeting
+  if (isGreeting(userMessage)) {
+    return `👋 Hello! Welcome to Zulu Club! 🛍️\n\nI'm here to help you discover amazing lifestyle products with *100-minute delivery* in Gurgaon!\n\nWhat would you like to explore today? You can ask me about:\n• Specific products (like "tshirts", "vases")\n• Product categories\n• Or just tell me what you're looking for!`;
+  }
+  
+  // Check if it's a product query
+  if (isProductQuery(userMessage)) {
+    // Try product search first
+    const productLinks = await getProductLinksWithAICategory(userMessage, session);
+    
+    if (productLinks.length > 0) {
+      if (typeof productLinks[0] === 'string' && productLinks[0].includes('searched for')) {
+        return productLinks[0]; // Helpful suggestion
+      } else {
+        let response = `Great choice! 🎯\n\nHere are the products you're looking for:\n\n`;
+        
+        productLinks.slice(0, 8).forEach(link => {
+          response += `• ${link}\n`;
+        });
+        
+        if (productLinks.length > 8) {
+          response += `• ... and ${productLinks.length - 8} more options\n`;
+        }
+        
+        response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+        response += `Click the links above to explore and shop! 🛍️`;
+        
+        return response;
+      }
+    }
+  }
+  
+  // For general conversation, use AI
   if (!process.env.OPENAI_API_KEY) {
-    return [];
+    return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
   }
   
   try {
     const messages = [{
       role: "system",
-      content: `You are a product categorization assistant. When the primary category doesn't have products, suggest alternative related categories.
-
-AVAILABLE CATEGORIES:
-${allCategories.map(name => `- ${name}`).join('\n')}
-
-USER QUERY: "${userMessage}"
-PRIMARY CATEGORY: "${primaryCategory}"
-
-INSTRUCTIONS:
-1. Suggest 2-3 alternative categories that might have similar products
-2. Return ONLY category names as comma-separated values
-3. Only use categories from the available list`
+      content: `You are a friendly customer service assistant for Zulu Club. ${ZULU_CLUB_INFO} 
+      
+Keep responses conversational and helpful. If users ask about products, guide them to be more specific. 
+Highlight: 100-minute delivery, try-at-home, easy returns. Keep responses under 300 characters.`
     }];
+    
+    // Add conversation history from session
+    if (session && session.history.length > 0) {
+      const recentHistory = session.history.slice(-6);
+      recentHistory.forEach(msg => {
+        if (msg.role && msg.content) {
+          messages.push({
+            role: msg.role,
+            content: msg.content
+          });
+        }
+      });
+    }
+    
+    messages.push({
+      role: "user",
+      content: userMessage
+    });
     
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 100,
-      temperature: 0.5
+      max_tokens: 200,
+      temperature: 0.7
     });
     
-    const response = completion.choices[0].message.content.trim();
-    
-    const alternativeCategories = response.split(',').map(cat => cat.trim()).filter(cat => 
-      cat && allCategories.includes(cat) && cat !== primaryCategory
-    );
-    
-    return alternativeCategories;
+    return completion.choices[0].message.content.trim();
     
   } catch (error) {
-    console.error('❌ ChatGPT API error in alternative categories:', error);
-    return [];
+    console.error('❌ ChatGPT API error:', error);
+    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! 🛍️";
   }
 }
 
-// Get helpful suggestion when no products found
-function getHelpfulSuggestion(userMessage, triedCategories) {
-  const message = userMessage.toLowerCase();
-  
-  let suggestion = `I searched for "${userMessage}" in our ${triedCategories.length > 0 ? triedCategories.join(', ') : 'relevant'} categories but couldn't find specific products at the moment. 😔\n\n`;
-  
-  if (message.includes('shoe') || message.includes('footwear')) {
-    suggestion += `👟 For footwear, you might want to check our Men's Fashion or Women's Fashion categories for casual and formal shoes.\n\n`;
-  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
-    suggestion += `👕 For clothing items, explore our Men's Fashion and Women's Fashion categories.\n\n`;
-  } else if (message.includes('vase') || message.includes('decor') || message.includes('home')) {
-    suggestion += `🏠 For home items, check our Home Decor and Home Accessories categories.\n\n`;
-  } else {
-    suggestion += `🔍 You can explore our main categories: Men's & Women's Fashion, Home Decor, Beauty, and more.\n\n`;
-  }
-  
-  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-  suggestion += `Visit zulu.club to browse our complete collection! 🛍️`;
-  
-  return [suggestion];
-}
-
-// Main product search logic with session support
+// Main product search logic
 async function getProductLinksWithAICategory(userMessage, session) {
   try {
-    // Wait for CSV data to load if not ready
     if (!csvCache.isLoaded) {
-      console.log('⏳ Waiting for CSV data to load...');
-      // In a real scenario, you might want to implement a proper waiting mechanism
       return ["🔄 Our product catalog is loading, please wait a moment and try again..."];
     }
     
@@ -544,77 +608,6 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Main response handler with session support
-async function getChatGPTResponse(userMessage, session) {
-  // Always try the smart CSV logic first
-  const productLinks = await getProductLinksWithAICategory(userMessage, session);
-  
-  if (productLinks.length > 0) {
-    if (typeof productLinks[0] === 'string' && productLinks[0].includes('searched for')) {
-      return productLinks[0];
-    } else {
-      let response = `Great choice! 🎯\n\n`;
-      response += `Here are the products you're looking for:\n\n`;
-      
-      productLinks.slice(0, 8).forEach(link => {
-        response += `• ${link}\n`;
-      });
-      
-      if (productLinks.length > 8) {
-        response += `• ... and ${productLinks.length - 8} more options\n`;
-      }
-      
-      response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-      response += `Click the links above to explore and shop! 🛍️`;
-      
-      return response;
-    }
-  }
-  
-  // Only use AI for general conversation if no products found
-  if (!process.env.OPENAI_API_KEY) {
-    return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
-  }
-  
-  try {
-    const messages = [{
-      role: "system",
-      content: `You are a friendly customer service assistant for Zulu Club. ${ZULU_CLUB_INFO} Keep responses under 300 characters. Be enthusiastic and highlight 100-minute delivery, try-at-home, and easy returns.`
-    }];
-    
-    // Add conversation history from session
-    if (session && session.history.length > 0) {
-      const recentHistory = session.history.slice(-6);
-      recentHistory.forEach(msg => {
-        if (msg.role && msg.content) {
-          messages.push({
-            role: msg.role,
-            content: msg.content
-          });
-        }
-      });
-    }
-    
-    messages.push({
-      role: "user",
-      content: userMessage
-    });
-    
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messages,
-      max_tokens: 200,
-      temperature: 0.7
-    });
-    
-    return completion.choices[0].message.content.trim();
-    
-  } catch (error) {
-    console.error('❌ ChatGPT API error:', error);
-    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! 🛍️";
-  }
-}
-
 // Handle user message with session management
 async function handleMessage(sessionId, userMessage) {
   try {
@@ -624,21 +617,17 @@ async function handleMessage(sessionId, userMessage) {
       session = createSession(sessionId);
     }
     
-    // Check if session is about to expire and send warning
-    const now = Date.now();
-    const inactiveTime = now - session.lastActivity;
-    
-    if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
-      // Send warning message
-      await sendTimeoutWarning(sessionId, session);
-      session.warningSent = true;
+    // Reset warning flag if user is active again
+    if (session.warningSent) {
+      session.warningSent = false;
+      console.log(`✅ User ${sessionId} became active again, reset warning`);
     }
     
     // Add user message to session history
     session.history.push({
       role: "user",
       content: userMessage,
-      timestamp: now
+      timestamp: Date.now()
     });
     
     // Get AI response
@@ -667,24 +656,7 @@ async function handleMessage(sessionId, userMessage) {
   }
 }
 
-// Send timeout warning message
-async function sendTimeoutWarning(sessionId, session) {
-  try {
-    const warningMessage = `⏰ You've been inactive for 2 minutes. If you don't respond in the next minute, this session will expire.`;
-    
-    // In a real implementation, you would send this to the user's WhatsApp
-    // For now, we'll just log it
-    console.log(`⚠️ Timeout warning for session ${sessionId}: ${warningMessage}`);
-    
-    // If you want to actually send the message, uncomment below:
-    // await sendMessage(sessionId, 'User', warningMessage);
-    
-  } catch (error) {
-    console.error('❌ Error sending timeout warning:', error);
-  }
-}
-
-// Webhook endpoint with session management
+// Webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
     const webhookData = req.body;
@@ -714,7 +686,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '12.0 - Session Management & Caching',
+    version: '13.0 - Smart Greeting & Session Management',
     cache: {
       csv_loaded: csvCache.isLoaded,
       categories_count: csvCache.categoriesData.length,
@@ -723,15 +695,9 @@ app.get('/', (req, res) => {
     },
     sessions: {
       active_sessions: Object.keys(sessions).length,
-      session_timeout: `${SESSION_CONFIG.TIMEOUT / 60000} minutes`,
+      active_timeout: `${SESSION_CONFIG.ACTIVE_TIMEOUT / 60000} minutes`,
+      inactive_timeout: `${SESSION_CONFIG.INACTIVE_TIMEOUT / 60000} minutes`,
       warning_time: `${SESSION_CONFIG.WARNING_TIME / 60000} minutes`
-    },
-    endpoints: {
-      webhook: 'POST /webhook',
-      health: 'GET /',
-      sessions: 'GET /sessions',
-      cache: 'GET /cache-status',
-      refresh: 'POST /refresh-cache'
     }
   });
 });
@@ -741,29 +707,17 @@ app.get('/sessions', (req, res) => {
   const sessionList = Object.entries(sessions).map(([id, session]) => ({
     id,
     history_length: session.history.length,
+    message_count: session.messageCount,
     last_activity: new Date(session.lastActivity).toISOString(),
     created: new Date(session.createdAt).toISOString(),
     warning_sent: session.warningSent,
-    inactive_minutes: ((Date.now() - session.lastActivity) / 60000).toFixed(2)
+    inactive_minutes: ((Date.now() - session.lastActivity) / 60000).toFixed(2),
+    session_age_minutes: ((Date.now() - session.createdAt) / 60000).toFixed(2)
   }));
   
   res.json({
     total_sessions: sessionList.length,
     sessions: sessionList
-  });
-});
-
-// Cache status endpoint
-app.get('/cache-status', (req, res) => {
-  res.json({
-    csv_cache: {
-      is_loaded: csvCache.isLoaded,
-      categories_count: csvCache.categoriesData.length,
-      galleries_count: csvCache.galleriesData.length,
-      last_updated: csvCache.lastUpdated,
-      age_minutes: csvCache.lastUpdated ? 
-        ((Date.now() - new Date(csvCache.lastUpdated).getTime()) / 60000).toFixed(2) : 'N/A'
-    }
   });
 });
 
@@ -783,17 +737,6 @@ app.post('/refresh-cache', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'Failed to refresh cache' });
   }
-});
-
-// Clear sessions endpoint (for testing)
-app.delete('/sessions', (req, res) => {
-  const count = Object.keys(sessions).length;
-  sessions = {};
-  res.json({ 
-    status: 'success', 
-    message: `Cleared ${count} sessions`,
-    active_sessions: 0
-  });
 });
 
 module.exports = app;
