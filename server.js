@@ -88,11 +88,11 @@ async function initializeCSVData() {
     console.log('🔄 Initializing CSV data from GitHub...');
     
     // Load categories1.csv
-    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/blob/main/categories1.csv';
+    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/branch/path/to/categories1.csv';
     categoriesData = await loadCSVFromGitHub(categoriesUrl);
     
     // Load galleries1.csv
-    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
+    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/branch/path/to/galleries1.csv';
     galleriesData = await loadCSVFromGitHub(galleriesUrl);
     
     console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
