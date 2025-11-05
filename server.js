@@ -107,170 +107,189 @@ async function loadCSVFromGitHub(csvUrl, csvType) {
   }
 }
 
-// IMPROVED: Better keyword matching for categories
-function findMatchingCategoryIds(userMessage) {
+// STEP 1: Extract category names from categories1.csv
+function getCategoryNamesFromCSV() {
   if (!categoriesData.length) {
     console.log('⚠️ No categories data available');
     return [];
   }
   
-  const message = userMessage.toLowerCase();
-  const matchingIds = new Set();
-  
-  console.log(`🔍 Searching categories for: "${message}"`);
-  
-  // Common product variations
-  const productVariations = {
-    'tshirt': ['t-shirt', 'tee', 't shirt', 'tshirt'],
-    'vase': ['vase', 'vases', 'flower vase'],
-    'dress': ['dress', 'dresses'],
-    'shirt': ['shirt', 'shirts'],
-    'jacket': ['jacket', 'jackets'],
-    'shoe': ['shoe', 'shoes', 'footwear'],
-    'bag': ['bag', 'bags'],
-    'watch': ['watch', 'watches'],
-    'perfume': ['perfume', 'fragrance'],
-    'lamp': ['lamp', 'lamps'],
-    // Add more as needed
-  };
+  const categoryNames = new Set();
   
   categoriesData.forEach((row) => {
-    // Check all columns for matching keywords
-    Object.entries(row).forEach(([key, value]) => {
-      if (value && typeof value === 'string') {
-        const cleanValue = value.toLowerCase().trim();
-        
-        // Check direct match
-        if (cleanValue.length > 2 && message.includes(cleanValue)) {
-          addMatchingId(row, cleanValue, key, matchingIds);
-        }
-        
-        // Check product variations
-        Object.entries(productVariations).forEach(([baseProduct, variations]) => {
-          if (variations.some(variation => message.includes(variation))) {
-            // If user is asking for this product, check if this category contains it
-            if (cleanValue.includes(baseProduct) || variations.some(variation => cleanValue.includes(variation))) {
-              addMatchingId(row, baseProduct, key, matchingIds);
-            }
-          }
-        });
-      }
-    });
+    // Get name from various possible column names
+    const name = row.name || row.Name || row.category_name || row.CategoryName || row.title || row.Title;
+    if (name && name.trim()) {
+      categoryNames.add(name.trim().toLowerCase());
+    }
   });
   
-  const result = Array.from(matchingIds);
-  console.log(`📋 Found ${result.length} matching category IDs:`, result);
+  const result = Array.from(categoryNames);
+  console.log(`📋 Found ${result.length} category names:`, result);
   return result;
 }
 
-function addMatchingId(row, matchedWord, column, matchingIds) {
-  const id = row.id || row.ID || row.Id || row.category_id || row.CategoryID || row.cat_id;
-  if (id) {
-    matchingIds.add(id.toString());
-    console.log(`✅ Matched: "${matchedWord}" in "${column}" column, ID: ${id}`);
+// STEP 2: Send category names to ChatGPT to find matching category for user query
+async function findMatchingCategoryWithAI(userMessage, categoryNames) {
+  if (!process.env.OPENAI_API_KEY) {
+    console.log('❌ OpenAI API key not available');
+    return null;
+  }
+  
+  try {
+    const messages = [{
+      role: "system",
+      content: `You are a product categorization assistant. Your task is to find the most relevant category for a user's product query.
+
+AVAILABLE CATEGORIES:
+${categoryNames.map(name => `- ${name}`).join('\n')}
+
+INSTRUCTIONS:
+1. Analyze the user's message and find the BEST matching category from the available list
+2. Return ONLY the exact category name from the available list
+3. If no good match, return "no_match"
+4. Do not add any explanations or additional text
+
+Examples:
+User: "I need tshirt" → "men's fashion" (if that category exists)
+User: "looking for vases" → "home decor" (if that category exists)
+User: "show me dresses" → "women's fashion" (if that category exists)`
+    }, {
+      role: "user",
+      content: userMessage
+    }];
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: messages,
+      max_tokens: 50,
+      temperature: 0.3
+    });
+    
+    const response = completion.choices[0].message.content.trim().toLowerCase();
+    console.log(`🤖 AI category match: "${response}"`);
+    
+    // Check if the response matches any of our category names
+    const matchedCategory = categoryNames.find(cat => response === cat || response.includes(cat));
+    
+    return matchedCategory || null;
+    
+  } catch (error) {
+    console.error('❌ ChatGPT API error in category matching:', error);
+    return null;
   }
 }
 
-// IMPROVED: Get type2 names from galleries
-function getType2NamesFromGalleries(categoryIds) {
-  if (!galleriesData.length || !categoryIds.length) {
-    console.log('⚠️ No galleries data or category IDs');
+// STEP 3: Get category ID from categories1.csv for the matched category name
+function getCategoryIdForName(categoryName) {
+  if (!categoriesData.length || !categoryName) {
+    return null;
+  }
+  
+  console.log(`🔍 Looking for category ID for: "${categoryName}"`);
+  
+  for (const row of categoriesData) {
+    const name = row.name || row.Name || row.category_name || row.CategoryName || row.title || row.Title;
+    if (name && name.trim().toLowerCase() === categoryName.toLowerCase()) {
+      const id = row.id || row.ID || row.Id || row.category_id || row.CategoryID;
+      if (id) {
+        console.log(`✅ Found category ID: ${id} for category: ${categoryName}`);
+        return id.toString();
+      }
+    }
+  }
+  
+  console.log(`❌ No category ID found for: ${categoryName}`);
+  return null;
+}
+
+// STEP 4: Get type2 data from galleries1.csv using category ID
+function getType2DataFromGalleries(categoryId) {
+  if (!galleriesData.length || !categoryId) {
     return [];
   }
   
-  const type2Names = new Set();
+  console.log(`🔍 Looking for type2 data for category ID: ${categoryId}`);
   
-  console.log(`🔍 Searching galleries for category IDs:`, categoryIds);
+  const type2Data = new Set();
   
   galleriesData.forEach((row) => {
     // Try different possible category ID field names
-    const categoryId = row.cat1 || row.Cat1 || row.category_id || row.CategoryID || row.id || row.ID || row.cat_id;
+    const rowCategoryId = row.cat1 || row.Cat1 || row.category_id || row.CategoryID || row.id || row.ID || row.cat_id;
     
-    if (categoryId && categoryIds.includes(categoryId.toString())) {
+    if (rowCategoryId && rowCategoryId.toString() === categoryId.toString()) {
       const type2 = row.type2 || row.Type2 || row.type || row.Type || row.name || row.Name || row.product_name;
       if (type2 && type2.trim()) {
-        type2Names.add(type2.trim());
+        type2Data.add(type2.trim());
         console.log(`✅ Found type2: "${type2}" for category ID: ${categoryId}`);
       }
     }
   });
   
-  const result = Array.from(type2Names);
-  console.log(`📝 Found ${result.length} type2 names:`, result);
+  const result = Array.from(type2Data);
+  console.log(`📝 Found ${result.length} type2 entries:`, result);
   return result;
 }
 
-// Function to generate links from type2 names
-function generateLinksFromType2(type2Names) {
-  return type2Names.map(name => {
+// STEP 5: Generate links from type2 data
+function generateLinksFromType2(type2Data) {
+  return type2Data.map(name => {
     // Replace spaces with %20 and create link
     const encodedName = name.replace(/\s+/g, '%20');
     return `app.zulu.club/${encodedName}`;
   });
 }
 
-// IMPROVED: Get product links with better fallback
-function getProductLinksFromCSV(userMessage) {
+// MAIN LOGIC: Complete flow from user query to product links
+async function getProductLinksFromCSV(userMessage) {
   try {
-    console.log('🔍 CSV LOGIC: Searching for products...');
+    console.log('\n🔍 STARTING CSV LOGIC FLOW');
+    console.log(`📝 User query: "${userMessage}"`);
     
-    // Step 1: Find matching category IDs from categories1.csv
-    const matchingCategoryIds = findMatchingCategoryIds(userMessage);
-    
-    if (!matchingCategoryIds.length) {
-      console.log('❌ No matching category IDs found');
-      return getFallbackLinks(userMessage);
+    // Step 1: Get all category names from categories1.csv
+    const categoryNames = getCategoryNamesFromCSV();
+    if (categoryNames.length === 0) {
+      console.log('❌ No category names found in CSV');
+      return [];
     }
     
-    // Step 2: Get type2 names from galleries1.csv using cat1 column
-    const type2Names = getType2NamesFromGalleries(matchingCategoryIds);
-    
-    if (!type2Names.length) {
-      console.log('❌ No type2 names found for the category IDs');
-      return getFallbackLinks(userMessage);
+    // Step 2: Use AI to find matching category for user query
+    const matchedCategory = await findMatchingCategoryWithAI(userMessage, categoryNames);
+    if (!matchedCategory) {
+      console.log('❌ No category matched by AI');
+      return [];
     }
     
-    // Step 3: Generate links with app.zulu.club/ prefix and %20 for spaces
-    const links = generateLinksFromType2(type2Names);
+    // Step 3: Get category ID for the matched category name
+    const categoryId = getCategoryIdForName(matchedCategory);
+    if (!categoryId) {
+      console.log('❌ No category ID found');
+      return [];
+    }
+    
+    // Step 4: Get type2 data from galleries1.csv using category ID
+    const type2Data = getType2DataFromGalleries(categoryId);
+    if (type2Data.length === 0) {
+      console.log('❌ No type2 data found');
+      return [];
+    }
+    
+    // Step 5: Generate links from type2 data
+    const links = generateLinksFromType2(type2Data);
     console.log(`🔗 Generated ${links.length} links:`, links);
     
     return links;
+    
   } catch (error) {
     console.error('❌ Error in getProductLinksFromCSV:', error);
-    return getFallbackLinks(userMessage);
+    return [];
   }
-}
-
-// Fallback links when CSV doesn't have matches
-function getFallbackLinks(userMessage) {
-  const message = userMessage.toLowerCase();
-  const fallbackLinks = [];
-  
-  // Common product fallbacks
-  if (message.includes('tshirt') || message.includes('t-shirt') || message.includes('tee')) {
-    fallbackLinks.push('app.zulu.club/men%20t-shirts', 'app.zulu.club/women%20t-shirts');
-  }
-  if (message.includes('vase') || message.includes('vases')) {
-    fallbackLinks.push('app.zulu.club/home%20decor%20vases', 'app.zulu.club/ceramic%20vases');
-  }
-  if (message.includes('dress')) {
-    fallbackLinks.push('app.zulu.club/women%20dresses', 'app.zulu.club/party%20dresses');
-  }
-  if (message.includes('shirt')) {
-    fallbackLinks.push('app.zulu.club/men%20shirts', 'app.zulu.club/formal%20shirts');
-  }
-  
-  if (fallbackLinks.length > 0) {
-    console.log(`🔄 Using fallback links:`, fallbackLinks);
-  }
-  
-  return fallbackLinks;
 }
 
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
-    console.log(`📤 Sending message to ${to}: ${message}`);
+    console.log(`📤 Sending message to ${to}`);
     
     const payload = {
       channelId: gallaboxConfig.channelId,
@@ -308,35 +327,24 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// UPDATED: Force CSV logic to always run first and return links
+// Main response handler - Uses CSV logic first
 async function getChatGPTResponse(userMessage, conversationHistory = []) {
-  // ALWAYS try CSV logic first for any product-related query
-  const productLinks = getProductLinksFromCSV(userMessage);
+  // STEP 1: Always try CSV logic first
+  const productLinks = await getProductLinksFromCSV(userMessage);
   
-  // If we found product links (either from CSV or fallback), use them
+  // If we found product links, use them
   if (productLinks.length > 0) {
     console.log(`🛍️ Using CSV logic, found ${productLinks.length} links`);
     
     let response = `Great choice! 🎯\n\n`;
+    response += `Here are the products you're looking for:\n\n`;
     
-    // Add specific product mention based on user query
-    const message = userMessage.toLowerCase();
-    if (message.includes('tshirt') || message.includes('t-shirt') || message.includes('tee')) {
-      response += `I found these amazing t-shirts for you:\n\n`;
-    } else if (message.includes('vase') || message.includes('vases')) {
-      response += `I found these beautiful vases for your home:\n\n`;
-    } else if (message.includes('dress')) {
-      response += `I found these stunning dresses for you:\n\n`;
-    } else {
-      response += `I found these products for you:\n\n`;
-    }
-    
-    productLinks.slice(0, 6).forEach(link => {
+    productLinks.slice(0, 8).forEach(link => {
       response += `• ${link}\n`;
     });
     
-    if (productLinks.length > 6) {
-      response += `• ... and ${productLinks.length - 6} more options\n`;
+    if (productLinks.length > 8) {
+      response += `• ... and ${productLinks.length - 8} more options\n`;
     }
     
     response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
@@ -345,7 +353,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = []) {
     return response;
   }
   
-  // Only use AI for non-product queries
+  // STEP 2: Only use AI for non-product queries
   console.log('🤖 No product links found, using AI for general query');
   
   if (!process.env.OPENAI_API_KEY) {
@@ -455,7 +463,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Enhanced CSV Matching',
+    version: '7.0 - AI Category Matching',
     csv_data: {
       categories_loaded: categoriesData.length,
       galleries_loaded: galleriesData.length,
@@ -465,44 +473,39 @@ app.get('/', (req, res) => {
   });
 });
 
-// Test product search endpoint with detailed debugging
-app.get('/search-products', async (req, res) => {
+// Test the complete logic flow
+app.get('/test-logic', async (req, res) => {
   const query = req.query.q || 'tshirt';
   
   try {
-    console.log(`\n🔍 DEBUG SEARCH FOR: "${query}"`);
+    console.log(`\n🧪 TESTING COMPLETE LOGIC FOR: "${query}"`);
     
-    // Step 1: Find matching category IDs
-    const matchingCategoryIds = findMatchingCategoryIds(query);
-    console.log('STEP 1 - Category IDs:', matchingCategoryIds);
+    // Step 1: Get category names
+    const categoryNames = getCategoryNamesFromCSV();
     
-    // Step 2: Get type2 names
-    const type2Names = getType2NamesFromGalleries(matchingCategoryIds);
-    console.log('STEP 2 - Type2 Names:', type2Names);
+    // Step 2: AI category matching
+    const matchedCategory = await findMatchingCategoryWithAI(query, categoryNames);
     
-    // Step 3: Generate links
-    const links = generateLinksFromType2(type2Names);
-    console.log('STEP 3 - Generated Links:', links);
+    // Step 3: Get category ID
+    const categoryId = getCategoryIdForName(matchedCategory);
     
-    // Fallback check
-    const fallbackLinks = getFallbackLinks(query);
+    // Step 4: Get type2 data
+    const type2Data = getType2DataFromGalleries(categoryId);
+    
+    // Step 5: Generate links
+    const links = generateLinksFromType2(type2Data);
     
     res.json({
       query: query,
-      csv_data_available: {
-        categories: categoriesData.length,
-        galleries: galleriesData.length
-      },
-      search_steps: {
-        matching_category_ids: matchingCategoryIds,
-        type2_names_found: type2Names,
-        generated_links: links
-      },
-      fallback_links: fallbackLinks,
-      final_links_used: links.length > 0 ? links : fallbackLinks
+      step1_category_names: categoryNames,
+      step2_ai_matched_category: matchedCategory,
+      step3_category_id: categoryId,
+      step4_type2_data: type2Data,
+      step5_generated_links: links,
+      final_result: links
     });
   } catch (error) {
-    res.status(500).json({ error: 'Search failed', details: error.message });
+    res.status(500).json({ error: 'Logic test failed', details: error.message });
   }
 });
 
