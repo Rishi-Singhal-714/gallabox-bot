@@ -55,95 +55,265 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Function to load CSV data from GitHub
-async function loadCSVFromGitHub(csvUrl) {
+// Static fallback categories in case CSV loading fails
+const STATIC_CATEGORIES = {
+  "Women's Fashion": {
+    link: "app.zulu.club/categories/womens-fashion",
+    subcategories: {
+      "Dresses": "app.zulu.club/categories/womens-fashion/dresses",
+      "Tops": "app.zulu.club/categories/womens-fashion/tops",
+      "Co-ords": "app.zulu.club/categories/womens-fashion/co-ords",
+      "Winterwear": "app.zulu.club/categories/womens-fashion/winterwear",
+      "Loungewear": "app.zulu.club/categories/womens-fashion/loungewear"
+    }
+  },
+  "Men's Fashion": {
+    link: "app.zulu.club/categories/mens-fashion",
+    subcategories: {
+      "Shirts": "app.zulu.club/categories/mens-fashion/shirts",
+      "Tees": "app.zulu.club/categories/mens-fashion/tees",
+      "Jackets": "app.zulu.club/categories/mens-fashion/jackets",
+      "Athleisure": "app.zulu.club/categories/mens-fashion/athleisure"
+    }
+  },
+  "Home Decor": {
+    link: "app.zulu.club/categories/home-decor",
+    subcategories: {
+      "Showpieces": "app.zulu.club/categories/home-decor/showpieces",
+      "Vases": "app.zulu.club/categories/home-decor/vases",
+      "Lamps": "app.zulu.club/categories/home-decor/lamps"
+    }
+  }
+};
+
+// Function to load CSV data from GitHub with better error handling
+async function loadCSVFromGitHub(csvUrl, csvType) {
   try {
-    console.log(`📥 Loading CSV from: ${csvUrl}`);
-    const response = await axios.get(csvUrl);
+    console.log(`📥 Loading ${csvType} from: ${csvUrl}`);
+    
+    if (!csvUrl) {
+      throw new Error(`No URL provided for ${csvType}`);
+    }
+    
+    const response = await axios.get(csvUrl, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'ZuluClub-Bot/1.0',
+        'Accept': 'text/csv'
+      }
+    });
+    
     const results = [];
     
     return new Promise((resolve, reject) => {
       const stream = Readable.from(response.data);
       stream
         .pipe(csv())
-        .on('data', (data) => results.push(data))
+        .on('data', (data) => {
+          // Clean the data - remove empty rows
+          if (Object.keys(data).length > 0 && Object.values(data).some(val => val && val.trim() !== '')) {
+            results.push(data);
+          }
+        })
         .on('end', () => {
-          console.log(`✅ Loaded ${results.length} rows from CSV`);
+          console.log(`✅ Loaded ${results.length} rows from ${csvType}`);
           resolve(results);
         })
         .on('error', (error) => {
-          console.error('❌ CSV parsing error:', error);
+          console.error(`❌ CSV parsing error for ${csvType}:`, error);
           reject(error);
         });
     });
   } catch (error) {
-    console.error('❌ Error loading CSV from GitHub:', error.message);
+    console.error(`❌ Error loading ${csvType} from GitHub:`, {
+      message: error.message,
+      status: error.response?.status,
+      url: csvUrl
+    });
+    
+    // Return empty array but don't crash
     return [];
   }
 }
 
-// Initialize CSV data
+// Initialize CSV data with fallback
 async function initializeCSVData() {
   try {
     console.log('🔄 Initializing CSV data from GitHub...');
     
+    // Use environment variables for CSV URLs with fallbacks to YOUR actual raw GitHub URLs
+    const categoriesUrl = process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
+    const galleriesUrl = process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
+    
+    console.log('📁 CSV URLs:', {
+      categories: categoriesUrl,
+      galleries: galleriesUrl
+    });
+    
     // Load categories1.csv
-    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/branch/path/to/categories1.csv';
-    categoriesData = await loadCSVFromGitHub(categoriesUrl);
+    const categoriesResults = await loadCSVFromGitHub(categoriesUrl, 'categories1.csv');
+    categoriesData = categoriesResults || [];
     
     // Load galleries1.csv
-    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/branch/path/to/galleries1.csv';
-    galleriesData = await loadCSVFromGitHub(galleriesUrl);
+    const galleriesResults = await loadCSVFromGitHub(galleriesUrl, 'galleries1.csv');
+    galleriesData = galleriesResults || [];
     
     console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
     console.log(`📊 Galleries data loaded: ${galleriesData.length} rows`);
+    
+    // Log sample data to verify structure
+    if (categoriesData.length > 0) {
+      console.log('📋 Sample categories data:', categoriesData[0]);
+    }
+    if (galleriesData.length > 0) {
+      console.log('📋 Sample galleries data:', galleriesData[0]);
+    }
+    
+    // If no CSV data loaded, use static fallback
+    if (categoriesData.length === 0 || galleriesData.length === 0) {
+      console.log('⚠️ Using static fallback categories due to CSV loading issues');
+    }
+    
   } catch (error) {
     console.error('❌ Error initializing CSV data:', error);
+    // Don't throw - we'll use static fallback
   }
 }
 
-// Initialize on startup
-initializeCSVData();
+// Initialize on startup with retry
+let csvInitialized = false;
+async function initializeWithRetry(retries = 3, delay = 5000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await initializeCSVData();
+      if (categoriesData.length > 0 && galleriesData.length > 0) {
+        csvInitialized = true;
+        console.log('✅ CSV data initialized successfully');
+        break;
+      } else {
+        console.log(`🔄 Retry ${i + 1}/${retries} in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    } catch (error) {
+      console.log(`🔄 Retry ${i + 1}/${retries} after error...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  if (!csvInitialized) {
+    console.log('⚠️ CSV data not loaded, using static categories as fallback');
+  }
+}
+
+// Start initialization
+initializeWithRetry();
 
 // Function to find matching category IDs based on user message
 function findMatchingCategoryIds(userMessage) {
-  if (!categoriesData.length) return [];
+  if (!categoriesData.length) {
+    console.log('⚠️ No categories data available, using static matching');
+    return findMatchingStaticCategories(userMessage);
+  }
   
   const message = userMessage.toLowerCase();
   const matchingIds = new Set();
   
-  categoriesData.forEach(row => {
-    // Check if any column contains keywords that match the user message
-    Object.values(row).forEach(value => {
+  console.log(`🔍 Searching in ${categoriesData.length} categories for: "${message}"`);
+  
+  categoriesData.forEach((row, index) => {
+    // Check all columns for matching keywords
+    Object.entries(row).forEach(([key, value]) => {
       if (value && typeof value === 'string') {
-        const keywords = value.toLowerCase().split(/[,\s]+/);
-        keywords.forEach(keyword => {
-          if (keyword.length > 2 && message.includes(keyword)) {
-            if (row.id) {
-              matchingIds.add(row.id.toString());
+        const cleanValue = value.toLowerCase().trim();
+        if (cleanValue.length > 2) {
+          // Split by common separators and check each word
+          const keywords = cleanValue.split(/[,\s\.\-_]+/).filter(k => k.length > 2);
+          keywords.forEach(keyword => {
+            if (message.includes(keyword)) {
+              // Try different possible ID field names
+              const id = row.id || row.ID || row.Id || row.category_id || row.CategoryID;
+              if (id) {
+                matchingIds.add(id.toString());
+                console.log(`✅ Matched: "${keyword}" in "${key}" column, ID: ${id}`);
+              }
             }
-          }
-        });
+          });
+        }
       }
     });
   });
   
-  return Array.from(matchingIds);
+  const result = Array.from(matchingIds);
+  console.log(`📋 Found ${result.length} matching category IDs:`, result);
+  return result;
+}
+
+// Static category matching fallback
+function findMatchingStaticCategories(userMessage) {
+  const message = userMessage.toLowerCase();
+  const matchingCategories = [];
+  
+  Object.entries(STATIC_CATEGORIES).forEach(([category, data]) => {
+    const categoryLower = category.toLowerCase();
+    if (message.includes(categoryLower)) {
+      matchingCategories.push(category);
+    }
+    
+    // Check subcategories
+    Object.keys(data.subcategories).forEach(subcategory => {
+      const subLower = subcategory.toLowerCase();
+      if (message.includes(subLower)) {
+        matchingCategories.push(category);
+      }
+    });
+  });
+  
+  return matchingCategories;
 }
 
 // Function to get type2 names from galleries based on category IDs
 function getType2NamesFromGalleries(categoryIds) {
-  if (!galleriesData.length || !categoryIds.length) return [];
+  if (!galleriesData.length || !categoryIds.length) {
+    console.log('⚠️ No galleries data or category IDs, using static fallback');
+    return getType2NamesFromStatic(categoryIds);
+  }
   
   const type2Names = new Set();
   
-  galleriesData.forEach(row => {
-    if (row.cat1 && categoryIds.includes(row.cat1.toString()) && row.type2) {
-      type2Names.add(row.type2.trim());
+  console.log(`🔍 Searching ${galleriesData.length} galleries for category IDs:`, categoryIds);
+  
+  galleriesData.forEach((row, index) => {
+    // Try different possible category ID field names
+    const categoryId = row.cat1 || row.Cat1 || row.category_id || row.CategoryID || row.id || row.ID;
+    
+    if (categoryId && categoryIds.includes(categoryId.toString())) {
+      const type2 = row.type2 || row.Type2 || row.type || row.Type || row.name || row.Name;
+      if (type2) {
+        type2Names.add(type2.trim());
+        console.log(`✅ Found type2: "${type2}" for category ID: ${categoryId}`);
+      }
     }
   });
   
-  return Array.from(type2Names);
+  const result = Array.from(type2Names);
+  console.log(`📝 Found ${result.length} type2 names:`, result);
+  return result;
+}
+
+// Static type2 names fallback
+function getType2NamesFromStatic(categoryIds) {
+  const type2Names = [];
+  
+  categoryIds.forEach(categoryName => {
+    const category = STATIC_CATEGORIES[categoryName];
+    if (category) {
+      Object.keys(category.subcategories).forEach(subcategory => {
+        type2Names.push(subcategory);
+      });
+    }
+  });
+  
+  return type2Names;
 }
 
 // Function to generate links from type2 names
@@ -155,14 +325,13 @@ function generateLinksFromType2(type2Names) {
   });
 }
 
-// NEW LOGIC: Function to get product links based on user message
+// Function to get product links based on user message
 function getProductLinksFromCSV(userMessage) {
   try {
     console.log('🔍 Searching for products in CSV data...');
     
     // Step 1: Find matching category IDs
     const matchingCategoryIds = findMatchingCategoryIds(userMessage);
-    console.log(`📋 Matching category IDs:`, matchingCategoryIds);
     
     if (!matchingCategoryIds.length) {
       console.log('❌ No matching category IDs found');
@@ -171,7 +340,6 @@ function getProductLinksFromCSV(userMessage) {
     
     // Step 2: Get type2 names from galleries
     const type2Names = getType2NamesFromGalleries(matchingCategoryIds);
-    console.log(`📝 Found type2 names:`, type2Names);
     
     if (!type2Names.length) {
       console.log('❌ No type2 names found for the category IDs');
@@ -180,7 +348,7 @@ function getProductLinksFromCSV(userMessage) {
     
     // Step 3: Generate links
     const links = generateLinksFromType2(type2Names);
-    console.log(`🔗 Generated links:`, links);
+    console.log(`🔗 Generated ${links.length} links:`, links);
     
     return links;
   } catch (error) {
@@ -243,7 +411,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   try {
     const messages = [];
     
-    // NEW: Get product links from CSV based on user message
+    // Get product links from CSV based on user message
     const productLinks = getProductLinksFromCSV(userMessage);
     let csvContext = "";
     
@@ -290,7 +458,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
           });
         }
       });
-    }
+    });
     
     // Add current user message
     messages.push({
@@ -311,9 +479,12 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     if (productLinks.length > 0 && !response.includes('app.zulu.club')) {
       console.log('🤖 AI missed product links, adding them...');
       response += `\n\n🛍️ *Quick Links Based on Your Search:*\n`;
-      productLinks.forEach(link => {
+      productLinks.slice(0, 5).forEach(link => { // Limit to 5 links to avoid overwhelming
         response += `• ${link}\n`;
       });
+      if (productLinks.length > 5) {
+        response += `• ... and ${productLinks.length - 5} more\n`;
+      }
       response += `\nVisit these links to explore products! 🚀`;
     }
     
@@ -326,9 +497,12 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const productLinks = getProductLinksFromCSV(userMessage);
     if (productLinks.length > 0) {
       let fallbackResponse = `I found these products matching your search:\n\n`;
-      productLinks.forEach(link => {
+      productLinks.slice(0, 5).forEach(link => {
         fallbackResponse += `• ${link}\n`;
       });
+      if (productLinks.length > 5) {
+        fallbackResponse += `• ... and ${productLinks.length - 5} more\n`;
+      }
       fallbackResponse += `\nVisit these links to explore! 🛍️`;
       return fallbackResponse;
     }
@@ -377,7 +551,7 @@ async function handleMessage(sessionId, userMessage) {
     const productLinks = getProductLinksFromCSV(userMessage);
     if (productLinks.length > 0) {
       let fallbackResponse = `I found these products for you:\n\n`;
-      productLinks.forEach(link => {
+      productLinks.slice(0, 5).forEach(link => {
         fallbackResponse += `• ${link}\n`;
       });
       return fallbackResponse;
@@ -436,45 +610,55 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '4.0 - CSV Integration',
+    version: '4.2 - Fixed CSV Integration',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       csv_integration: 'Dynamic product links from GitHub CSVs',
       smart_matching: 'Keyword-based category matching',
+      fallback_system: 'Static categories when CSV fails',
       whatsapp_integration: 'Gallabox API integration'
     },
     csv_data: {
       categories_loaded: categoriesData.length,
       galleries_loaded: galleriesData.length,
-      status: categoriesData.length > 0 ? 'Active' : 'Loading'
+      status: csvInitialized ? 'Active' : 'Fallback Mode',
+      csv_urls: {
+        categories: process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv',
+        galleries: process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv'
+      }
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
       test_message: 'POST /send-test-message',
       csv_status: 'GET /csv-status',
-      search_products: 'GET /search-products'
+      search_products: 'GET /search-products',
+      refresh_data: 'POST /refresh-csv-data'
     },
     timestamp: new Date().toISOString()
   });
 });
 
-// New endpoint: CSV data status
+// CSV data status endpoint
 app.get('/csv-status', (req, res) => {
   res.json({
+    initialized: csvInitialized,
     categories: {
       count: categoriesData.length,
-      sample: categoriesData.slice(0, 3)
+      sample: categoriesData.slice(0, 2),
+      source: process.env.CATEGORIES_CSV_URL || 'Using default URL'
     },
     galleries: {
       count: galleriesData.length,
-      sample: galleriesData.slice(0, 3)
+      sample: galleriesData.slice(0, 2),
+      source: process.env.GALLERIES_CSV_URL || 'Using default URL'
     },
+    static_fallback: !csvInitialized,
     last_updated: new Date().toISOString()
   });
 });
 
-// New endpoint: Test product search
+// Test product search endpoint
 app.get('/search-products', async (req, res) => {
   const query = req.query.q;
   
@@ -492,6 +676,11 @@ app.get('/search-products', async (req, res) => {
       query: query,
       matching_links: productLinks,
       total_found: productLinks.length,
+      data_sources: {
+        categories_used: categoriesData.length,
+        galleries_used: galleriesData.length,
+        using_fallback: !csvInitialized
+      },
       search_process: {
         step1: 'Find matching category IDs in categories1.csv',
         step2: 'Look up type2 names in galleries1.csv using cat1 column',
@@ -545,13 +734,14 @@ app.post('/send-test-message', async (req, res) => {
 // Refresh CSV data endpoint
 app.post('/refresh-csv-data', async (req, res) => {
   try {
-    await initializeCSVData();
+    await initializeWithRetry();
     res.json({ 
       status: 'success', 
       message: 'CSV data refreshed successfully',
       data: {
         categories_count: categoriesData.length,
-        galleries_count: galleriesData.length
+        galleries_count: galleriesData.length,
+        csv_initialized: csvInitialized
       }
     });
   } catch (error) {
