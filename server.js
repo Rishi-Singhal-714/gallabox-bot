@@ -67,16 +67,6 @@ async function initializeCSVData() {
     console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
     console.log(`📊 Galleries data loaded: ${galleriesData.length} rows`);
     
-    // Debug: Show column names and sample data
-    if (categoriesData.length > 0) {
-      console.log('📋 Categories columns:', Object.keys(categoriesData[0]));
-      console.log('📋 Sample categories row:', categoriesData[0]);
-    }
-    if (galleriesData.length > 0) {
-      console.log('📋 Galleries columns:', Object.keys(galleriesData[0]));
-      console.log('📋 Sample galleries row:', galleriesData[0]);
-    }
-    
   } catch (error) {
     console.error('❌ Error initializing CSV data:', error);
   }
@@ -168,7 +158,7 @@ function getCategoryIdByName(categoryName) {
   return null;
 }
 
-// UPDATED: Parse cat1 column data which might be in array format
+// Parse cat1 column data which might be in array format
 function parseCat1Data(cat1Value) {
   if (!cat1Value) return [];
   
@@ -199,7 +189,7 @@ function parseCat1Data(cat1Value) {
   return [strValue];
 }
 
-// UPDATED: Get type2 data from galleries1.csv by matching category ID in cat1 column
+// Get type2 data from galleries1.csv by matching category ID in cat1 column
 function getType2DataByCat1(categoryId) {
   if (!galleriesData.length || !categoryId) {
     return [];
@@ -242,10 +232,168 @@ function generateLinksFromType2(type2Data) {
   });
 }
 
-// MAIN LOGIC: Complete flow with corrected cat1 column search
+// NEW: Get alternative categories when primary category has no products
+async function getAlternativeCategories(userMessage, primaryCategory, allCategories) {
+  if (!process.env.OPENAI_API_KEY) {
+    return [];
+  }
+  
+  try {
+    const messages = [{
+      role: "system",
+      content: `You are a product categorization assistant. When the primary category doesn't have products, suggest alternative related categories.
+
+AVAILABLE CATEGORIES:
+${allCategories.map(name => `- ${name}`).join('\n')}
+
+USER QUERY: "${userMessage}"
+PRIMARY CATEGORY: "${primaryCategory}"
+
+INSTRUCTIONS:
+1. Suggest 2-3 alternative categories that might have similar products
+2. Return ONLY category names as comma-separated values
+3. Only use categories from the available list
+
+Examples:
+User: "shoes", Primary: "Footwear" (no products) → "Men's Fashion,Women's Fashion,Sports"
+User: "vases", Primary: "Home Decor" (no products) → "Home Accessories,Lifestyle Gifting"`
+    }];
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: messages,
+      max_tokens: 100,
+      temperature: 0.5
+    });
+    
+    const response = completion.choices[0].message.content.trim();
+    console.log(`🤖 AI alternative categories: "${response}"`);
+    
+    // Parse comma-separated categories
+    const alternativeCategories = response.split(',').map(cat => cat.trim()).filter(cat => 
+      cat && allCategories.includes(cat) && cat !== primaryCategory
+    );
+    
+    console.log(`🔄 Alternative categories to try:`, alternativeCategories);
+    return alternativeCategories;
+    
+  } catch (error) {
+    console.error('❌ ChatGPT API error in alternative categories:', error);
+    return [];
+  }
+}
+
+// NEW: Smart product search with fallback to alternative categories
+async function smartProductSearch(userMessage, categoryNames) {
+  console.log(`🧠 SMART SEARCH for: "${userMessage}"`);
+  
+  // Step 1: Get primary category match
+  const primaryCategory = await getAICategoryMatch(userMessage, categoryNames);
+  if (!primaryCategory) {
+    console.log('❌ No primary category matched by AI');
+    return { success: false, links: [], triedCategories: [] };
+  }
+  
+  const triedCategories = [primaryCategory];
+  
+  // Step 2: Try primary category
+  console.log(`🔄 Trying primary category: ${primaryCategory}`);
+  const primaryCategoryId = getCategoryIdByName(primaryCategory);
+  if (primaryCategoryId) {
+    const primaryType2Data = getType2DataByCat1(primaryCategoryId);
+    if (primaryType2Data.length > 0) {
+      const links = generateLinksFromType2(primaryType2Data);
+      console.log(`✅ Found ${links.length} products in primary category`);
+      return { success: true, links: links, triedCategories: triedCategories, source: 'primary' };
+    }
+  }
+  
+  console.log(`❌ No products found in primary category: ${primaryCategory}`);
+  
+  // Step 3: Get and try alternative categories
+  const alternativeCategories = await getAlternativeCategories(userMessage, primaryCategory, categoryNames);
+  triedCategories.push(...alternativeCategories);
+  
+  for (const altCategory of alternativeCategories) {
+    console.log(`🔄 Trying alternative category: ${altCategory}`);
+    const altCategoryId = getCategoryIdByName(altCategory);
+    if (altCategoryId) {
+      const altType2Data = getType2DataByCat1(altCategoryId);
+      if (altType2Data.length > 0) {
+        const links = generateLinksFromType2(altType2Data);
+        console.log(`✅ Found ${links.length} products in alternative category: ${altCategory}`);
+        return { success: true, links: links, triedCategories: triedCategories, source: 'alternative' };
+      }
+    }
+    console.log(`❌ No products found in alternative category: ${altCategory}`);
+  }
+  
+  // Step 4: If still no products, try generic related categories based on keywords
+  const keywordCategories = getCategoriesByKeywords(userMessage, categoryNames);
+  const newCategories = keywordCategories.filter(cat => !triedCategories.includes(cat));
+  triedCategories.push(...newCategories);
+  
+  for (const keywordCat of newCategories) {
+    console.log(`🔄 Trying keyword-based category: ${keywordCat}`);
+    const keywordCatId = getCategoryIdByName(keywordCat);
+    if (keywordCatId) {
+      const keywordType2Data = getType2DataByCat1(keywordCatId);
+      if (keywordType2Data.length > 0) {
+        const links = generateLinksFromType2(keywordType2Data);
+        console.log(`✅ Found ${links.length} products in keyword category: ${keywordCat}`);
+        return { success: true, links: links, triedCategories: triedCategories, source: 'keyword' };
+      }
+    }
+  }
+  
+  console.log(`💔 No products found in any category for: "${userMessage}"`);
+  return { success: false, links: [], triedCategories: triedCategories };
+}
+
+// NEW: Get categories by keyword matching (fallback when AI fails)
+function getCategoriesByKeywords(userMessage, categoryNames) {
+  const message = userMessage.toLowerCase();
+  const relatedCategories = [];
+  
+  // Keyword to category mapping
+  const keywordMap = {
+    'shoe': ['Footwear', 'Men\'s Fashion', 'Women\'s Fashion', 'Sports'],
+    'footwear': ['Footwear', 'Men\'s Fashion', 'Women\'s Fashion'],
+    'tshirt': ['Men\'s Fashion', 'Women\'s Fashion'],
+    'shirt': ['Men\'s Fashion', 'Women\'s Fashion'],
+    'dress': ['Women\'s Fashion'],
+    'vase': ['Home Decor', 'Home Accessories'],
+    'decor': ['Home Decor', 'Home Accessories'],
+    'home': ['Home Decor', 'Home Accessories'],
+    'beauty': ['Beauty & Self-Care'],
+    'skincare': ['Beauty & Self-Care'],
+    'gift': ['Lifestyle Gifting'],
+    'accessor': ['Fashion Accessories'],
+    'bag': ['Fashion Accessories'],
+    'watch': ['Fashion Accessories'],
+    'kids': ['Kids'],
+    'toy': ['Kids']
+  };
+  
+  // Check each keyword
+  Object.entries(keywordMap).forEach(([keyword, categories]) => {
+    if (message.includes(keyword)) {
+      categories.forEach(cat => {
+        if (categoryNames.includes(cat) && !relatedCategories.includes(cat)) {
+          relatedCategories.push(cat);
+        }
+      });
+    }
+  });
+  
+  console.log(`🔤 Keyword-based categories for "${userMessage}":`, relatedCategories);
+  return relatedCategories;
+}
+
+// MAIN LOGIC: Complete flow with smart fallback
 async function getProductLinksWithAICategory(userMessage) {
   try {
-    console.log('\n🔍 STARTING MAIN LOGIC FLOW');
+    console.log('\n🔍 STARTING SMART PRODUCT SEARCH');
     console.log(`📝 User query: "${userMessage}"`);
     
     // Step 1: Get all category names from categories1.csv
@@ -255,37 +403,58 @@ async function getProductLinksWithAICategory(userMessage) {
       return [];
     }
     
-    // Step 2: Send category names + company info to ChatGPT to find matching category
-    const matchedCategoryName = await getAICategoryMatch(userMessage, categoryNames);
-    if (!matchedCategoryName) {
-      console.log('❌ No category matched by AI');
-      return [];
+    // Step 2: Use smart search with fallback categories
+    const searchResult = await smartProductSearch(userMessage, categoryNames);
+    
+    if (searchResult.success) {
+      console.log(`🎉 Smart search successful! Found ${searchResult.links.length} products via ${searchResult.source} category`);
+      return searchResult.links;
+    } else {
+      console.log(`💔 Smart search failed for: "${userMessage}"`);
+      console.log(`🔄 Tried categories:`, searchResult.triedCategories);
+      
+      // Provide helpful suggestion based on tried categories
+      return getHelpfulSuggestion(userMessage, searchResult.triedCategories);
     }
-    
-    // Step 3: Get category ID for the matched category name from categories1.csv
-    const categoryId = getCategoryIdByName(matchedCategoryName);
-    if (!categoryId) {
-      console.log('❌ No category ID found');
-      return [];
-    }
-    
-    // Step 4: UPDATED - Search galleries1.csv where cat1 contains categoryId and get type2 data
-    const type2Data = getType2DataByCat1(categoryId);
-    if (type2Data.length === 0) {
-      console.log('❌ No type2 data found for this category ID');
-      return [];
-    }
-    
-    // Step 5: Generate links from type2 data
-    const links = generateLinksFromType2(type2Data);
-    console.log(`🔗 Generated ${links.length} links:`, links);
-    
-    return links;
     
   } catch (error) {
-    console.error('❌ Error in main logic:', error);
+    console.error('❌ Error in smart product search:', error);
     return [];
   }
+}
+
+// NEW: Get helpful suggestion when no products found
+function getHelpfulSuggestion(userMessage, triedCategories) {
+  const message = userMessage.toLowerCase();
+  
+  let suggestion = `I searched for "${userMessage}" in our ${triedCategories.length > 0 ? triedCategories.join(', ') : 'relevant'} categories but couldn't find specific products at the moment. 😔\n\n`;
+  
+  // Add specific suggestions based on query type
+  if (message.includes('shoe') || message.includes('footwear')) {
+    suggestion += `👟 For footwear, you might want to check our:\n`;
+    suggestion += `• Men's Fashion category for casual shoes\n`;
+    suggestion += `• Women's Fashion category for heels and flats\n`;
+    suggestion += `• Sports category for athletic footwear\n\n`;
+  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
+    suggestion += `👕 For clothing items, explore our:\n`;
+    suggestion += `• Men's Fashion for shirts and tees\n`;
+    suggestion += `• Women's Fashion for dresses and tops\n\n`;
+  } else if (message.includes('vase') || message.includes('decor') || message.includes('home')) {
+    suggestion += `🏠 For home items, check our:\n`;
+    suggestion += `• Home Decor category\n`;
+    suggestion += `• Home Accessories section\n\n`;
+  } else {
+    suggestion += `🔍 You can explore our main categories:\n`;
+    suggestion += `• Men's & Women's Fashion\n`;
+    suggestion += `• Home Decor & Accessories\n`;
+    suggestion += `• Beauty & Self-Care\n`;
+    suggestion += `• Footwear & Accessories\n\n`;
+  }
+  
+  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+  suggestion += `Visit zulu.club to browse our complete collection! 🛍️`;
+  
+  return [suggestion]; // Return as array to maintain consistency
 }
 
 // ChatGPT function to find matching category
@@ -391,32 +560,40 @@ async function sendMessage(to, name, message) {
 
 // Main response handler
 async function getChatGPTResponse(userMessage, conversationHistory = []) {
-  // Always try the main CSV logic first
+  // Always try the smart CSV logic first
   const productLinks = await getProductLinksWithAICategory(userMessage);
   
-  // If we found product links, use them
+  // If we found product links or helpful suggestions, use them
   if (productLinks.length > 0) {
-    console.log(`🛍️ Using CSV logic, found ${productLinks.length} links`);
-    
-    let response = `Great choice! 🎯\n\n`;
-    response += `Here are the products you're looking for:\n\n`;
-    
-    productLinks.slice(0, 8).forEach(link => {
-      response += `• ${link}\n`;
-    });
-    
-    if (productLinks.length > 8) {
-      response += `• ... and ${productLinks.length - 8} more options\n`;
+    // Check if the first item is a suggestion (string) or actual links
+    if (typeof productLinks[0] === 'string' && productLinks[0].includes('searched for')) {
+      // It's a helpful suggestion message
+      console.log(`💡 Showing helpful suggestion to user`);
+      return productLinks[0];
+    } else {
+      // It's actual product links
+      console.log(`🛍️ Using product links, found ${productLinks.length} items`);
+      
+      let response = `Great choice! 🎯\n\n`;
+      response += `Here are the products you're looking for:\n\n`;
+      
+      productLinks.slice(0, 8).forEach(link => {
+        response += `• ${link}\n`;
+      });
+      
+      if (productLinks.length > 8) {
+        response += `• ... and ${productLinks.length - 8} more options\n`;
+      }
+      
+      response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
+      response += `Click the links above to explore and shop! 🛍️`;
+      
+      return response;
     }
-    
-    response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-    response += `Click the links above to explore and shop! 🛍️`;
-    
-    return response;
   }
   
   // Only use AI for general conversation if no products found
-  console.log('🤖 No product links found, using AI for general query');
+  console.log('🤖 No products found, using AI for general query');
   
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
@@ -525,7 +702,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '10.0 - Cat1 Array Parsing',
+    version: '11.0 - Smart Category Fallback',
     csv_data: {
       categories_loaded: categoriesData.length,
       galleries_loaded: galleriesData.length
@@ -533,114 +710,28 @@ app.get('/', (req, res) => {
   });
 });
 
-// Test the cat1 parsing logic
-app.get('/test-cat1-logic', async (req, res) => {
-  const query = req.query.q || 'tshirt';
-  const categoryId = req.query.categoryId;
+// Test the smart search logic
+app.get('/test-smart-search', async (req, res) => {
+  const query = req.query.q || 'shoes';
   
   try {
-    console.log(`\n🧪 TESTING CAT1 LOGIC FOR: "${query}"`);
+    console.log(`\n🧪 TESTING SMART SEARCH FOR: "${query}"`);
     
-    // Step 1: Get category names
     const categoryNames = getCategoryNames();
-    
-    // Step 2: AI category matching with company info
-    const matchedCategoryName = await getAICategoryMatch(query, categoryNames);
-    
-    // Step 3: Get category ID
-    const foundCategoryId = categoryId || getCategoryIdByName(matchedCategoryName);
-    
-    // Step 4: Test cat1 parsing with different formats
-    const testCat1Values = [
-      '[1980,1933,1888]',
-      '["25721","25723","25724"]',
-      '1980,1933,1888',
-      '1980',
-      '[1980]'
-    ];
-    
-    const parsingTests = {};
-    testCat1Values.forEach(testValue => {
-      parsingTests[testValue] = parseCat1Data(testValue);
-    });
-    
-    // Step 5: Search galleries1.csv using cat1 column
-    const type2Data = getType2DataByCat1(foundCategoryId);
-    
-    // Step 6: Generate links
-    const links = generateLinksFromType2(type2Data);
+    const searchResult = await smartProductSearch(query, categoryNames);
     
     res.json({
       query: query,
-      step1_category_names: categoryNames,
-      step2_ai_matched_category: matchedCategoryName,
-      step3_category_id: foundCategoryId,
-      cat1_parsing_tests: parsingTests,
-      step4_type2_data: type2Data,
-      step5_generated_links: links,
-      logic: "Search galleries1.csv WHERE cat1 contains categoryId, THEN get type2 data"
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Logic test failed', details: error.message });
-  }
-});
-
-// Check specific category ID in galleries cat1 column
-app.get('/check-cat1', async (req, res) => {
-  const categoryId = req.query.categoryId;
-  
-  if (!categoryId) {
-    return res.status(400).json({ error: 'Missing categoryId parameter' });
-  }
-  
-  try {
-    console.log(`🔍 Checking galleries cat1 for category ID: ${categoryId}`);
-    
-    const matchingRows = galleriesData.filter(row => {
-      const cat1Value = row.cat1;
-      if (!cat1Value) return false;
-      
-      const cat1Ids = parseCat1Data(cat1Value);
-      return cat1Ids.includes(categoryId.toString());
-    });
-    
-    res.json({
-      category_id: categoryId,
-      total_matching_rows: matchingRows.length,
-      matching_rows: matchingRows.map(row => ({
-        cat1: row.cat1,
-        type2: row.type2,
-        parsed_cat1_ids: parseCat1Data(row.cat1),
-        all_columns: row
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Check failed', details: error.message });
-  }
-});
-
-// Check all unique cat1 values in galleries
-app.get('/check-all-cat1', async (req, res) => {
-  try {
-    const uniqueCat1Values = new Set();
-    const cat1Samples = {};
-    
-    galleriesData.forEach(row => {
-      if (row.cat1) {
-        uniqueCat1Values.add(row.cat1);
-        if (Object.keys(cat1Samples).length < 10) {
-          cat1Samples[row.cat1] = parseCat1Data(row.cat1);
-        }
+      search_result: searchResult,
+      smart_features: {
+        primary_category_search: true,
+        alternative_categories_fallback: true,
+        keyword_based_fallback: true,
+        helpful_suggestions: true
       }
     });
-    
-    res.json({
-      total_unique_cat1_values: uniqueCat1Values.size,
-      sample_cat1_values: cat1Samples,
-      all_cat1_values: Array.from(uniqueCat1Values).slice(0, 20) // First 20
-    });
   } catch (error) {
-    res.status(500).json({ error: 'Check failed', details: error.message });
+    res.status(500).json({ error: 'Smart search test failed', details: error.message });
   }
 });
 
