@@ -166,31 +166,31 @@ function getCategoryIdByName(categoryName) {
   return null;
 }
 
-// CORRECTED: Get type2 data from galleries1.csv by matching category ID in cat_id column
+// CORRECTED: Get type2 data from galleries1.csv by matching category ID in cat1 column
 function getType2DataByCatId(categoryId) {
   if (!galleriesData.length || !categoryId) {
     return [];
   }
   
-  console.log(`🔍 Searching galleries1.csv for cat_id = ${categoryId}`);
+  console.log(`🔍 Searching galleries1.csv for cat1 = ${categoryId}`);
   
   const type2Data = [];
   
   galleriesData.forEach((row) => {
-    // Look for cat_id column specifically
-    const rowCatId = row.cat_id;
+    // Look for cat1 column specifically (since that's where the data is)
+    const rowCat1 = row.cat1;
     
-    if (rowCatId && rowCatId.toString() === categoryId.toString()) {
+    if (rowCat1 && rowCat1.toString() === categoryId.toString()) {
       // Get type2 data from the same row
       const type2 = row.type2;
       if (type2 && type2.trim()) {
         type2Data.push(type2.trim());
-        console.log(`✅ Found in galleries: cat_id=${rowCatId} → type2="${type2}"`);
+        console.log(`✅ Found in galleries: cat1=${rowCat1} → type2="${type2}"`);
       }
     }
   });
   
-  console.log(`📝 Found ${type2Data.length} type2 entries for cat_id ${categoryId}`);
+  console.log(`📝 Found ${type2Data.length} type2 entries for cat1 ${categoryId}`);
   return type2Data;
 }
 
@@ -230,7 +230,7 @@ async function getProductLinksWithAICategory(userMessage) {
       return [];
     }
     
-    // Step 4: CORRECTED - Search galleries1.csv where cat_id = categoryId and get type2 data
+    // Step 4: CORRECTED - Search galleries1.csv where cat1 = categoryId and get type2 data
     const type2Data = getType2DataByCatId(categoryId);
     if (type2Data.length === 0) {
       console.log('❌ No type2 data found for this category ID');
@@ -486,7 +486,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '9.0 - Corrected Cat_ID Logic',
+    version: '10.0 - Cat1 Column Debug',
     csv_data: {
       categories_loaded: categoriesData.length,
       galleries_loaded: galleriesData.length,
@@ -494,6 +494,104 @@ app.get('/', (req, res) => {
       galleries_columns: galleriesData.length > 0 ? Object.keys(galleriesData[0]) : []
     }
   });
+});
+
+// Debug endpoint to check cat1 column
+app.get('/check-cat1-column', async (req, res) => {
+  try {
+    console.log('🔍 Checking cat1 column in galleries data...');
+    
+    if (!galleriesData.length) {
+      return res.json({ error: 'No galleries data loaded' });
+    }
+    
+    // Get all unique cat1 values
+    const cat1Values = new Set();
+    const cat1WithType2 = [];
+    
+    galleriesData.forEach((row, index) => {
+      const cat1 = row.cat1;
+      const type2 = row.type2;
+      
+      if (cat1) {
+        cat1Values.add(cat1.toString());
+        cat1WithType2.push({
+          row: index + 1,
+          cat1: cat1,
+          type2: type2 || 'No type2 data',
+          full_row: row
+        });
+      }
+    });
+    
+    const uniqueCat1Values = Array.from(cat1Values);
+    
+    res.json({
+      total_galleries_rows: galleriesData.length,
+      total_unique_cat1_values: uniqueCat1Values.length,
+      unique_cat1_values: uniqueCat1Values,
+      sample_data: cat1WithType2.slice(0, 20), // Show first 20 rows with data
+      all_cat1_values: uniqueCat1Values
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking cat1 column:', error);
+    res.status(500).json({ error: 'Check failed', details: error.message });
+  }
+});
+
+// Debug endpoint to check specific category IDs in cat1 column
+app.get('/check-specific-cat1-ids', async (req, res) => {
+  try {
+    const categoryIds = ["19877","19879","19879","19874","19880","19878","19876","19874","19876","19875","19881","19882","19885","19884","19883","19880","19875","19881","19874","19882","19883","19885","19884"];
+    
+    console.log('🔍 Checking specific category IDs in cat1 column...');
+    
+    if (!galleriesData.length) {
+      return res.json({ error: 'No galleries data loaded' });
+    }
+    
+    const results = {};
+    const foundIds = new Set();
+    
+    // Check each category ID
+    categoryIds.forEach(catId => {
+      const matchingRows = galleriesData.filter(row => {
+        const rowCat1 = row.cat1;
+        return rowCat1 && rowCat1.toString() === catId.toString();
+      });
+      
+      results[catId] = {
+        found: matchingRows.length > 0,
+        count: matchingRows.length,
+        type2_data: matchingRows.map(row => row.type2 || 'No type2 data'),
+        sample_rows: matchingRows.slice(0, 3).map(row => ({
+          cat1: row.cat1,
+          type2: row.type2,
+          other_columns: Object.keys(row).filter(key => key !== 'cat1' && key !== 'type2').reduce((obj, key) => {
+            obj[key] = row[key];
+            return obj;
+          }, {})
+        }))
+      };
+      
+      if (matchingRows.length > 0) {
+        foundIds.add(catId);
+      }
+    });
+    
+    res.json({
+      checked_ids: categoryIds,
+      total_checked: categoryIds.length,
+      found_ids: Array.from(foundIds),
+      not_found_ids: categoryIds.filter(id => !foundIds.has(id)),
+      detailed_results: results
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking specific cat1 IDs:', error);
+    res.status(500).json({ error: 'Check failed', details: error.message });
+  }
 });
 
 // Test the corrected logic flow
@@ -512,7 +610,7 @@ app.get('/test-corrected-logic', async (req, res) => {
     // Step 3: Get category ID
     const categoryId = getCategoryIdByName(matchedCategoryName);
     
-    // Step 4: CORRECTED - Search galleries1.csv using cat_id column
+    // Step 4: CORRECTED - Search galleries1.csv using cat1 column
     const type2Data = getType2DataByCatId(categoryId);
     
     // Step 5: Generate links
@@ -525,40 +623,10 @@ app.get('/test-corrected-logic', async (req, res) => {
       step3_category_id: categoryId,
       step4_type2_data: type2Data,
       step5_generated_links: links,
-      logic: "Search galleries1.csv WHERE cat_id = categoryId, THEN get type2 data"
+      logic: "Search galleries1.csv WHERE cat1 = categoryId, THEN get type2 data"
     });
   } catch (error) {
     res.status(500).json({ error: 'Logic test failed', details: error.message });
-  }
-});
-
-// Check specific category ID in galleries
-app.get('/check-galleries', async (req, res) => {
-  const categoryId = req.query.categoryId;
-  
-  if (!categoryId) {
-    return res.status(400).json({ error: 'Missing categoryId parameter' });
-  }
-  
-  try {
-    console.log(`🔍 Checking galleries for category ID: ${categoryId}`);
-    
-    const matchingRows = galleriesData.filter(row => {
-      const rowCatId = row.cat_id;
-      return rowCatId && rowCatId.toString() === categoryId.toString();
-    });
-    
-    res.json({
-      category_id: categoryId,
-      total_matching_rows: matchingRows.length,
-      matching_rows: matchingRows.map(row => ({
-        cat_id: row.cat_id,
-        type2: row.type2,
-        all_columns: row
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Check failed', details: error.message });
   }
 });
 
