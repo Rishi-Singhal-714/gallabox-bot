@@ -67,6 +67,14 @@ async function initializeCSVData() {
     console.log(`📊 Categories data loaded: ${categoriesData.length} rows`);
     console.log(`📊 Galleries data loaded: ${galleriesData.length} rows`);
     
+    // Debug: Show column names
+    if (categoriesData.length > 0) {
+      console.log('📋 Categories columns:', Object.keys(categoriesData[0]));
+    }
+    if (galleriesData.length > 0) {
+      console.log('📋 Galleries columns:', Object.keys(galleriesData[0]));
+    }
+    
   } catch (error) {
     console.error('❌ Error initializing CSV data:', error);
   }
@@ -124,7 +132,7 @@ function getCategoryNames() {
   const categoryNames = [];
   
   categoriesData.forEach((row) => {
-    // Get name from name column (exactly as in CSV)
+    // Get name from name column
     const name = row.name || row.Name;
     if (name && name.trim()) {
       categoryNames.push(name.trim());
@@ -158,30 +166,31 @@ function getCategoryIdByName(categoryName) {
   return null;
 }
 
-// Get type2 data from galleries1.csv using category ID
-function getType2DataByCategoryId(categoryId) {
+// CORRECTED: Get type2 data from galleries1.csv by matching category ID in cat_id column
+function getType2DataByCatId(categoryId) {
   if (!galleriesData.length || !categoryId) {
     return [];
   }
   
-  console.log(`🔍 Looking for type2 data for category ID: ${categoryId}`);
+  console.log(`🔍 Searching galleries1.csv for cat_id = ${categoryId}`);
   
   const type2Data = [];
   
   galleriesData.forEach((row) => {
-    // Look in cat_id column (exactly as in CSV)
-    const rowCategoryId = row.cat_id || row.cat_id;
+    // Look for cat_id column specifically
+    const rowCatId = row.cat_id;
     
-    if (rowCategoryId && rowCategoryId.toString() === categoryId.toString()) {
-      const type2 = row.type2 || row.Type2;
+    if (rowCatId && rowCatId.toString() === categoryId.toString()) {
+      // Get type2 data from the same row
+      const type2 = row.type2;
       if (type2 && type2.trim()) {
         type2Data.push(type2.trim());
-        console.log(`✅ Found type2: "${type2}" for category ID: ${categoryId}`);
+        console.log(`✅ Found in galleries: cat_id=${rowCatId} → type2="${type2}"`);
       }
     }
   });
   
-  console.log(`📝 Found ${type2Data.length} type2 entries`);
+  console.log(`📝 Found ${type2Data.length} type2 entries for cat_id ${categoryId}`);
   return type2Data;
 }
 
@@ -194,7 +203,7 @@ function generateLinksFromType2(type2Data) {
   });
 }
 
-// MAIN LOGIC: Complete flow with ChatGPT involved from start
+// MAIN LOGIC: Complete flow with corrected galleries search
 async function getProductLinksWithAICategory(userMessage) {
   try {
     console.log('\n🔍 STARTING MAIN LOGIC FLOW');
@@ -221,10 +230,10 @@ async function getProductLinksWithAICategory(userMessage) {
       return [];
     }
     
-    // Step 4: Get type2 data from galleries1.csv using category ID (match with cat_id column)
-    const type2Data = getType2DataByCategoryId(categoryId);
+    // Step 4: CORRECTED - Search galleries1.csv where cat_id = categoryId and get type2 data
+    const type2Data = getType2DataByCatId(categoryId);
     if (type2Data.length === 0) {
-      console.log('❌ No type2 data found');
+      console.log('❌ No type2 data found for this category ID');
       return [];
     }
     
@@ -477,20 +486,22 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '8.0 - Exact Logic Implementation',
+    version: '9.0 - Corrected Cat_ID Logic',
     csv_data: {
       categories_loaded: categoriesData.length,
-      galleries_loaded: galleriesData.length
+      galleries_loaded: galleriesData.length,
+      categories_columns: categoriesData.length > 0 ? Object.keys(categoriesData[0]) : [],
+      galleries_columns: galleriesData.length > 0 ? Object.keys(galleriesData[0]) : []
     }
   });
 });
 
-// Test the exact logic flow
-app.get('/test-exact-logic', async (req, res) => {
+// Test the corrected logic flow
+app.get('/test-corrected-logic', async (req, res) => {
   const query = req.query.q || 'tshirt';
   
   try {
-    console.log(`\n🧪 TESTING EXACT LOGIC FOR: "${query}"`);
+    console.log(`\n🧪 TESTING CORRECTED LOGIC FOR: "${query}"`);
     
     // Step 1: Get category names
     const categoryNames = getCategoryNames();
@@ -501,8 +512,8 @@ app.get('/test-exact-logic', async (req, res) => {
     // Step 3: Get category ID
     const categoryId = getCategoryIdByName(matchedCategoryName);
     
-    // Step 4: Get type2 data using cat_id column
-    const type2Data = getType2DataByCategoryId(categoryId);
+    // Step 4: CORRECTED - Search galleries1.csv using cat_id column
+    const type2Data = getType2DataByCatId(categoryId);
     
     // Step 5: Generate links
     const links = generateLinksFromType2(type2Data);
@@ -514,10 +525,40 @@ app.get('/test-exact-logic', async (req, res) => {
       step3_category_id: categoryId,
       step4_type2_data: type2Data,
       step5_generated_links: links,
-      final_result: links
+      logic: "Search galleries1.csv WHERE cat_id = categoryId, THEN get type2 data"
     });
   } catch (error) {
     res.status(500).json({ error: 'Logic test failed', details: error.message });
+  }
+});
+
+// Check specific category ID in galleries
+app.get('/check-galleries', async (req, res) => {
+  const categoryId = req.query.categoryId;
+  
+  if (!categoryId) {
+    return res.status(400).json({ error: 'Missing categoryId parameter' });
+  }
+  
+  try {
+    console.log(`🔍 Checking galleries for category ID: ${categoryId}`);
+    
+    const matchingRows = galleriesData.filter(row => {
+      const rowCatId = row.cat_id;
+      return rowCatId && rowCatId.toString() === categoryId.toString();
+    });
+    
+    res.json({
+      category_id: categoryId,
+      total_matching_rows: matchingRows.length,
+      matching_rows: matchingRows.map(row => ({
+        cat_id: row.cat_id,
+        type2: row.type2,
+        all_columns: row
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Check failed', details: error.message });
   }
 });
 
