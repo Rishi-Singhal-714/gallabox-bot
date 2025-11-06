@@ -24,8 +24,15 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Store conversations
+// Store conversations with gender context
 let conversations = {};
+
+// NEW: Gender keywords mapping
+const GENDER_KEYWORDS = {
+  'men': ['men', 'man', 'male', 'boys', 'guy', 'mens', "men's"],
+  'women': ['women', 'woman', 'female', 'ladies', 'girls', 'womens', "women's", 'ladies'],
+  'kids': ['kids', 'child', 'children', 'boy', 'girl', 'baby', 'toddler', 'kids']
+};
 
 // ZULU CLUB INFORMATION with categories and links
 const ZULU_CLUB_INFO = `
@@ -228,8 +235,93 @@ async function loadAllCSVData() {
     }
   }
 }
-// NEW: Improved function to detect TOP 3 product categories using GPT with CSV data - FIXED ORDER
-async function detectProductCategories(userMessage) {
+
+// NEW: Function to detect gender from user message
+function detectGender(userMessage) {
+  const msg = userMessage.toLowerCase();
+  
+  const genderScores = {
+    'men': 0,
+    'women': 0, 
+    'kids': 0
+  };
+
+  // Score based on explicit gender mentions
+  Object.entries(GENDER_KEYWORDS).forEach(([gender, keywords]) => {
+    keywords.forEach(keyword => {
+      if (msg.includes(keyword)) {
+        genderScores[gender] += 10;
+      }
+    });
+  });
+
+  // Score based on product context (weaker signals)
+  if (msg.includes('shirt') || msg.includes('tshirt') || msg.includes('jeans') || msg.includes('watch')) {
+    genderScores.men += 2;
+    genderScores.women += 2;
+  }
+  
+  if (msg.includes('dress') || msg.includes('makeup') || msg.includes('lipstick') || msg.includes('handbag')) {
+    genderScores.women += 5;
+  }
+  
+  if (msg.includes('toy') || msg.includes('baby') || msg.includes('school')) {
+    genderScores.kids += 5;
+  }
+
+  // Find the gender with highest score
+  const maxScore = Math.max(...Object.values(genderScores));
+  if (maxScore === 0) return null;
+
+  const detectedGender = Object.keys(genderScores).find(
+    gender => genderScores[gender] === maxScore
+  );
+
+  console.log(`🎯 Gender Detection:`, { scores: genderScores, detected: detectedGender });
+  return detectedGender;
+}
+
+// NEW: Function to ask gender clarification
+function askGenderClarification(productType) {
+  const clarifications = {
+    'tshirt': `👕 Would you like T-shirts for Men, Women, or Kids?`,
+    'shirt': `👔 Looking for Men's Shirts or Women's Shirts?`,
+    'shoes': `👟 Are you looking for Shoes for Men, Women, or Kids?`,
+    'kurta': `👘 Interested in Men's Kurtas or Women's Kurtas?`,
+    'dress': `👗 Looking for Women's Dresses or Kids' Dresses?`,
+    'watch': `⌚ Want Watches for Men, Women, or Kids?`,
+    'bag': `👜 Looking for Bags for Men, Women, or Kids?`,
+    'default': `👕 Are you looking for this for Men, Women, or Kids?`
+  };
+
+  return clarifications[productType] || clarifications.default;
+}
+
+// NEW: Function to detect product type for clarification
+function detectProductTypeForClarification(userMessage) {
+  const msg = userMessage.toLowerCase();
+  
+  const productTypes = {
+    'tshirt': ['tshirt', 't-shirt', 'tee'],
+    'shirt': ['shirt', 'formal shirt', 'casual shirt'],
+    'shoes': ['shoes', 'footwear', 'sneakers', 'heels', 'sandals'],
+    'kurta': ['kurta', 'kurti', 'ethnic wear'],
+    'dress': ['dress', 'gown', 'frock'],
+    'watch': ['watch', 'wristwatch'],
+    'bag': ['bag', 'handbag', 'backpack', 'purse']
+  };
+
+  for (const [productType, keywords] of Object.entries(productTypes)) {
+    if (keywords.some(keyword => msg.includes(keyword))) {
+      return productType;
+    }
+  }
+  
+  return 'default';
+}
+
+// NEW: Enhanced function to detect product categories with gender context
+async function detectProductCategoriesWithGender(userMessage, contextGender = null) {
   try {
     if (!process.env.OPENAI_API_KEY) {
       console.log('❌ OpenAI API key not available for category detection');
@@ -241,6 +333,12 @@ async function detectProductCategories(userMessage) {
     
     console.log(`📊 Sending ${categoryNames.length} categories to GPT for matching...`);
 
+    // Build gender context for GPT
+    let genderContext = '';
+    if (contextGender) {
+      genderContext = `\n\nGENDER CONTEXT: The user is specifically looking for ${contextGender}'s products. Prioritize categories related to ${contextGender}.`;
+    }
+
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
@@ -250,21 +348,23 @@ async function detectProductCategories(userMessage) {
           Analyze the user's message and identify the TOP 3 most relevant product categories from the available list.
           
           AVAILABLE CATEGORIES: ${JSON.stringify(categoryNames)}
+          ${genderContext}
           
           IMPORTANT RULES:
           1. Return EXACTLY 3 category names in a JSON array
           2. Order MUST be: [MOST_RELEVANT, SECOND_MOST_RELEVANT, THIRD_MOST_RELEVANT]
           3. Use ONLY the exact category names from the available categories list
           4. Most relevant = most specific and direct match to user's request
-          5. Second most relevant = broader but still relevant category
+          5. Second most relevant = broader but still relevant category  
           6. Third most relevant = alternative/related category
           7. If fewer than 3 categories are relevant, fill remaining slots with null
           8. Return the array in this exact format: ["Category1", "Category2", "Category3"]
+          9. Consider gender context when provided${contextGender ? ` - user wants ${contextGender}'s products` : ''}
           
           EXAMPLES:
           User: "I need running shoes" -> ["Sports Shoes", "Footwear", "Athleisure"]
           User: "looking for wedding lehenga" -> ["Lehenga Cholis", "Ethnicwear", "Bridal Wear"]
-          User: "want tshirt for men" -> ["Topwear", "Men's Fashion", "Casual Wear"]
+          User: "want tshirt for men" -> ["Men's Topwear", "Men's Fashion", "Casual Wear"]
           User: "home decoration items" -> ["Home Decor", "Home Furnishing", "Home Accessories"]
           User: "gift for friend" -> ["Gifting", "Lifestyle Gifting", "Personalized Gifts"]
           User: "beauty products" -> ["Beauty & Personal Care", "Skincare", "Makeup"]
@@ -322,8 +422,8 @@ async function detectProductCategories(userMessage) {
   }
 }
 
-// NEW: Enhanced function to find galleries using GPT's top 3 categories - WITH ALL GALLERIES
-async function generateProductLinks(userMessage) {
+// NEW: Enhanced product link generation with gender context
+async function generateProductLinksWithGender(userMessage, contextGender = null) {
   try {
     // Wait for CSV data to be loaded
     if (!isCSVLoaded) {
@@ -336,8 +436,8 @@ async function generateProductLinks(userMessage) {
       return null;
     }
 
-    // NEW: Get TOP 3 categories from GPT (ordered by relevance)
-    const detectedCategories = await detectProductCategories(userMessage);
+    // NEW: Get TOP 3 categories from GPT with gender context
+    const detectedCategories = await detectProductCategoriesWithGender(userMessage, contextGender);
     
     if (!detectedCategories || detectedCategories.length === 0) {
       console.log('❌ No categories detected from user message');
@@ -346,7 +446,7 @@ async function generateProductLinks(userMessage) {
 
     console.log(`🎯 Will try ${detectedCategories.length} GPT-recommended categories in order of relevance:`, detectedCategories);
 
-    // NEW: Try each GPT-recommended category in order of relevance
+    // Rest of the function remains the same as your existing generateProductLinks function
     let successfulCategory = null;
     let matchingGalleries = [];
     let triedCategories = [];
@@ -396,7 +496,7 @@ async function generateProductLinks(userMessage) {
       }
     }
 
-    // NEW: If we have multiple categories with galleries, combine them for more options
+    // If we have multiple categories with galleries, combine them for more options
     if (allGalleriesFromAllCategories.length > 1) {
       console.log(`🎉 Found ${allGalleriesFromAllCategories.length} categories with galleries!`);
       
@@ -415,7 +515,7 @@ async function generateProductLinks(userMessage) {
       console.log(`🔗 Combined ${uniqueGalleries.length} unique galleries from ${allGalleriesFromAllCategories.length} categories`);
     }
 
-    // NEW: Fallback - if GPT categories don't work, try similarity matching
+    // Fallback - if GPT categories don't work, try similarity matching
     if (!successfulCategory) {
       console.log(`💥 No galleries found in GPT recommendations, trying similarity fallback...`);
       
@@ -500,7 +600,7 @@ async function generateProductLinks(userMessage) {
       };
     });
 
-    // Remove duplicate links (same type2) - though we already did this above
+    // Remove duplicate links (same type2)
     const uniqueLinks = productLinks.filter((link, index, self) => 
       index === self.findIndex(l => l.link === link.link)
     );
@@ -518,7 +618,8 @@ async function generateProductLinks(userMessage) {
       finalCategory: successfulCategory.name,
       gptCategories: detectedCategories,
       method: successfulCategory ? 'gpt_recommendation' : 'similarity_fallback',
-      categoriesWithGalleries: allGalleriesFromAllCategories.length
+      categoriesWithGalleries: allGalleriesFromAllCategories.length,
+      genderContext: contextGender // NEW: Include gender context in response
     };
 
   } catch (error) {
@@ -570,6 +671,7 @@ async function createProductResponse(userMessage, productLinksInfo) {
 
           Category: ${productLinksInfo.category}
           Total Collections: ${productLinksInfo.links.length}
+          ${productLinksInfo.genderContext ? `Gender Context: ${productLinksInfo.genderContext}` : ''}
 
           Response Guidelines:
           - Start with an engaging response to the user's query
@@ -645,6 +747,7 @@ async function createProductResponse(userMessage, productLinksInfo) {
     return response;
   }
 }
+
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
@@ -732,8 +835,8 @@ function getCategoryLinks() {
   return links;
 }
 
-// NEW: Enhanced AI Chat Functionality with Product Detection
-async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
+// NEW: Enhanced AI Chat Functionality with Gender Context
+async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO, genderContext = null) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
@@ -828,31 +931,45 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const userMsgLower = userMessage.toLowerCase();
     const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
 
-    if (isProductQuery && isCSVLoaded) {
-      console.log('🔄 Detected product query, using GPT category matching...');
+    // NEW: If we have gender context and it's a product query, use enhanced product linking
+    if (isProductQuery && isCSVLoaded && genderContext) {
+      console.log(`🔄 Detected product query with gender context: ${genderContext}`);
       
-      // Generate product links using new GPT category matching logic
-      const productLinksInfo = await generateProductLinks(userMessage);
+      // Generate product links using gender-aware matching
+      const productLinksInfo = await generateProductLinksWithGender(userMessage, genderContext);
       
       if (productLinksInfo) {
-        console.log('✅ Product links generated, creating AI response...');
+        console.log('✅ Product links generated with gender context, creating AI response...');
         const productResponse = await createProductResponse(userMessage, productLinksInfo);
         return productResponse;
       } else {
-        console.log('❌ GPT category matching failed, falling back to original AI...');
+        console.log('❌ Gender-aware product matching failed, falling back to original AI...');
       }
+    }
+    
+    // If no gender context but product query, let the normal flow handle it (which may ask for clarification)
+    if (isProductQuery && isCSVLoaded) {
+      console.log('🔄 Detected product query, using normal flow (may ask for gender clarification)...');
+      // Let the normal flow continue which may detect need for gender clarification
     }
 
     // Original AI logic continues here...
     const messages = [];
     
-    // System message with Zulu Club information and category format guidelines
+    // Build gender context for system message if available
+    let genderSystemContext = '';
+    if (genderContext) {
+      genderSystemContext = `\n\nCURRENT GENDER CONTEXT: The user is looking for ${genderContext}'s products. When responding about products, focus on ${genderContext}'s collections and use appropriate language.`;
+    }
+
+    // System message with Zulu Club information and gender context
     const systemMessage = {
       role: "system",
       content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
       
       ZULU CLUB INFORMATION:
       ${companyInfo}
+      ${genderSystemContext}
 
       AVAILABLE CATEGORIES WITH LINKS:
       ${getCategoryLinks()}
@@ -868,6 +985,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       8. **Use emojis** to make it engaging but professional
       9. **Keep responses under 400 characters** for WhatsApp compatibility
       10. **Be enthusiastic and helpful** - we're excited about our products!
+      ${genderContext ? `11. **Gender Context**: The user is specifically interested in ${genderContext}'s products. Tailor your recommendations accordingly.` : ''}
 
       CATEGORY USAGE EXAMPLES:
       - If user asks "What products do you have?" → Briefly describe our range and include main category links
@@ -937,24 +1055,119 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 }
 
-// Handle user message with AI
+// NEW: Enhanced message handler with gender clarification
 async function handleMessage(sessionId, userMessage) {
   try {
     // Initialize conversation if not exists
     if (!conversations[sessionId]) {
-      conversations[sessionId] = { history: [] };
+      conversations[sessionId] = { 
+        history: [],
+        pendingGender: null,
+        originalQuery: null
+      };
     }
-    
+
+    // NEW: Check if this is a response to gender clarification
+    if (conversations[sessionId].pendingGender) {
+      console.log(`🔄 Processing gender clarification response...`);
+      
+      const genderResponse = userMessage.toLowerCase();
+      let selectedGender = null;
+
+      // Map user response to gender
+      if (GENDER_KEYWORDS.men.some(keyword => genderResponse.includes(keyword))) {
+        selectedGender = 'men';
+      } else if (GENDER_KEYWORDS.women.some(keyword => genderResponse.includes(keyword))) {
+        selectedGender = 'women';  
+      } else if (GENDER_KEYWORDS.kids.some(keyword => genderResponse.includes(keyword))) {
+        selectedGender = 'kids';
+      } else {
+        // If unclear response, ask again
+        const productType = detectProductTypeForClarification(conversations[sessionId].originalQuery);
+        const clarification = askGenderClarification(productType);
+        
+        conversations[sessionId].history.push({
+          role: "user", 
+          content: userMessage
+        });
+        conversations[sessionId].history.push({
+          role: "assistant",
+          content: clarification
+        });
+        
+        return clarification;
+      }
+
+      // Clear pending gender and process original query with gender context
+      const originalQuery = conversations[sessionId].originalQuery;
+      conversations[sessionId].pendingGender = null;
+      conversations[sessionId].originalQuery = null;
+
+      console.log(`🎯 User selected gender: ${selectedGender} for query: ${originalQuery}`);
+
+      // Add user's gender response to history
+      conversations[sessionId].history.push({
+        role: "user",
+        content: userMessage
+      });
+
+      // Process the original query with gender context
+      const productLinksInfo = await generateProductLinksWithGender(originalQuery, selectedGender);
+      
+      let aiResponse;
+      if (productLinksInfo) {
+        aiResponse = await createProductResponse(originalQuery, productLinksInfo);
+      } else {
+        // Fallback if no product links found
+        aiResponse = `Thanks! For ${selectedGender}'s ${originalQuery.toLowerCase()}, I couldn't find specific collections right now. Please visit app.zulu.club to browse our full ${selectedGender}'s collection! 🛍️`;
+      }
+
+      // Add AI response to history
+      conversations[sessionId].history.push({
+        role: "assistant",
+        content: aiResponse
+      });
+
+      return aiResponse;
+    }
+
     // Add user message to history
     conversations[sessionId].history.push({
       role: "user",
       content: userMessage
     });
+
+    // NEW: Check if this message needs gender clarification
+    const detectedGender = detectGender(userMessage);
+    const productType = detectProductTypeForClarification(userMessage);
     
-    // Get AI response (now includes new product detection logic)
+    // If gender is ambiguous for this product type, ask for clarification
+    const needsGenderClarification = !detectedGender && productType !== 'default';
+    
+    if (needsGenderClarification) {
+      console.log(`🤔 Ambiguous gender for product type: ${productType}, asking clarification...`);
+      
+      const clarification = askGenderClarification(productType);
+      
+      // Store the original query and mark as pending gender clarification
+      conversations[sessionId].pendingGender = true;
+      conversations[sessionId].originalQuery = userMessage;
+      
+      // Add clarification to history
+      conversations[sessionId].history.push({
+        role: "assistant",
+        content: clarification
+      });
+      
+      return clarification;
+    }
+
+    // Get AI response (with gender context if available)
     const aiResponse = await getChatGPTResponse(
       userMessage, 
-      conversations[sessionId].history
+      conversations[sessionId].history,
+      ZULU_CLUB_INFO,
+      detectedGender // Pass gender context to AI
     );
     
     // Add AI response to history
@@ -962,7 +1175,7 @@ async function handleMessage(sessionId, userMessage) {
       role: "assistant",
       content: aiResponse
     });
-    
+
     // Keep history manageable (last 10 messages)
     if (conversations[sessionId].history.length > 10) {
       conversations[sessionId].history = conversations[sessionId].history.slice(-10);
@@ -1069,7 +1282,7 @@ app.post('/test-product-detection', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    const productLinksInfo = await generateProductLinks(message);
+    const productLinksInfo = await generateProductLinksWithGender(message);
     const aiResponse = await createProductResponse(message, productLinksInfo);
     
     res.json({
@@ -1094,7 +1307,7 @@ app.post('/debug-gpt-categories', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    const detectedCategories = await detectProductCategories(message);
+    const detectedCategories = await detectProductCategoriesWithGender(message);
     
     // Check galleries for each detected category
     const categoryDetails = [];
@@ -1186,10 +1399,12 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '7.0 - GPT Top 3 Category Detection',
+    version: '8.0 - Gender-Aware Product Detection',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       smart_categories: 'AI decides when to show categories',
+      gender_detection: 'Automatically detects men/women/kids from user messages',
+      gender_clarification: 'Asks for gender when ambiguous products mentioned',
       gpt_category_detection: 'GPT analyzes ALL CSV categories to find top 3 matches',
       multi_category_fallback: 'Tries GPT recommendations first, then similarity fallback',
       multi_link_support: 'Finds ALL matching galleries and generates multiple links',
@@ -1223,7 +1438,7 @@ app.get('/categories', (req, res) => {
     categories: CATEGORIES,
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
-    approach: 'GPT Top 3 Category Detection: Sends all CSV categories to GPT for intelligent matching'
+    approach: 'Gender-Aware Product Detection: Asks for clarification when gender is ambiguous'
   });
 });
 
@@ -1281,7 +1496,7 @@ app.get('/categories/:categoryName', (req, res) => {
 });
 
 // NEW: Initialize CSV data loading when server starts
-console.log('🚀 Starting Zulu Club AI Assistant with GPT Top 3 Category Detection...');
+console.log('🚀 Starting Zulu Club AI Assistant with Gender-Aware Product Detection...');
 loadAllCSVData().then(success => {
   if (success) {
     console.log('🎉 CSV data initialization completed successfully!');
