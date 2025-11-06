@@ -86,7 +86,7 @@ let isCSVLoaded = false;
 let csvLoadAttempts = 0;
 const MAX_CSV_ATTEMPTS = 10;
 
-// Update the loadCSVFromGitHub function for galleries1.csv
+// NEW: Function to load CSV from GitHub raw content
 async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   try {
     console.log(`📥 Loading CSV from: ${csvUrl}`);
@@ -159,7 +159,7 @@ async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   }
 }
 
-// Also update the CSV loading success check to be more flexible
+// NEW: Function to load all CSV data with retry logic
 async function loadAllCSVData() {
   if (isCSVLoaded) {
     console.log('✅ CSV data already loaded');
@@ -226,6 +226,7 @@ async function loadAllCSVData() {
     }
   }
 }
+
 // NEW: Function to detect product category using GPT
 async function detectProductCategory(userMessage) {
   try {
@@ -282,7 +283,7 @@ async function detectProductCategory(userMessage) {
   }
 }
 
-// Update the generateProductLink function to handle array matching
+// NEW: Function to find category ID and generate link
 async function generateProductLink(userMessage) {
   try {
     // Wait for CSV data to be loaded
@@ -355,6 +356,7 @@ async function generateProductLink(userMessage) {
     return null;
   }
 }
+
 // NEW: Function to create AI response with product link
 async function createProductResponse(userMessage, productLinkInfo) {
   try {
@@ -769,6 +771,27 @@ app.post('/test-product-detection', async (req, res) => {
   }
 });
 
+// NEW: Debug endpoint to check specific category matching
+app.get('/debug-category/:categoryId', (req, res) => {
+  const categoryId = req.params.categoryId;
+  
+  const category = categoriesData.find(cat => cat.id === categoryId);
+  const galleries = galleriesData.filter(g => {
+    if (Array.isArray(g.cat1)) {
+      return g.cat1.includes(categoryId);
+    } else {
+      return g.cat1 === categoryId;
+    }
+  });
+  
+  res.json({
+    categoryId,
+    category: category || 'Not found',
+    matchingGalleries: galleries,
+    totalMatches: galleries.length
+  });
+});
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -794,6 +817,7 @@ app.get('/', (req, res) => {
       csv_status: 'GET /csv-status',
       reload_csv: 'POST /reload-csv',
       test_detection: 'POST /test-product-detection',
+      debug_category: 'GET /debug-category/:categoryId',
       test_message: 'POST /send-test-message',
       categories: 'GET /categories'
     },
@@ -808,27 +832,6 @@ app.get('/categories', (req, res) => {
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
     approach: 'Dual-mode: AI-driven category display + CSV-based product detection'
-  });
-});
-
-// Add a debug endpoint to check specific category matching
-app.get('/debug-category/:categoryId', (req, res) => {
-  const categoryId = req.params.categoryId;
-  
-  const category = categoriesData.find(cat => cat.id === categoryId);
-  const galleries = galleriesData.filter(g => {
-    if (Array.isArray(g.cat1)) {
-      return g.cat1.includes(categoryId);
-    } else {
-      return g.cat1 === categoryId;
-    }
-  });
-  
-  res.json({
-    categoryId,
-    category: category || 'Not found',
-    matchingGalleries: galleries,
-    totalMatches: galleries.length
   });
 });
 
