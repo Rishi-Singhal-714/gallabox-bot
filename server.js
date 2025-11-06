@@ -228,80 +228,7 @@ async function loadAllCSVData() {
     }
   }
 }
-
-// NEW: Enhanced product keyword detection
-function isProductQuery(userMessage) {
-  const userMsgLower = userMessage.toLowerCase().trim();
-  
-  // If message is too short and doesn't contain clear product intent
-  if (userMsgLower.split(' ').length < 2 && 
-      !hasClearProductIntent(userMsgLower)) {
-    return false;
-  }
-
-  // Expanded product keywords with better coverage
-  const productKeywords = [
-    // Common Buying Intents
-    'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop', 'order', 'get', 'find',
-    'search', 'explore', 'browse', 'check', 'see',
-
-    // Product categories and types
-    'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom', 'skirt',
-    'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home', 'decor',
-    'footwear', 'fashion', 'kids', 'gift', 'lifestyle', 'kurta', 'saree', 'lehenga',
-    'jewellery', 'cosmetic', 'makeup', 'furniture', 'electronic', 'toy', 'book',
-    'kitchen', 'sports', 'gadget', 'mobile', 'laptop', 'camera', 'perfume',
-
-    // Specific product mentions
-    'product', 'item', 'collection', 'category', 'variety', 'range'
-  ];
-
-  // Check if any keyword is in the message
-  const hasKeyword = productKeywords.some(keyword => 
-    userMsgLower.includes(keyword)
-  );
-
-  // Also check for common product patterns
-  const hasProductPattern = hasProductIntentPattern(userMsgLower);
-
-  console.log(`🔍 Product query analysis:`, {
-    message: userMessage,
-    hasKeyword: hasKeyword,
-    hasProductPattern: hasProductPattern,
-    wordCount: userMsgLower.split(' ').length
-  });
-
-  return hasKeyword || hasProductPattern;
-}
-
-// Helper function to detect clear product intent
-function hasClearProductIntent(message) {
-  const clearIntentWords = [
-    'buy', 'shop', 'order', 'purchase', 'get', 'find', 'need', 'want'
-  ];
-  return clearIntentWords.some(word => message.includes(word));
-}
-
-// Helper function to detect product patterns
-function hasProductIntentPattern(message) {
-  const patterns = [
-    // Pattern: [adjective] + [product]
-    /\b(men|women|kids|child|baby|boy|girl|home|kitchen|beauty|fashion|sports|electronic)s? (\w+)/i,
-    
-    // Pattern: [product] + for + [purpose/person]
-    /\b(\w+) for (men|women|kids|home|office|gift|party|wedding)/i,
-    
-    // Pattern: looking for/show me + [product]
-    /(looking for|show me|want|need) (\w+)/i,
-    
-    // Pattern: [product] related
-    /\b(kurta|saree|dress|shirt|jeans|shoe|bag|watch|jewellery|makeup|furniture|toy)s?\b/i
-  ];
-
-  return patterns.some(pattern => pattern.test(message));
-}
-
-// NEW: Enhanced function to detect TOP 3 product categories using GPT with CSV data - BETTER FOR SIMPLE PHRASES
+// NEW: Improved function to detect TOP 3 product categories using GPT with CSV data - FIXED ORDER
 async function detectProductCategories(userMessage) {
   try {
     if (!process.env.OPENAI_API_KEY) {
@@ -319,31 +246,31 @@ async function detectProductCategories(userMessage) {
       messages: [
         {
           role: "system",
-          content: `You are a product category classifier for Zulu Club e-commerce store. 
-          Analyze the user's message and identify the TOP 3 most relevant product categories.
+          content: `You are a product category classifier for an e-commerce store. 
+          Analyze the user's message and identify the TOP 3 most relevant product categories from the available list.
           
           AVAILABLE CATEGORIES: ${JSON.stringify(categoryNames)}
           
-          CRITICAL RULES:
-          1. Return EXACTLY 3 category names in a JSON array: ["MOST_RELEVANT", "SECOND_MOST_RELEVANT", "THIRD_MOST_RELEVANT"]
-          2. MOST_RELEVANT = Most specific and direct match to what user is asking for
-          3. SECOND_MOST_RELEVANT = Broader category that still matches well
-          4. THIRD_MOST_RELEVANT = Alternative/related category that user might like
-          5. Use ONLY exact category names from the available list
-          6. Even if the message is short (like "women kurta"), find the best matching categories
-          7. For simple product mentions, think about the most likely categories
+          IMPORTANT RULES:
+          1. Return EXACTLY 3 category names in a JSON array
+          2. Order MUST be: [MOST_RELEVANT, SECOND_MOST_RELEVANT, THIRD_MOST_RELEVANT]
+          3. Use ONLY the exact category names from the available categories list
+          4. Most relevant = most specific and direct match to user's request
+          5. Second most relevant = broader but still relevant category
+          6. Third most relevant = alternative/related category
+          7. If fewer than 3 categories are relevant, fill remaining slots with null
+          8. Return the array in this exact format: ["Category1", "Category2", "Category3"]
           
           EXAMPLES:
-          User: "women kurta" -> ["Kurtas", "Ethnicwear", "Women's Fashion"]
-          User: "i want women kurta" -> ["Kurtas", "Ethnicwear", "Women's Fashion"]
-          User: "kurta for women" -> ["Kurtas", "Women's Fashion", "Ethnicwear"]
-          User: "running shoes" -> ["Sports Shoes", "Footwear", "Athleisure"]
-          User: "men shirt" -> ["Shirts", "Topwear", "Men's Fashion"]
-          User: "home decor" -> ["Home Decor", "Home Furnishing", "Home Accessories"]
-          User: "kids toys" -> ["Toys", "Kids", "Baby Care"]
-          User: "makeup" -> ["Makeup", "Beauty & Personal Care", "Cosmetics"]
-          
-          Now analyze this user message and return the 3 most relevant categories in order.`
+          User: "I need running shoes" -> ["Sports Shoes", "Footwear", "Athleisure"]
+          User: "looking for wedding lehenga" -> ["Lehenga Cholis", "Ethnicwear", "Bridal Wear"]
+          User: "want tshirt for men" -> ["Topwear", "Men's Fashion", "Casual Wear"]
+          User: "home decoration items" -> ["Home Decor", "Home Furnishing", "Home Accessories"]
+          User: "gift for friend" -> ["Gifting", "Lifestyle Gifting", "Personalized Gifts"]
+          User: "beauty products" -> ["Beauty & Personal Care", "Skincare", "Makeup"]
+          User: "sofa for living room" -> ["Furniture", "Home Decor", "Living Room Furniture"]
+          User: "hello" -> [null, null, null]
+          User: "what products do you have" -> [null, null, null]`
         },
         {
           role: "user",
@@ -375,45 +302,15 @@ async function detectProductCategories(userMessage) {
     } catch (parseError) {
       console.log('❌ Error parsing GPT response as JSON:', parseError);
       
-      // Enhanced fallback: try multiple parsing methods
-      let extractedCategories = [];
-      
-      // Method 1: JSON array extraction
-      const jsonMatch = response.match(/\[[^\]]+\]/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (Array.isArray(parsed)) {
-            extractedCategories = parsed.filter(cat => cat && cat !== 'null');
-          }
-        } catch (e) {
-          // Continue to next method
-        }
-      }
-      
-      // Method 2: Quoted text extraction
-      if (extractedCategories.length === 0) {
-        const quotedMatches = response.match(/"([^"]+)"/g) || response.match(/'([^']+)'/g);
-        if (quotedMatches) {
-          extractedCategories = quotedMatches.map(match => 
-            match.replace(/["']/g, '').trim()
-          ).filter(cat => cat && cat !== 'null');
-        }
-      }
-      
-      // Method 3: Numbered list extraction
-      if (extractedCategories.length === 0) {
-        const numberedMatches = response.match(/\d\.\s*([^\n]+)/g);
-        if (numberedMatches) {
-          extractedCategories = numberedMatches.map(match => 
-            match.replace(/\d\.\s*/, '').trim()
-          ).filter(cat => cat && cat !== 'null');
-        }
-      }
-      
-      if (extractedCategories.length > 0) {
+      // Fallback: try to extract categories from text response
+      const categoryMatches = response.match(/"([^"]+)"/g) || response.match(/'([^']+)'/g);
+      if (categoryMatches) {
+        const extractedCategories = categoryMatches.map(match => 
+          match.replace(/["']/g, '').trim()
+        ).filter(cat => cat && cat !== 'null');
+        
         console.log(`🎯 Extracted Categories:`, extractedCategories);
-        return extractedCategories.slice(0, 3);
+        return extractedCategories.slice(0, 3); // Return max 3
       }
       
       return null;
@@ -630,121 +527,85 @@ async function generateProductLinks(userMessage) {
   }
 }
 
-// NEW: Function to create AI response with ALL product links - FIXED TO INCLUDE ALL LINKS
+// NEW: Function to create AI response with multiple product links
 async function createProductResponse(userMessage, productLinksInfo) {
   try {
-    // If no OpenAI API key, create a simple response with ALL links
     if (!process.env.OPENAI_API_KEY) {
       let response = `Great choice! `;
       
       if (productLinksInfo.method === 'gpt_recommendation') {
-        response += `Based on your request for ${userMessage.toLowerCase()}, I found ${productLinksInfo.links.length} collections in our ${productLinksInfo.category} category:\n\n`;
+        response += `Based on your request, I found ${productLinksInfo.links.length} collections in our ${productLinksInfo.category} category:\n\n`;
       } else {
-        response += `I found ${productLinksInfo.links.length} collections for "${userMessage.toLowerCase()}":\n\n`;
+        response += `I found ${productLinksInfo.links.length} collections that might interest you:\n\n`;
       }
       
-      // Include ALL links
-      productLinksInfo.links.forEach((link, index) => {
-        response += `${index + 1}. ${link.link}\n`;
+      productLinksInfo.links.forEach(link => {
+        response += `• ${link.link}\n`;
       });
-      
-      response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
+      response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
       return response;
     }
 
-    // Create a base message that ensures ALL links are included
-    const allLinksText = productLinksInfo.links.map(link => link.link).join('\n• ');
-    
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
-          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response.
-
+          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response that includes multiple product links.
+          
           ZULU CLUB INFORMATION:
           ${ZULU_CLUB_INFO}
-
-          IMPORTANT: You MUST include ALL the product links provided below in your response.
-          Do not skip any links. Make sure every single link is included.
-
-          PRODUCT LINKS TO INCLUDE:
-          ${productLinksInfo.links.map(link => `• ${link.link}`).join('\n')}
-
+          
+          Always include these key points:
+          - 100-minute delivery in Gurgaon
+          - Try at home, easy returns
+          - Mention the specific product category
+          - Include ALL the provided links naturally in the response
+          - Keep it under 400 characters for WhatsApp
+          - Use emojis to make it engaging
+          - If there are multiple links, mention they are different collections/varieties
+          
+          Product Links: ${productLinksInfo.links.map(link => link.link).join(', ')}
           Category: ${productLinksInfo.category}
           Total Collections: ${productLinksInfo.links.length}
-
-          Response Guidelines:
-          - Start with an engaging response to the user's query
-          - Mention we have multiple collections/varieties
-          - Include ALL the product links naturally in the response
-          - End with our key benefits: 100-min delivery, try-at-home, easy returns
-          - Keep it under 500 characters for WhatsApp
-          - Use emojis to make it engaging
-          - Make sure every link is included exactly as provided
-
-          Example structure:
-          "Perfect! For [user request], we have [number] [category] collections: 
-          [Link 1]
-          [Link 2] 
-          [Link 3]
-          🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns"`
+          GPT Recommended Categories: ${productLinksInfo.gptCategories ? productLinksInfo.gptCategories.join(', ') : 'Not available'}
+          Method Used: ${productLinksInfo.method}`
         },
         {
           role: "user",
           content: userMessage
         }
       ],
-      max_tokens: 300, // Increased tokens to ensure all links fit
+      max_tokens: 200,
       temperature: 0.7
     });
 
     let response = completion.choices[0].message.content.trim();
     
-    // CRITICAL: Verify ALL links are included, if not add them manually
-    const missingLinks = productLinksInfo.links.filter(link => 
-      !response.includes(link.link)
+    // Ensure all links are included if AI missed some
+    const includedLinks = productLinksInfo.links.filter(link => 
+      response.includes(link.link)
     );
-
-    if (missingLinks.length > 0) {
-      console.log(`⚠️ AI missed ${missingLinks.length} links, adding them manually...`);
-      
-      // Add a clear separator and then all missing links
-      response += `\n\nHere are all our ${productLinksInfo.category} collections:\n`;
-      missingLinks.forEach(link => {
-        response += `• ${link.link}\n`;
+    
+    if (includedLinks.length < productLinksInfo.links.length) {
+      console.log(`⚠️ AI missed some links, adding them manually...`);
+      response += `\n\nHere are our ${productLinksInfo.category} collections:\n`;
+      productLinksInfo.links.forEach(link => {
+        if (!response.includes(link.link)) {
+          response += `• ${link.link}\n`;
+        }
       });
     }
 
-    // Final verification - if still missing links, rebuild the response entirely
-    const finalMissingLinks = productLinksInfo.links.filter(link => 
-      !response.includes(link.link)
-    );
-
-    if (finalMissingLinks.length > 0) {
-      console.log(`🔄 Creating guaranteed response with ALL ${productLinksInfo.links.length} links...`);
-      response = `Perfect! For ${userMessage.toLowerCase()}, we have ${productLinksInfo.links.length} ${productLinksInfo.category} collections:\n\n`;
-      
-      productLinksInfo.links.forEach((link, index) => {
-        response += `${index + 1}. ${link.link}\n`;
-      });
-      
-      response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
-    }
-
-    console.log(`✅ Final response includes ${productLinksInfo.links.length - finalMissingLinks.length}/${productLinksInfo.links.length} links`);
     return response;
 
   } catch (error) {
     console.error('❌ Error creating product response:', error);
-    // Fallback that guarantees ALL links are included
-    let response = `Great! For ${userMessage.toLowerCase()}, explore our ${productLinksInfo.links.length} ${productLinksInfo.category} collections:\n\n`;
-    
-    productLinksInfo.links.forEach((link, index) => {
-      response += `${index + 1}. ${link.link}\n`;
+    let response = `Perfect! Explore our ${productLinksInfo.category} collections:\n\n`;
+    productLinksInfo.links.forEach(link => {
+      response += `• ${link.link}\n`;
     });
-    
-    response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
+    response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
     return response;
   }
 }
@@ -843,10 +704,21 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
   
   try {
-    // NEW: Improved product query detection
-    const isProduct = isProductQuery(userMessage);
+    // NEW: Check if this is a product request and handle with new logic
+    const productKeywords = [
+      // Common Buying Intents
+      'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop', 'order', 'get', 'find',
 
-    if (isProduct && isCSVLoaded) {
+      // General
+      'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
+      'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
+      'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle'
+    ];
+
+    const userMsgLower = userMessage.toLowerCase();
+    const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
+
+    if (isProductQuery && isCSVLoaded) {
       console.log('🔄 Detected product query, using GPT category matching...');
       
       // Generate product links using new GPT category matching logic
@@ -932,9 +804,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       'show me everything', 'all products', 'your collection', 'what kind of'
     ];
     
-    const shouldShowCategories = clearCategoryRequests.some(term => 
-      userMessage.toLowerCase().includes(term)
-    );
+    const shouldShowCategories = clearCategoryRequests.some(term => userMsgLower.includes(term));
     const hasLinks = response.includes('app.zulu.club') || response.includes('zulu.club');
     
     if (shouldShowCategories && !hasLinks) {
@@ -1206,15 +1076,13 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '8.0 - Enhanced Product Detection',
+    version: '7.0 - GPT Top 3 Category Detection',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       smart_categories: 'AI decides when to show categories',
       gpt_category_detection: 'GPT analyzes ALL CSV categories to find top 3 matches',
-      enhanced_product_detection: 'Improved pattern matching for simple phrases',
       multi_category_fallback: 'Tries GPT recommendations first, then similarity fallback',
       multi_link_support: 'Finds ALL matching galleries and generates multiple links',
-      guaranteed_links: 'Ensures ALL product links are included in responses',
       csv_integration: '268+ categories from GitHub CSV files',
       dynamic_links: 'Automated product link generation from all galleries',
       whatsapp_integration: 'Gallabox API integration'
@@ -1245,7 +1113,7 @@ app.get('/categories', (req, res) => {
     categories: CATEGORIES,
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
-    approach: 'Enhanced Product Detection: Better pattern matching for simple phrases'
+    approach: 'GPT Top 3 Category Detection: Sends all CSV categories to GPT for intelligent matching'
   });
 });
 
@@ -1303,7 +1171,7 @@ app.get('/categories/:categoryName', (req, res) => {
 });
 
 // NEW: Initialize CSV data loading when server starts
-console.log('🚀 Starting Zulu Club AI Assistant with Enhanced Product Detection...');
+console.log('🚀 Starting Zulu Club AI Assistant with GPT Top 3 Category Detection...');
 loadAllCSVData().then(success => {
   if (success) {
     console.log('🎉 CSV data initialization completed successfully!');
