@@ -275,7 +275,7 @@ async function detectProductCategories(userMessage) {
           content: userMessage
         }
       ],
-      max_tokens: 150,
+      max_tokens: 250,
       temperature: 0.1
     });
 
@@ -369,7 +369,7 @@ async function detectProductCategories(userMessage) {
           content: userMessage
         }
       ],
-      max_tokens: 150,
+      max_tokens: 250,
       temperature: 0.1
     });
 
@@ -668,7 +668,7 @@ async function createProductResponse(userMessage, productLinksInfo) {
           content: userMessage
         }
       ],
-      max_tokens: 200,
+      max_tokens: 300,
       temperature: 0.7
     });
 
@@ -884,7 +884,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 350,
+      max_tokens: 450,
       temperature: 0.7
     });
     
