@@ -227,7 +227,7 @@ async function loadAllCSVData() {
   }
 }
 
-// NEW: Function to detect product category using GPT
+// NEW: Function to detect product category using GPT - IMPROVED FOR ALL PRODUCTS
 async function detectProductCategory(userMessage) {
   try {
     if (!process.env.OPENAI_API_KEY) {
@@ -235,8 +235,8 @@ async function detectProductCategory(userMessage) {
       return null;
     }
 
-    // Prepare category names for context
-    const categoryNames = categoriesData.map(cat => cat.name).slice(0, 50); // Limit to first 50 for token efficiency
+    // Get ALL category names for better detection
+    const categoryNames = categoriesData.map(cat => cat.name);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -250,11 +250,17 @@ async function detectProductCategory(userMessage) {
           Respond ONLY with the exact category name that best matches the user's request.
           If no clear category matches, respond with "null".
           
+          IMPORTANT: Be very liberal in matching. If the user mentions any product type (toys, electronics, clothing, etc.),
+          try to find the closest matching category from the available list.
+          
           Examples:
           User: "I need tshirt" -> "Topwear"
           User: "want shoes" -> "Footwear" 
           User: "looking for jeans" -> "Bottomwear"
           User: "show me bags" -> "Bags"
+          User: "I want toys" -> "Toys & Games"
+          User: "home decor items" -> "Home Decor"
+          User: "beauty products" -> "Beauty & Self-Care"
           User: "hello" -> "null"`
         },
         {
@@ -329,8 +335,12 @@ async function generateProductLinks(userMessage) {
     
     if (matchingGalleries.length === 0) {
       console.log(`❌ No gallery data found for category ID: ${category.id}`);
-      console.log(`🔍 Available cat1 arrays in galleries:`, galleriesData.slice(0, 5).map(g => g.cat1));
-      return null;
+      return {
+        category: category.name,
+        links: [],
+        totalMatches: 0,
+        fallbackToCategory: true
+      };
     }
 
     console.log(`🎯 Found ${matchingGalleries.length} matching galleries for category ${category.name}`);
@@ -361,7 +371,8 @@ async function generateProductLinks(userMessage) {
     return {
       category: category.name,
       links: uniqueLinks,
-      totalMatches: matchingGalleries.length
+      totalMatches: matchingGalleries.length,
+      fallbackToCategory: false
     };
 
   } catch (error) {
@@ -370,9 +381,27 @@ async function generateProductLinks(userMessage) {
   }
 }
 
-// NEW: Function to create AI response with multiple product links
+// NEW: Function to create AI response with multiple product links or fallback to category
 async function createProductResponse(userMessage, productLinksInfo) {
   try {
+    // If no galleries found, fallback to category link
+    if (productLinksInfo.fallbackToCategory || productLinksInfo.links.length === 0) {
+      console.log('🔄 No galleries found, falling back to category link');
+      
+      // Find the main category link from CATEGORIES object
+      const mainCategory = Object.entries(CATEGORIES).find(([catName, data]) => 
+        catName.toLowerCase().includes(productLinksInfo.category.toLowerCase()) ||
+        productLinksInfo.category.toLowerCase().includes(catName.toLowerCase())
+      );
+      
+      if (mainCategory) {
+        const categoryLink = mainCategory[1].link;
+        return `Great choice! While we prepare specific collections for ${productLinksInfo.category}, you can explore our ${mainCategory[0]} category here: ${categoryLink} 🛍️\n\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+      } else {
+        return `Great choice! Explore our ${productLinksInfo.category} collection and more at: app.zulu.club 🛍️\n\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+      }
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       let response = `Great choice! Check out our ${productLinksInfo.category} collections:\n\n`;
       productLinksInfo.links.forEach(link => {
@@ -531,36 +560,44 @@ function getCategoryLinks() {
   return links;
 }
 
-// NEW: Enhanced AI Chat Functionality with Product Detection
+// NEW: Enhanced AI Chat Functionality with UNIVERSAL Product Detection
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
   try {
-    // NEW: Check if this is a product request and handle with new logic
-    const productKeywords = [
-      'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop',
-      'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
-      'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
-      'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle'
-    ];
-
-    const userMsgLower = userMessage.toLowerCase();
-    const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
-
-    if (isProductQuery && isCSVLoaded) {
-      console.log('🔄 Detected product query, using new logic...');
+    // NEW: UNIVERSAL PRODUCT DETECTION - Try for EVERY message
+    if (isCSVLoaded) {
+      console.log('🔄 Checking if message contains product request...');
       
-      // Generate product links using new logic
-      const productLinksInfo = await generateProductLinks(userMessage);
+      // First, check if this might be a product query (not a greeting or general question)
+      const nonProductPatterns = [
+        'hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
+        'how are you', 'thank you', 'thanks', 'bye', 'goodbye', 'help',
+        'what can you do', 'who are you', 'what is zulu', 'about', 'information'
+      ];
       
-      if (productLinksInfo) {
-        console.log('✅ Product links generated, creating AI response...');
-        const productResponse = await createProductResponse(userMessage, productLinksInfo);
-        return productResponse;
+      const userMsgLower = userMessage.toLowerCase();
+      const isLikelyProductQuery = !nonProductPatterns.some(pattern => 
+        userMsgLower.includes(pattern)
+      ) && userMsgLower.split(' ').length >= 2; // At least 2 words
+      
+      if (isLikelyProductQuery) {
+        console.log('🎯 Message appears to be product-related, trying product detection...');
+        
+        // Generate product links using new logic
+        const productLinksInfo = await generateProductLinks(userMessage);
+        
+        if (productLinksInfo) {
+          console.log('✅ Product detection completed, creating response...');
+          const productResponse = await createProductResponse(userMessage, productLinksInfo);
+          return productResponse;
+        } else {
+          console.log('❌ Product detection failed, falling back to original AI...');
+        }
       } else {
-        console.log('❌ New logic failed, falling back to original AI...');
+        console.log('ℹ️  Message appears to be non-product related, using original AI...');
       }
     }
 
@@ -672,7 +709,7 @@ async function handleMessage(sessionId, userMessage) {
       content: userMessage
     });
     
-    // Get AI response (now includes new product detection logic)
+    // Get AI response (now includes UNIVERSAL product detection logic)
     const aiResponse = await getChatGPTResponse(
       userMessage, 
       conversations[sessionId].history
@@ -900,12 +937,13 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - Multi-Link Product Detection',
+    version: '6.0 - Universal Product Detection',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       smart_categories: 'AI decides when to show categories',
-      product_detection: 'CSV-based product category detection',
+      universal_product_detection: 'Tries product detection for EVERY message',
       multi_link_support: 'Finds ALL matching galleries and generates multiple links',
+      fallback_system: 'Automatically falls back to category links when no galleries found',
       csv_integration: '268+ categories from GitHub CSV files',
       dynamic_links: 'Automated product link generation from all galleries',
       whatsapp_integration: 'Gallabox API integration'
@@ -936,7 +974,7 @@ app.get('/categories', (req, res) => {
     categories: CATEGORIES,
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
-    approach: 'Dual-mode: AI-driven category display + CSV-based multi-link product detection'
+    approach: 'Universal Product Detection: Tries CSV galleries first, falls back to category links'
   });
 });
 
@@ -994,7 +1032,7 @@ app.get('/categories/:categoryName', (req, res) => {
 });
 
 // NEW: Initialize CSV data loading when server starts
-console.log('🚀 Starting Zulu Club AI Assistant with Multi-Link Product Detection...');
+console.log('🚀 Starting Zulu Club AI Assistant with Universal Product Detection...');
 loadAllCSVData().then(success => {
   if (success) {
     console.log('🎉 CSV data initialization completed successfully!');
