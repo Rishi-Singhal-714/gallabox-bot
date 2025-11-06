@@ -39,7 +39,7 @@ Browse and shop high-quality lifestyle products across categories you love:
 - Men's Fashion — shirts, tees, jackets, athleisure & more
 - Kids — clothing, toys, learning kits & accessories
 - Footwear — sneakers, heels, flats, sandals & kids shoes
-- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories
+- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories, fountains
 - Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
 - Fashion Accessories — bags, jewelry, watches, sunglasses & belts
 - Lifestyle Gifting — curated gift sets & décor-based gifting
@@ -48,7 +48,9 @@ And the best part? No waiting days for delivery. With Zulu Club, your selection 
 
 Now live in Gurgaon
 Experience us at our pop-ups: AIPL Joy Street & AIPL Central
-Explore & shop on zulu.club
+Explore & shop on app.zulu.club
+we may have other items which not listed 
+we dont deliver in delhi or india we only deliver in gurgoan all over for free 
 `;
 
 // Category structure with dummy links - FOR AI TO USE IN RESPONSES
