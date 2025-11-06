@@ -320,7 +320,101 @@ async function detectProductCategories(userMessage) {
   }
 }
 
-// NEW: Enhanced function to find galleries using GPT's top 3 categories
+// NEW: Improved function to detect TOP 3 product categories using GPT with CSV data - FIXED ORDER
+async function detectProductCategories(userMessage) {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.log('❌ OpenAI API key not available for category detection');
+      return null;
+    }
+
+    // Prepare category names for context - use ALL categories from CSV
+    const categoryNames = categoriesData.map(cat => cat.name);
+    
+    console.log(`📊 Sending ${categoryNames.length} categories to GPT for matching...`);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: `You are a product category classifier for an e-commerce store. 
+          Analyze the user's message and identify the TOP 3 most relevant product categories from the available list.
+          
+          AVAILABLE CATEGORIES: ${JSON.stringify(categoryNames)}
+          
+          IMPORTANT RULES:
+          1. Return EXACTLY 3 category names in a JSON array
+          2. Order MUST be: [MOST_RELEVANT, SECOND_MOST_RELEVANT, THIRD_MOST_RELEVANT]
+          3. Use ONLY the exact category names from the available categories list
+          4. Most relevant = most specific and direct match to user's request
+          5. Second most relevant = broader but still relevant category
+          6. Third most relevant = alternative/related category
+          7. If fewer than 3 categories are relevant, fill remaining slots with null
+          8. Return the array in this exact format: ["Category1", "Category2", "Category3"]
+          
+          EXAMPLES:
+          User: "I need running shoes" -> ["Sports Shoes", "Footwear", "Athleisure"]
+          User: "looking for wedding lehenga" -> ["Lehenga Cholis", "Ethnicwear", "Bridal Wear"]
+          User: "want tshirt for men" -> ["Topwear", "Men's Fashion", "Casual Wear"]
+          User: "home decoration items" -> ["Home Decor", "Home Furnishing", "Home Accessories"]
+          User: "gift for friend" -> ["Gifting", "Lifestyle Gifting", "Personalized Gifts"]
+          User: "beauty products" -> ["Beauty & Personal Care", "Skincare", "Makeup"]
+          User: "sofa for living room" -> ["Furniture", "Home Decor", "Living Room Furniture"]
+          User: "hello" -> [null, null, null]
+          User: "what products do you have" -> [null, null, null]`
+        },
+        {
+          role: "user",
+          content: userMessage
+        }
+      ],
+      max_tokens: 150,
+      temperature: 0.1
+    });
+
+    const response = completion.choices[0].message.content.trim();
+    console.log(`🤖 GPT Raw Response: ${response}`);
+    
+    try {
+      // Parse the JSON response
+      const categoriesArray = JSON.parse(response);
+      
+      if (!Array.isArray(categoriesArray) || categoriesArray.length !== 3) {
+        console.log('❌ Invalid response format from GPT');
+        return null;
+      }
+      
+      // Filter out null values and return valid categories in order
+      const validCategories = categoriesArray.filter(cat => cat !== null && cat !== 'null');
+      
+      console.log(`🎯 GPT Detected Categories (Ordered by Relevance):`, validCategories);
+      return validCategories;
+      
+    } catch (parseError) {
+      console.log('❌ Error parsing GPT response as JSON:', parseError);
+      
+      // Fallback: try to extract categories from text response
+      const categoryMatches = response.match(/"([^"]+)"/g) || response.match(/'([^']+)'/g);
+      if (categoryMatches) {
+        const extractedCategories = categoryMatches.map(match => 
+          match.replace(/["']/g, '').trim()
+        ).filter(cat => cat && cat !== 'null');
+        
+        console.log(`🎯 Extracted Categories:`, extractedCategories);
+        return extractedCategories.slice(0, 3); // Return max 3
+      }
+      
+      return null;
+    }
+
+  } catch (error) {
+    console.error('❌ Error detecting product categories:', error);
+    return null;
+  }
+}
+
+// NEW: Enhanced function to find galleries using GPT's top 3 categories - WITH ALL GALLERIES
 async function generateProductLinks(userMessage) {
   try {
     // Wait for CSV data to be loaded
@@ -334,7 +428,7 @@ async function generateProductLinks(userMessage) {
       return null;
     }
 
-    // NEW: Get TOP 3 categories from GPT
+    // NEW: Get TOP 3 categories from GPT (ordered by relevance)
     const detectedCategories = await detectProductCategories(userMessage);
     
     if (!detectedCategories || detectedCategories.length === 0) {
@@ -342,13 +436,15 @@ async function generateProductLinks(userMessage) {
       return null;
     }
 
-    console.log(`🎯 Will try ${detectedCategories.length} GPT-recommended categories:`, detectedCategories);
+    console.log(`🎯 Will try ${detectedCategories.length} GPT-recommended categories in order of relevance:`, detectedCategories);
 
-    // NEW: Try each GPT-recommended category in order
+    // NEW: Try each GPT-recommended category in order of relevance
     let successfulCategory = null;
     let matchingGalleries = [];
     let triedCategories = [];
+    let allGalleriesFromAllCategories = [];
 
+    // First pass: Try each GPT category and collect ALL galleries from successful ones
     for (const categoryName of detectedCategories) {
       // Find the category in our CSV data
       const category = categoriesData.find(cat => 
@@ -375,12 +471,40 @@ async function generateProductLinks(userMessage) {
       
       if (galleriesForCategory.length > 0) {
         console.log(`✅ Found ${galleriesForCategory.length} galleries for category: ${category.name}`);
-        successfulCategory = category;
-        matchingGalleries = galleriesForCategory;
-        break;
+        
+        // Store all galleries from this category
+        allGalleriesFromAllCategories.push({
+          category: category,
+          galleries: galleriesForCategory
+        });
+        
+        // If this is the first category with galleries, use it as primary
+        if (!successfulCategory) {
+          successfulCategory = category;
+          matchingGalleries = galleriesForCategory;
+        }
       } else {
         console.log(`❌ No galleries found for GPT category: ${category.name}`);
       }
+    }
+
+    // NEW: If we have multiple categories with galleries, combine them for more options
+    if (allGalleriesFromAllCategories.length > 1) {
+      console.log(`🎉 Found ${allGalleriesFromAllCategories.length} categories with galleries!`);
+      
+      // Use the first (most relevant) category as primary, but combine galleries
+      successfulCategory = allGalleriesFromAllCategories[0].category;
+      
+      // Combine galleries from all successful categories
+      const combinedGalleries = allGalleriesFromAllCategories.flatMap(item => item.galleries);
+      
+      // Remove duplicates (same type2)
+      const uniqueGalleries = combinedGalleries.filter((gallery, index, self) => 
+        index === self.findIndex(g => g.type2 === gallery.type2)
+      );
+      
+      matchingGalleries = uniqueGalleries;
+      console.log(`🔗 Combined ${uniqueGalleries.length} unique galleries from ${allGalleriesFromAllCategories.length} categories`);
     }
 
     // NEW: Fallback - if GPT categories don't work, try similarity matching
@@ -455,7 +579,7 @@ async function generateProductLinks(userMessage) {
 
     console.log(`🎉 Final selected category: ${successfulCategory.name} with ${matchingGalleries.length} galleries`);
 
-    // Generate multiple links from all matching galleries
+    // Generate multiple links from ALL matching galleries
     const productLinks = matchingGalleries.map(gallery => {
       const encodedType2 = encodeURIComponent(gallery.type2);
       const productLink = `app.zulu.club/${encodedType2}`;
@@ -468,12 +592,12 @@ async function generateProductLinks(userMessage) {
       };
     });
 
-    // Remove duplicate links (same type2)
+    // Remove duplicate links (same type2) - though we already did this above
     const uniqueLinks = productLinks.filter((link, index, self) => 
       index === self.findIndex(l => l.link === link.link)
     );
 
-    console.log(`🔗 Generated ${uniqueLinks.length} unique product links`);
+    console.log(`🔗 Generated ${uniqueLinks.length} unique product links from ALL available galleries`);
     uniqueLinks.forEach((link, index) => {
       console.log(`   ${index + 1}. ${link.link} (${link.type2})`);
     });
@@ -485,7 +609,8 @@ async function generateProductLinks(userMessage) {
       triedCategories: triedCategories,
       finalCategory: successfulCategory.name,
       gptCategories: detectedCategories,
-      method: successfulCategory ? 'gpt_recommendation' : 'similarity_fallback'
+      method: successfulCategory ? 'gpt_recommendation' : 'similarity_fallback',
+      categoriesWithGalleries: allGalleriesFromAllCategories.length
     };
 
   } catch (error) {
