@@ -710,9 +710,11 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop', 'order', 'get', 'find',
 
       // General
-      'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
-      'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
-      'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle'
+    'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom', 'skirt',
+    'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home', 'decor',
+    'footwear', 'fashion', 'kids', 'gift', 'lifestyle', 'kurta', 'saree', 'lehenga',
+    'jewellery', 'cosmetic', 'makeup', 'furniture', 'electronic', 'toy', 'book',
+    'kitchen', 'sports', 'gadget', 'mobile', 'laptop', 'camera', 'perfume',
     ];
 
     const userMsgLower = userMessage.toLowerCase();
