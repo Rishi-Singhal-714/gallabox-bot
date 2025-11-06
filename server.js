@@ -229,7 +229,7 @@ async function loadAllCSVData() {
   }
 }
 
-// NEW: Improved function to detect TOP 3 product categories using GPT with CSV data
+// NEW: Enhanced function to detect TOP 3 product categories using GPT with CSV data - IMPROVED RELEVANCE
 async function detectProductCategories(userMessage) {
   try {
     if (!process.env.OPENAI_API_KEY) {
@@ -247,28 +247,30 @@ async function detectProductCategories(userMessage) {
       messages: [
         {
           role: "system",
-          content: `You are a product category classifier for an e-commerce store. 
-          Analyze the user's message and identify the TOP 3 most relevant product categories from the available list.
+          content: `You are a product category classifier for Zulu Club e-commerce store. 
+          Analyze the user's message and identify the TOP 3 most relevant product categories.
           
           AVAILABLE CATEGORIES: ${JSON.stringify(categoryNames)}
           
-          IMPORTANT RULES:
-          1. Respond with a JSON array of exactly 3 category names in order of relevance
-          2. Use ONLY the exact category names from the available categories list
-          3. Choose categories that are MOST SPECIFIC and RELEVANT to the user's request
-          4. If fewer than 3 categories are relevant, fill remaining slots with null
-          5. Return the array in this exact format: ["Category1", "Category2", "Category3"]
+          CRITICAL RULES:
+          1. Return EXACTLY 3 category names in a JSON array: ["MOST_RELEVANT", "SECOND_MOST_RELEVANT", "THIRD_MOST_RELEVANT"]
+          2. MOST_RELEVANT = Most specific and direct match to what user is asking for
+          3. SECOND_MOST_RELEVANT = Broader category that still matches well
+          4. THIRD_MOST_RELEVANT = Alternative/related category that user might like
+          5. Use ONLY exact category names from the available list
+          6. Think step by step: What is the user specifically looking for? What's the main product type?
           
           EXAMPLES:
-          User: "I need tshirt" -> ["Topwear", "Men's Fashion", "Casual Wear"]
-          User: "want shoes for running" -> ["Footwear", "Sports Shoes", "Athleisure"]
-          User: "looking for jeans" -> ["Bottomwear", "Jeans", "Men's Fashion"]
-          User: "show me bags" -> ["Bags", "Fashion Accessories", "Women's Fashion"]
+          User: "I need running shoes" -> ["Sports Shoes", "Footwear", "Athleisure"]
+          User: "looking for wedding lehenga" -> ["Lehenga Cholis", "Ethnicwear", "Bridal Wear"]
+          User: "ethnic dress for women" -> ["Ethnicwear", "Women's Fashion", "Dresses"]
           User: "home decoration items" -> ["Home Decor", "Home Furnishing", "Home Accessories"]
           User: "gift for friend" -> ["Gifting", "Lifestyle Gifting", "Personalized Gifts"]
-          User: "beauty products" -> ["Beauty & Personal Care", "Skincare", "Makeup"]
-          User: "hello" -> [null, null, null]
-          User: "what products do you have" -> [null, null, null]`
+          User: "men's tshirt" -> ["Topwear", "Men's Fashion", "Casual Wear"]
+          User: "baby clothes" -> ["Kids Fashion", "Infant Wear", "Kids"]
+          User: "makeup and skincare" -> ["Beauty & Personal Care", "Skincare", "Makeup"]
+          
+          Now analyze this user message and return the 3 most relevant categories in order.`
         },
         {
           role: "user",
@@ -291,24 +293,54 @@ async function detectProductCategories(userMessage) {
         return null;
       }
       
-      // Filter out null values and return valid categories
+      // Filter out null values and return valid categories in order
       const validCategories = categoriesArray.filter(cat => cat !== null && cat !== 'null');
       
-      console.log(`🎯 GPT Detected Top ${validCategories.length} Categories:`, validCategories);
+      console.log(`🎯 GPT Detected Categories (Ordered by Relevance):`, validCategories);
       return validCategories;
       
     } catch (parseError) {
       console.log('❌ Error parsing GPT response as JSON:', parseError);
       
-      // Fallback: try to extract categories from text response
-      const categoryMatches = response.match(/"([^"]+)"/g) || response.match(/'([^']+)'/g);
-      if (categoryMatches) {
-        const extractedCategories = categoryMatches.map(match => 
-          match.replace(/["']/g, '').trim()
-        ).filter(cat => cat && cat !== 'null');
-        
+      // Enhanced fallback: try multiple parsing methods
+      let extractedCategories = [];
+      
+      // Method 1: JSON array extraction
+      const jsonMatch = response.match(/\[[^\]]+\]/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed)) {
+            extractedCategories = parsed.filter(cat => cat && cat !== 'null');
+          }
+        } catch (e) {
+          // Continue to next method
+        }
+      }
+      
+      // Method 2: Quoted text extraction
+      if (extractedCategories.length === 0) {
+        const quotedMatches = response.match(/"([^"]+)"/g) || response.match(/'([^']+)'/g);
+        if (quotedMatches) {
+          extractedCategories = quotedMatches.map(match => 
+            match.replace(/["']/g, '').trim()
+          ).filter(cat => cat && cat !== 'null');
+        }
+      }
+      
+      // Method 3: Numbered list extraction
+      if (extractedCategories.length === 0) {
+        const numberedMatches = response.match(/\d\.\s*([^\n]+)/g);
+        if (numberedMatches) {
+          extractedCategories = numberedMatches.map(match => 
+            match.replace(/\d\.\s*/, '').trim()
+          ).filter(cat => cat && cat !== 'null');
+        }
+      }
+      
+      if (extractedCategories.length > 0) {
         console.log(`🎯 Extracted Categories:`, extractedCategories);
-        return extractedCategories.slice(0, 3); // Return max 3
+        return extractedCategories.slice(0, 3);
       }
       
       return null;
