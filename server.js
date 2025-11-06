@@ -10,7 +10,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Gallabox API configuration
+// Gallabox API configuration - use environment variables
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
   apiKey: process.env.GALLABOX_API_KEY,
@@ -24,31 +24,25 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Cache for CSV data (load once, use everywhere)
-let csvCache = {
-  categoriesData: [],
-  galleriesData: [],
-  lastUpdated: null,
-  isLoaded: false
-};
+// Store conversations
+let conversations = {};
 
-// Session storage with auto-cleanup
-let sessions = {};
-
-// Session configuration
-const SESSION_CONFIG = {
-  TIMEOUT: 3 * 60 * 1000, // 3 minutes in milliseconds
-  WARNING_TIME: 2 * 60 * 1000, // 2 minutes in milliseconds
-  CLEANUP_INTERVAL: 30 * 100000 // Cleanup every 30 seconds
-};
-
-// ZULU CLUB INFORMATION
+// ZULU CLUB INFORMATION with categories and links
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
 
 Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
 
 Browse and shop high-quality lifestyle products across categories you love:
+
+- Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more
+- Men's Fashion — shirts, tees, jackets, athleisure & more
+- Kids — clothing, toys, learning kits & accessories
+- Footwear — sneakers, heels, flats, sandals & kids shoes
+- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories
+- Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
+- Fashion Accessories — bags, jewelry, watches, sunglasses & belts
+- Lifestyle Gifting — curated gift sets & décor-based gifting
 
 And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
 
@@ -57,458 +51,322 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// Initialize CSV data once and cache it
-async function initializeCSVData() {
-  try {
-    console.log('🔄 Initializing CSV data cache...');
-    
-    const categoriesUrl = process.env.CATEGORIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
-    const galleriesUrl = process.env.GALLERIES_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
-    
-    console.log('📁 CSV URLs:', { categories: categoriesUrl, galleries: galleriesUrl });
-    
-    // Load categories1.csv
-    const categoriesResults = await loadCSVFromGitHub(categoriesUrl, 'categories1.csv');
-    
-    // Load galleries1.csv
-    const galleriesResults = await loadCSVFromGitHub(galleriesUrl, 'galleries1.csv');
-    
-    // Update cache
-    csvCache = {
-      categoriesData: categoriesResults || [],
-      galleriesData: galleriesResults || [],
-      lastUpdated: new Date(),
-      isLoaded: true
-    };
-    
-    console.log(`✅ CSV Cache loaded: ${csvCache.categoriesData.length} categories, ${csvCache.galleriesData.length} galleries`);
-    
-  } catch (error) {
-    console.error('❌ Error initializing CSV cache:', error);
-    // Don't throw - we'll use empty cache
+// Category structure with dummy links - FOR AI TO USE IN RESPONSES
+const CATEGORIES = {
+  "Women's Fashion": {
+    link: "app.zulu.club/categories/womens-fashion",
+  },
+  "Men's Fashion": {
+    link: "app.zulu.club/categories/mens-fashion",
+  },
+  "Kids": {
+    link: "app.zulu.club/categories/kids"
+  },
+  "Footwear": {
+    link: "app.zulu.club/categories/footwear",
+  },
+  "Home Decor": {
+    link: "app.zulu.club/categories/home-decor",
+  },
+  "Beauty & Self-Care": {
+    link: "app.zulu.club/categories/beauty-self-care",
+  },
+  "Fashion Accessories": {
+    link: "app.zulu.club/categories/fashion-accessories",
+  },
+  "Lifestyle Gifting": {
+    link: "app.zulu.club/categories/lifestyle-gifting",
   }
-}
+};
 
-// Start initialization
-initializeCSVData();
+// NEW: CSV Data Storage
+let categoriesData = []; // Store categories1.csv data
+let galleriesData = [];  // Store galleries1.csv data
+let isCSVLoaded = false;
+let csvLoadAttempts = 0;
+const MAX_CSV_ATTEMPTS = 10;
 
-// Function to load CSV data from GitHub
-async function loadCSVFromGitHub(csvUrl, csvType) {
+// NEW: Function to load CSV from GitHub raw content
+async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   try {
-    console.log(`📥 Loading ${csvType} from: ${csvUrl}`);
+    console.log(`📥 Loading CSV from: ${csvUrl}`);
     
-    const response = await axios.get(csvUrl, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'ZuluClub-Bot/1.0',
-        'Accept': 'text/csv'
-      }
-    });
+    // Convert GitHub blob URL to raw URL
+    const rawUrl = csvUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
     
-    const results = [];
+    const response = await axios.get(rawUrl, { timeout: 15000 });
+    const csvContent = response.data;
     
     return new Promise((resolve, reject) => {
-      const stream = Readable.from(response.data);
+      const results = [];
+      const stream = Readable.from(csvContent);
+      
       stream
         .pipe(csv())
         .on('data', (data) => {
-          if (Object.keys(data).length > 0 && Object.values(data).some(val => val && val.trim() !== '')) {
-            results.push(data);
+          if (isGalleries) {
+            // For galleries1.csv, we need cat1 and type2 columns
+            if (data.cat1 && data.type2) {
+              results.push({
+                cat1: data.cat1.trim(),
+                type2: data.type2.trim()
+              });
+            }
+          } else {
+            // For categories1.csv, we need id and name columns
+            if (data.id && data.name) {
+              results.push({
+                id: data.id.trim(),
+                name: data.name.trim()
+              });
+            }
           }
         })
         .on('end', () => {
-          console.log(`✅ Loaded ${results.length} rows from ${csvType}`);
+          console.log(`✅ Successfully loaded ${results.length} rows from ${isGalleries ? 'galleries' : 'categories'} CSV`);
           resolve(results);
         })
         .on('error', (error) => {
-          console.error(`❌ CSV parsing error for ${csvType}:`, error);
+          console.error(`❌ Error parsing CSV:`, error);
           reject(error);
         });
     });
   } catch (error) {
-    console.error(`❌ Error loading ${csvType} from GitHub:`, error.message);
-    return [];
+    console.error(`❌ Error loading CSV from ${csvUrl}:`, error.message);
+    throw error;
   }
 }
 
-// Session Management Functions
-function createSession(sessionId) {
-  const now = Date.now();
-  sessions[sessionId] = {
-    id: sessionId,
-    history: [],
-    lastActivity: now,
-    createdAt: now,
-    warningSent: false,
-    data: {
-      // Store any temporary data for this session
-      categoryNames: [],
-      lastSearch: null
-    }
-  };
-  console.log(`🆕 Created new session: ${sessionId}`);
-  return sessions[sessionId];
-}
-
-function getSession(sessionId) {
-  const session = sessions[sessionId];
-  if (session) {
-    session.lastActivity = Date.now(); // Update activity timestamp
-  }
-  return session;
-}
-
-function updateSession(sessionId, updates = {}) {
-  const session = getSession(sessionId);
-  if (session) {
-    Object.assign(session, updates);
-    session.lastActivity = Date.now();
-  }
-  return session;
-}
-
-function deleteSession(sessionId) {
-  if (sessions[sessionId]) {
-    console.log(`🗑️ Deleting session: ${sessionId}`);
-    delete sessions[sessionId];
+// NEW: Function to load all CSV data with retry logic
+async function loadAllCSVData() {
+  if (isCSVLoaded) {
+    console.log('✅ CSV data already loaded');
     return true;
   }
-  return false;
-}
 
-// Session cleanup job - runs periodically
-function startSessionCleanup() {
-  setInterval(() => {
-    const now = Date.now();
-    let cleanedCount = 0;
-    let warnedCount = 0;
-
-    Object.entries(sessions).forEach(([sessionId, session]) => {
-      const inactiveTime = now - session.lastActivity;
-      
-      // Send warning at 2 minutes
-      if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
-        console.log(`⏰ Sending timeout warning for session: ${sessionId}`);
-        session.warningSent = true;
-        warnedCount++;
-        
-        // In a real scenario, you might want to send a WhatsApp message here
-        // For now, we'll just log it
-      }
-      
-      // Delete session at 3 minutes
-      if (inactiveTime >= SESSION_CONFIG.TIMEOUT) {
-        deleteSession(sessionId);
-        cleanedCount++;
-        
-        // In a real scenario, send thanks message
-        console.log(`👋 Session ${sessionId} expired and cleaned up`);
-      }
-    });
-    
-    if (cleanedCount > 0 || warnedCount > 0) {
-      console.log(`🧹 Session cleanup: ${warnedCount} warned, ${cleanedCount} deleted. Active sessions: ${Object.keys(sessions).length}`);
-    }
-  }, SESSION_CONFIG.CLEANUP_INTERVAL);
-}
-
-// Start session cleanup
-startSessionCleanup();
-
-// Get category names from cached CSV data
-function getCategoryNames() {
-  if (!csvCache.isLoaded || csvCache.categoriesData.length === 0) {
-    console.log('⚠️ No categories data available in cache');
-    return [];
-  }
-  
-  const categoryNames = [];
-  
-  csvCache.categoriesData.forEach((row) => {
-    const name = row.name || row.Name;
-    if (name && name.trim()) {
-      categoryNames.push(name.trim());
-    }
-  });
-  
-  console.log(`📋 Found ${categoryNames.length} category names from cache`);
-  return categoryNames;
-}
-
-// Get category ID by name from cached CSV data
-function getCategoryIdByName(categoryName) {
-  if (!csvCache.isLoaded || !categoryName) {
-    return null;
-  }
-  
-  for (const row of csvCache.categoriesData) {
-    const name = row.name || row.Name;
-    if (name && name.trim() === categoryName) {
-      const id = row.id || row.ID;
-      if (id) {
-        return id.toString();
-      }
-    }
-  }
-  
-  return null;
-}
-
-// Parse cat1 column data which might be in array format
-function parseCat1Data(cat1Value) {
-  if (!cat1Value) return [];
-  
-  const strValue = cat1Value.toString().trim();
-  
-  if (strValue.startsWith('[') && strValue.endsWith(']')) {
-    try {
-      const cleanStr = strValue.slice(1, -1);
-      const items = cleanStr.split(',').map(item => item.trim().replace(/"/g, ''));
-      return items;
-    } catch (error) {
-      return [];
-    }
-  }
-  
-  if (strValue.includes(',')) {
-    return strValue.split(',').map(item => item.trim());
-  }
-  
-  return [strValue];
-}
-
-// Get type2 data from cached galleries data
-function getType2DataByCat1(categoryId) {
-  if (!csvCache.isLoaded || !categoryId) {
-    return [];
-  }
-  
-  const type2Data = [];
-  
-  csvCache.galleriesData.forEach((row) => {
-    const cat1Value = row.cat1;
-    
-    if (cat1Value) {
-      const cat1Ids = parseCat1Data(cat1Value);
-      
-      if (cat1Ids.includes(categoryId.toString())) {
-        const type2 = row.type2;
-        if (type2 && type2.trim()) {
-          type2Data.push(type2.trim());
-        }
-      }
-    }
-  });
-  
-  return type2Data;
-}
-
-// Generate links from type2 data
-function generateLinksFromType2(type2Data) {
-  return type2Data.map(name => {
-    const encodedName = name.replace(/\s+/g, '%20');
-    return `app.zulu.club/${encodedName}`;
-  });
-}
-
-// Smart product search with fallback
-async function smartProductSearch(userMessage, categoryNames, session) {
-  console.log(`🧠 SMART SEARCH for: "${userMessage}"`);
-  
-  // Store search in session
-  if (session) {
-    session.data.lastSearch = userMessage;
-  }
-  
-  const primaryCategory = await getAICategoryMatch(userMessage, categoryNames);
-  if (!primaryCategory) {
-    return { success: false, links: [], triedCategories: [] };
-  }
-  
-  const triedCategories = [primaryCategory];
-  
-  // Try primary category
-  const primaryCategoryId = getCategoryIdByName(primaryCategory);
-  if (primaryCategoryId) {
-    const primaryType2Data = getType2DataByCat1(primaryCategoryId);
-    if (primaryType2Data.length > 0) {
-      const links = generateLinksFromType2(primaryType2Data);
-      return { success: true, links: links, triedCategories: triedCategories, source: 'primary' };
-    }
-  }
-  
-  // Get and try alternative categories
-  const alternativeCategories = await getAlternativeCategories(userMessage, primaryCategory, categoryNames);
-  triedCategories.push(...alternativeCategories);
-  
-  for (const altCategory of alternativeCategories) {
-    const altCategoryId = getCategoryIdByName(altCategory);
-    if (altCategoryId) {
-      const altType2Data = getType2DataByCat1(altCategoryId);
-      if (altType2Data.length > 0) {
-        const links = generateLinksFromType2(altType2Data);
-        return { success: true, links: links, triedCategories: triedCategories, source: 'alternative' };
-      }
-    }
-  }
-  
-  return { success: false, links: [], triedCategories: triedCategories };
-}
-
-// ChatGPT function to find matching category
-async function getAICategoryMatch(userMessage, categoryNames) {
-  if (!process.env.OPENAI_API_KEY) {
-    return null;
-  }
-  
   try {
-    const messages = [{
-      role: "system",
-      content: `You are a customer service assistant for Zulu Club.
+    csvLoadAttempts++;
+    console.log(`🔄 CSV Load Attempt ${csvLoadAttempts}/${MAX_CSV_ATTEMPTS}`);
 
-${ZULU_CLUB_INFO}
+    const categoriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/categories1.csv';
+    const galleriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
 
-YOUR TASK:
-1. Analyze the user's product query
-2. Match it to the most relevant category from the available categories below
-3. Return ONLY the exact category name from the available list
+    // Load both CSVs in parallel
+    const [categoriesResult, galleriesResult] = await Promise.all([
+      loadCSVFromGitHub(categoriesUrl, false),
+      loadCSVFromGitHub(galleriesUrl, true)
+    ]);
 
-AVAILABLE CATEGORIES:
-${categoryNames.map(name => `- ${name}`).join('\n')}
+    categoriesData = categoriesResult;
+    galleriesData = galleriesResult;
 
-IMPORTANT:
-- Return ONLY the category name, nothing else
-- Choose the best matching category
-- If no good match, return "no_match"`
-    }, {
-      role: "user", 
-      content: userMessage
-    }];
-    
+    console.log(`📊 CSV Data Summary:`);
+    console.log(`   - Categories loaded: ${categoriesData.length}`);
+    console.log(`   - Galleries loaded: ${galleriesData.length}`);
+
+    // Check if we have enough data
+    if (categoriesData.length >= 268 && galleriesData.length > 0) {
+      isCSVLoaded = true;
+      console.log('🎉 Successfully loaded all CSV data!');
+      return true;
+    } else {
+      console.log(`⚠️ Loaded ${categoriesData.length} categories (expected 268+) and ${galleriesData.length} galleries`);
+      if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
+        console.log(`⏳ Retrying in 3 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return loadAllCSVData();
+      } else {
+        console.log('❌ Max retry attempts reached');
+        return false;
+      }
+    }
+  } catch (error) {
+    console.error('💥 Error loading CSV data:', error.message);
+    if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
+      console.log(`⏳ Retrying in 3 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      return loadAllCSVData();
+    } else {
+      console.log('❌ Max retry attempts reached');
+      return false;
+    }
+  }
+}
+
+// NEW: Function to detect product category using GPT
+async function detectProductCategory(userMessage) {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.log('❌ OpenAI API key not available for category detection');
+      return null;
+    }
+
+    // Prepare category names for context
+    const categoryNames = categoriesData.map(cat => cat.name).slice(0, 50); // Limit to first 50 for token efficiency
+
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: messages,
+      messages: [
+        {
+          role: "system",
+          content: `You are a product category classifier for an e-commerce store. 
+          Analyze the user's message and identify which product category they are looking for.
+          Available categories include: ${categoryNames.join(', ')}
+          
+          Respond ONLY with the exact category name that best matches the user's request.
+          If no clear category matches, respond with "null".
+          
+          Examples:
+          User: "I need tshirt" -> "Topwear"
+          User: "want shoes" -> "Footwear" 
+          User: "looking for jeans" -> "Bottomwear"
+          User: "show me bags" -> "Bags"
+          User: "hello" -> "null"`
+        },
+        {
+          role: "user",
+          content: userMessage
+        }
+      ],
       max_tokens: 50,
       temperature: 0.3
     });
+
+    const detectedCategory = completion.choices[0].message.content.trim();
     
-    const response = completion.choices[0].message.content.trim();
-    
-    if (response === "no_match") {
+    // Clean up response
+    if (detectedCategory === 'null' || !detectedCategory) {
+      console.log('🤖 No specific category detected');
       return null;
     }
-    
-    return categoryNames.find(cat => cat === response) || null;
-    
+
+    console.log(`🤖 Detected category: "${detectedCategory}"`);
+    return detectedCategory;
+
   } catch (error) {
-    console.error('❌ ChatGPT API error:', error);
+    console.error('❌ Error detecting product category:', error);
     return null;
   }
 }
 
-// Get alternative categories
-async function getAlternativeCategories(userMessage, primaryCategory, allCategories) {
-  if (!process.env.OPENAI_API_KEY) {
-    return [];
-  }
-  
+// NEW: Function to find category ID and generate link
+async function generateProductLink(userMessage) {
   try {
-    const messages = [{
-      role: "system",
-      content: `You are a product categorization assistant. When the primary category doesn't have products, suggest alternative related categories.
+    // Wait for CSV data to be loaded
+    if (!isCSVLoaded) {
+      console.log('⏳ CSV data not loaded yet, loading now...');
+      await loadAllCSVData();
+    }
 
-AVAILABLE CATEGORIES:
-${allCategories.map(name => `- ${name}`).join('\n')}
+    if (!isCSVLoaded) {
+      console.log('❌ CSV data not available for product linking');
+      return null;
+    }
 
-USER QUERY: "${userMessage}"
-PRIMARY CATEGORY: "${primaryCategory}"
-
-INSTRUCTIONS:
-1. Suggest 2-3 alternative categories that might have similar products
-2. Return ONLY category names as comma-separated values
-3. Only use categories from the available list`
-    }];
+    // Detect category using GPT
+    const detectedCategory = await detectProductCategory(userMessage);
     
+    if (!detectedCategory) {
+      console.log('❌ No category detected from user message');
+      return null;
+    }
+
+    // Find the category in categories1.csv
+    const category = categoriesData.find(cat => 
+      cat.name.toLowerCase().includes(detectedCategory.toLowerCase()) ||
+      detectedCategory.toLowerCase().includes(cat.name.toLowerCase())
+    );
+
+    if (!category) {
+      console.log(`❌ Category "${detectedCategory}" not found in categories data`);
+      return null;
+    }
+
+    console.log(`✅ Found category: ${category.name} (ID: ${category.id})`);
+
+    // Find matching gallery entry
+    const gallery = galleriesData.find(g => g.cat1 === category.id);
+    
+    if (!gallery || !gallery.type2) {
+      console.log(`❌ No gallery data found for category ID: ${category.id}`);
+      return null;
+    }
+
+    // Generate the link
+    const encodedType2 = gallery.type2.replace(/ /g, '%20');
+    const productLink = `app.zulu.club/${encodedType2}`;
+    
+    console.log(`🔗 Generated product link: ${productLink}`);
+    
+    return {
+      category: category.name,
+      link: productLink,
+      type2: gallery.type2
+    };
+
+  } catch (error) {
+    console.error('💥 Error generating product link:', error);
+    return null;
+  }
+}
+
+// NEW: Function to create AI response with product link
+async function createProductResponse(userMessage, productLinkInfo) {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return `Great choice! Check out our ${productLinkInfo.category} collection here: ${productLinkInfo.link} 🛍️`;
+    }
+
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: messages,
-      max_tokens: 100,
-      temperature: 0.5
+      messages: [
+        {
+          role: "system",
+          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response that includes the product link.
+          
+          ZULU CLUB INFORMATION:
+          ${ZULU_CLUB_INFO}
+          
+          Always include these key points:
+          - 100-minute delivery in Gurgaon
+          - Try at home, easy returns
+          - Mention the specific product category
+          - Include the provided link
+          - Keep it under 300 characters for WhatsApp
+          - Use emojis to make it engaging
+          
+          Product Link: ${productLinkInfo.link}
+          Category: ${productLinkInfo.category}`
+        },
+        {
+          role: "user",
+          content: userMessage
+        }
+      ],
+      max_tokens: 150,
+      temperature: 0.7
     });
-    
-    const response = completion.choices[0].message.content.trim();
-    
-    const alternativeCategories = response.split(',').map(cat => cat.trim()).filter(cat => 
-      cat && allCategories.includes(cat) && cat !== primaryCategory
-    );
-    
-    return alternativeCategories;
-    
-  } catch (error) {
-    console.error('❌ ChatGPT API error in alternative categories:', error);
-    return [];
-  }
-}
 
-// Get helpful suggestion when no products found
-function getHelpfulSuggestion(userMessage, triedCategories) {
-  const message = userMessage.toLowerCase();
-  
-  let suggestion = `I searched for "${userMessage}" in our ${triedCategories.length > 0 ? triedCategories.join(', ') : 'relevant'} categories but couldn't find specific products at the moment. 😔\n\n`;
-  
-  if (message.includes('shoe') || message.includes('footwear')) {
-    suggestion += `👟 For footwear, you might want to check our Men's Fashion or Women's Fashion categories for casual and formal shoes.\n\n`;
-  } else if (message.includes('tshirt') || message.includes('shirt') || message.includes('dress')) {
-    suggestion += `👕 For clothing items, explore our Men's Fashion and Women's Fashion categories.\n\n`;
-  } else if (message.includes('vase') || message.includes('decor') || message.includes('home')) {
-    suggestion += `🏠 For home items, check our Home Decor and Home Accessories categories.\n\n`;
-  } else {
-    suggestion += `🔍 You can explore our main categories: Men's & Women's Fashion, Home Decor, Beauty, and more.\n\n`;
-  }
-  
-  suggestion += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-  suggestion += `Visit zulu.club to browse our complete collection! 🛍️`;
-  
-  return [suggestion];
-}
+    let response = completion.choices[0].message.content.trim();
+    
+    // Ensure the link is included
+    if (!response.includes(productLinkInfo.link)) {
+      response += `\n\nCheck it out here: ${productLinkInfo.link}`;
+    }
 
-// Main product search logic with session support
-async function getProductLinksWithAICategory(userMessage, session) {
-  try {
-    // Wait for CSV data to load if not ready
-    if (!csvCache.isLoaded) {
-      console.log('⏳ Waiting for CSV data to load...');
-      // In a real scenario, you might want to implement a proper waiting mechanism
-      return ["🔄 Our product catalog is loading, please wait a moment and try again..."];
-    }
-    
-    const categoryNames = getCategoryNames();
-    if (categoryNames.length === 0) {
-      return ["📦 Our product categories are currently being updated. Please try again in a moment."];
-    }
-    
-    // Store category names in session for faster access
-    if (session) {
-      session.data.categoryNames = categoryNames;
-    }
-    
-    const searchResult = await smartProductSearch(userMessage, categoryNames, session);
-    
-    if (searchResult.success) {
-      return searchResult.links;
-    } else {
-      return getHelpfulSuggestion(userMessage, searchResult.triedCategories);
-    }
-    
+    return response;
+
   } catch (error) {
-    console.error('❌ Error in product search:', error);
-    return ["😔 I'm having trouble accessing our product catalog right now. Please try again in a moment or visit zulu.club directly."];
+    console.error('❌ Error creating product response:', error);
+    return `Perfect! Explore our ${productLinkInfo.category} collection: ${productLinkInfo.link}\n\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
   }
 }
 
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
+    console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
+    
     const payload = {
       channelId: gallaboxConfig.channelId,
       channelType: "whatsapp",
@@ -537,54 +395,133 @@ async function sendMessage(to, name, message) {
       }
     );
     
+    console.log('✅ Message sent successfully');
     return response.data;
   } catch (error) {
-    console.error('❌ Error sending message:', error.message);
+    console.error('❌ Error sending message:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message
+    });
     throw error;
   }
 }
 
-// Main response handler with session support
-async function getChatGPTResponse(userMessage, session) {
-  // Always try the smart CSV logic first
-  const productLinks = await getProductLinksWithAICategory(userMessage, session);
+// Function to generate category response (for AI to use in its responses)
+function generateCategoryResponse(userMessage = '') {
+  const msg = userMessage.toLowerCase();
   
-  if (productLinks.length > 0) {
-    if (typeof productLinks[0] === 'string' && productLinks[0].includes('searched for')) {
-      return productLinks[0];
-    } else {
-      let response = `Great choice! 🎯\n\n`;
-      response += `Here are the products you're looking for:\n\n`;
+  // Check for specific category mentions
+  for (const [category, data] of Object.entries(CATEGORIES)) {
+    const categoryLower = category.toLowerCase();
+    if (msg.includes(categoryLower)) {
       
-      productLinks.slice(0, 8).forEach(link => {
-        response += `• ${link}\n`;
-      });
+      // Return specific category with subcategories
+      let response = `🛍️ *${category}* \n\n`;
+      response += `Explore our ${category.toLowerCase()} collection:\n`;
+      response += `🔗 ${data.link}\n\n`;
       
-      if (productLinks.length > 8) {
-        response += `• ... and ${productLinks.length - 8} more options\n`;
-      }
-      
-      response += `\n🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*\n`;
-      response += `Click the links above to explore and shop! 🛍️`;
-      
+      response += `\nVisit the link to browse products! 🛒`;
       return response;
     }
   }
   
-  // Only use AI for general conversation if no products found
+  // General product query - show all categories
+  let response = `🛍️ *Our Product Categories* \n\n`;
+  response += `We have an amazing range of lifestyle products! Here are our main categories:\n\n`;
+  
+  Object.entries(CATEGORIES).forEach(([category, data]) => {
+    response += `• *${category}*: ${data.link}\n`;
+  });
+  
+  response += `\n💡 *Pro Tip:* You can ask about specific categories like "women's fashion" or "home decor"!\n\n`;
+  response += `🚀 *100-minute delivery* | 💫 *Try at home* | 🔄 *Easy returns*`;
+  
+  return response;
+}
+
+// Function to get category links for AI reference
+function getCategoryLinks() {
+  let links = "CATEGORY LINKS:\n";
+  Object.entries(CATEGORIES).forEach(([category, data]) => {
+    links += `- ${category}: ${data.link}\n`;
+  });
+  return links;
+}
+
+// NEW: Enhanced AI Chat Functionality with Product Detection
+async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
-    return "Hello! I'm here to help you with Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
+    return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
   try {
-    const messages = [{
-      role: "system",
-      content: `You are a friendly customer service assistant for Zulu Club. ${ZULU_CLUB_INFO} Keep responses under 300 characters. Be enthusiastic and highlight 100-minute delivery, try-at-home, and easy returns.`
-    }];
+    // NEW: Check if this is a product request and handle with new logic
+    const productKeywords = [
+      'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop',
+      'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
+      'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
+      'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle'
+    ];
+
+    const userMsgLower = userMessage.toLowerCase();
+    const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
+
+    if (isProductQuery && isCSVLoaded) {
+      console.log('🔄 Detected product query, using new logic...');
+      
+      // Generate product link using new logic
+      const productLinkInfo = await generateProductLink(userMessage);
+      
+      if (productLinkInfo) {
+        console.log('✅ Product link generated, creating AI response...');
+        const productResponse = await createProductResponse(userMessage, productLinkInfo);
+        return productResponse;
+      } else {
+        console.log('❌ New logic failed, falling back to original AI...');
+      }
+    }
+
+    // Original AI logic continues here...
+    const messages = [];
     
-    // Add conversation history from session
-    if (session && session.history.length > 0) {
-      const recentHistory = session.history.slice(-6);
+    // System message with Zulu Club information and category format guidelines
+    const systemMessage = {
+      role: "system",
+      content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
+      
+      ZULU CLUB INFORMATION:
+      ${companyInfo}
+
+      AVAILABLE CATEGORIES WITH LINKS:
+      ${getCategoryLinks()}
+
+      IMPORTANT RESPONSE GUIDELINES:
+      1. **Use the category links naturally** in your responses when users ask about products
+      2. **Decide when to show categories** based on the conversation context
+      3. **For general product inquiries**, provide a brief overview and include relevant category links
+      4. **For specific category questions**, mention that category's link and its subcategories
+      5. **Keep responses conversational** - don't just list categories unless specifically asked
+      6. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
+      7. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+      8. **Use emojis** to make it engaging but professional
+      9. **Keep responses under 400 characters** for WhatsApp compatibility
+      10. **Be enthusiastic and helpful** - we're excited about our products!
+
+      CATEGORY USAGE EXAMPLES:
+      - If user asks "What products do you have?" → Briefly describe our range and include main category links
+      - If user asks "Do you have dresses?" → "Yes! Check our Women's Fashion collection: app.zulu.club/categories/womens-fashion We have dresses, tops, co-ords and more! 👗"
+      - If user asks specifically "Show me all categories" → Provide the full category list with links
+
+      Remember: Integrate category links naturally into the conversation flow. Let the user's interest guide how much category detail to provide.
+      `
+    };
+    
+    messages.push(systemMessage);
+    
+    // Add conversation history if available
+    if (conversationHistory && conversationHistory.length > 0) {
+      const recentHistory = conversationHistory.slice(-6);
       recentHistory.forEach(msg => {
         if (msg.role && msg.content) {
           messages.push({
@@ -595,6 +532,7 @@ async function getChatGPTResponse(userMessage, session) {
       });
     }
     
+    // Add current user message
     messages.push({
       role: "user",
       content: userMessage
@@ -603,197 +541,293 @@ async function getChatGPTResponse(userMessage, session) {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
-      max_tokens: 200,
+      max_tokens: 350,
       temperature: 0.7
     });
     
-    return completion.choices[0].message.content.trim();
+    let response = completion.choices[0].message.content.trim();
     
-  } catch (error) {
-    console.error('❌ ChatGPT API error:', error);
-    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! 🛍️";
-  }
-}
-
-// Handle user message with session management
-async function handleMessage(sessionId, userMessage) {
-  try {
-    // Get or create session
-    let session = getSession(sessionId);
-    if (!session) {
-      session = createSession(sessionId);
+    // Fallback: If AI doesn't include categories but user clearly asks for them
+    const clearCategoryRequests = [
+      'categor', 'what do you sell', 'what do you have', 'products', 'items',
+      'show me everything', 'all products', 'your collection', 'what kind of'
+    ];
+    
+    const shouldShowCategories = clearCategoryRequests.some(term => userMsgLower.includes(term));
+    const hasLinks = response.includes('app.zulu.club') || response.includes('zulu.club');
+    
+    if (shouldShowCategories && !hasLinks) {
+      console.log('🤖 AI missed category links, adding fallback...');
+      response += `\n\n${generateCategoryResponse(userMessage)}`;
     }
-    
-    // Check if session is about to expire and send warning
-    const now = Date.now();
-    const inactiveTime = now - session.lastActivity;
-    
-    if (!session.warningSent && inactiveTime >= SESSION_CONFIG.WARNING_TIME) {
-      // Send warning message
-      await sendTimeoutWarning(sessionId, session);
-      session.warningSent = true;
-    }
-    
-    // Add user message to session history
-    session.history.push({
-      role: "user",
-      content: userMessage,
-      timestamp: now
-    });
-    
-    // Get AI response
-    const response = await getChatGPTResponse(userMessage, session);
-    
-    // Add AI response to session history
-    session.history.push({
-      role: "assistant",
-      content: response,
-      timestamp: Date.now()
-    });
-    
-    // Keep history manageable (last 10 messages)
-    if (session.history.length > 10) {
-      session.history = session.history.slice(-10);
-    }
-    
-    // Update session
-    updateSession(sessionId, { lastActivity: Date.now() });
     
     return response;
     
   } catch (error) {
-    console.error('❌ Error handling message:', error);
-    return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our products!";
+    console.error('❌ ChatGPT API error:', error);
+    // Fallback to category response for clear product queries
+    const clearProductQueries = [
+      'product', 'categor', 'what do you sell', 'what do you have', 'buy', 'shop'
+    ];
+    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
+      return generateCategoryResponse(userMessage);
+    }
+    return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know about our products? 🛍️";
   }
 }
 
-// Send timeout warning message
-async function sendTimeoutWarning(sessionId, session) {
+// Handle user message with AI
+async function handleMessage(sessionId, userMessage) {
   try {
-    const warningMessage = `⏰ You've been inactive for 2 minutes. If you don't respond in the next minute, this session will expire.`;
+    // Initialize conversation if not exists
+    if (!conversations[sessionId]) {
+      conversations[sessionId] = { history: [] };
+    }
     
-    // In a real implementation, you would send this to the user's WhatsApp
-    // For now, we'll just log it
-    console.log(`⚠️ Timeout warning for session ${sessionId}: ${warningMessage}`);
+    // Add user message to history
+    conversations[sessionId].history.push({
+      role: "user",
+      content: userMessage
+    });
     
-    // If you want to actually send the message, uncomment below:
-    // await sendMessage(sessionId, 'User', warningMessage);
+    // Get AI response (now includes new product detection logic)
+    const aiResponse = await getChatGPTResponse(
+      userMessage, 
+      conversations[sessionId].history
+    );
+    
+    // Add AI response to history
+    conversations[sessionId].history.push({
+      role: "assistant",
+      content: aiResponse
+    });
+    
+    // Keep history manageable (last 10 messages)
+    if (conversations[sessionId].history.length > 10) {
+      conversations[sessionId].history = conversations[sessionId].history.slice(-10);
+    }
+    
+    return aiResponse;
     
   } catch (error) {
-    console.error('❌ Error sending timeout warning:', error);
+    console.error('❌ Error handling message:', error);
+    // Fallback response
+    const clearProductQueries = [
+      'product', 'categor', 'what do you sell', 'what do you have'
+    ];
+    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
+      return generateCategoryResponse(userMessage);
+    }
+    return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
 }
 
-// Webhook endpoint with session management
+// Webhook endpoint to receive messages
 app.post('/webhook', async (req, res) => {
   try {
+    console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
+    
     const webhookData = req.body;
+    
+    // Extract message and contact info from Gallabox webhook
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
     
-    console.log(`💬 Message from ${userPhone} (${userName}): ${userMessage}`);
+    console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
     
     if (userMessage && userPhone) {
+      // Use phone number as session ID
       const sessionId = userPhone;
+      
+      // Get AI response
       const aiResponse = await handleMessage(sessionId, userMessage);
+      
+      // Send response via Gallabox
       await sendMessage(userPhone, userName, aiResponse);
-      console.log(`✅ Response sent to ${userPhone}. Active sessions: ${Object.keys(sessions).length}`);
+      console.log(`✅ AI response sent to ${userPhone}`);
+    } else {
+      console.log('❓ No valid message or phone number found in webhook');
     }
     
-    res.status(200).json({ status: 'success', message: 'Webhook processed' });
+    res.status(200).json({ 
+      status: 'success', 
+      message: 'Webhook processed successfully',
+      processed: true 
+    });
     
   } catch (error) {
     console.error('💥 Webhook error:', error.message);
-    res.status(500).json({ status: 'error', message: error.message });
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message,
+      processed: false 
+    });
   }
 });
 
-// Debug endpoints
+// NEW: Endpoint to check CSV data status
+app.get('/csv-status', (req, res) => {
+  res.json({
+    isCSVLoaded: isCSVLoaded,
+    csvLoadAttempts: csvLoadAttempts,
+    categoriesCount: categoriesData.length,
+    galleriesCount: galleriesData.length,
+    categoriesSample: categoriesData.slice(0, 5),
+    galleriesSample: galleriesData.slice(0, 5)
+  });
+});
+
+// NEW: Endpoint to manually reload CSV data
+app.post('/reload-csv', async (req, res) => {
+  try {
+    isCSVLoaded = false;
+    csvLoadAttempts = 0;
+    
+    const success = await loadAllCSVData();
+    
+    res.json({
+      success: success,
+      isCSVLoaded: isCSVLoaded,
+      categoriesCount: categoriesData.length,
+      galleriesCount: galleriesData.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// NEW: Test product detection endpoint
+app.post('/test-product-detection', async (req, res) => {
+  try {
+    const { message } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    const productLinkInfo = await generateProductLink(message);
+    const aiResponse = await createProductResponse(message, productLinkInfo);
+    
+    res.json({
+      userMessage: message,
+      productLinkInfo: productLinkInfo,
+      aiResponse: aiResponse
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    status: 'Server is running', 
+    status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '12.0 - Session Management & Caching',
-    cache: {
-      csv_loaded: csvCache.isLoaded,
-      categories_count: csvCache.categoriesData.length,
-      galleries_count: csvCache.galleriesData.length,
-      last_updated: csvCache.lastUpdated
+    version: '4.0 - Enhanced with Product Detection & CSV Integration',
+    features: {
+      ai_chat: 'OpenAI GPT-3.5 powered responses',
+      smart_categories: 'AI decides when to show categories',
+      product_detection: 'New CSV-based product category detection',
+      csv_integration: '268+ categories from GitHub CSV files',
+      dynamic_links: 'Automated product link generation',
+      whatsapp_integration: 'Gallabox API integration'
     },
-    sessions: {
-      active_sessions: Object.keys(sessions).length,
-      session_timeout: `${SESSION_CONFIG.TIMEOUT / 60000} minutes`,
-      warning_time: `${SESSION_CONFIG.WARNING_TIME / 60000} minutes`
+    csv_status: {
+      loaded: isCSVLoaded,
+      categories_loaded: categoriesData.length,
+      galleries_loaded: galleriesData.length
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
-      sessions: 'GET /sessions',
-      cache: 'GET /cache-status',
-      refresh: 'POST /refresh-cache'
-    }
+      csv_status: 'GET /csv-status',
+      reload_csv: 'POST /reload-csv',
+      test_detection: 'POST /test-product-detection',
+      test_message: 'POST /send-test-message',
+      categories: 'GET /categories'
+    },
+    timestamp: new Date().toISOString()
   });
 });
 
-// Session management endpoint
-app.get('/sessions', (req, res) => {
-  const sessionList = Object.entries(sessions).map(([id, session]) => ({
-    id,
-    history_length: session.history.length,
-    last_activity: new Date(session.lastActivity).toISOString(),
-    created: new Date(session.createdAt).toISOString(),
-    warning_sent: session.warningSent,
-    inactive_minutes: ((Date.now() - session.lastActivity) / 60000).toFixed(2)
-  }));
-  
+// Get all categories with links
+app.get('/categories', (req, res) => {
   res.json({
-    total_sessions: sessionList.length,
-    sessions: sessionList
+    categories: CATEGORIES,
+    csv_categories_loaded: categoriesData.length,
+    total_categories: Object.keys(CATEGORIES).length,
+    approach: 'Dual-mode: AI-driven category display + CSV-based product detection'
   });
 });
 
-// Cache status endpoint
-app.get('/cache-status', (req, res) => {
-  res.json({
-    csv_cache: {
-      is_loaded: csvCache.isLoaded,
-      categories_count: csvCache.categoriesData.length,
-      galleries_count: csvCache.galleriesData.length,
-      last_updated: csvCache.lastUpdated,
-      age_minutes: csvCache.lastUpdated ? 
-        ((Date.now() - new Date(csvCache.lastUpdated).getTime()) / 60000).toFixed(2) : 'N/A'
-    }
-  });
-});
-
-// Refresh cache endpoint
-app.post('/refresh-cache', async (req, res) => {
+// Test endpoint to send a message manually
+app.post('/send-test-message', async (req, res) => {
   try {
-    await initializeCSVData();
+    const { to, name, message } = req.body;
+    
+    if (!to) {
+      return res.status(400).json({ 
+        error: 'Missing "to" in request body',
+        example: { 
+          "to": "918368127760", 
+          "name": "Rishi",
+          "message": "What products do you have?" 
+        }
+      });
+    }
+    
+    const result = await sendMessage(
+      to, 
+      name || 'Test User', 
+      message || 'Hello! This is a test message from Zulu Club AI Assistant. 🚀'
+    );
+    
     res.json({ 
       status: 'success', 
-      message: 'Cache refreshed successfully',
-      cache: {
-        categories_count: csvCache.categoriesData.length,
-        galleries_count: csvCache.galleriesData.length,
-        last_updated: csvCache.lastUpdated
-      }
+      message: 'Test message sent successfully',
+      data: result 
     });
+    
   } catch (error) {
-    res.status(500).json({ error: 'Failed to refresh cache' });
+    res.status(500).json({ 
+      error: 'Failed to send test message',
+      details: error.message
+    });
   }
 });
 
-// Clear sessions endpoint (for testing)
-app.delete('/sessions', (req, res) => {
-  const count = Object.keys(sessions).length;
-  sessions = {};
-  res.json({ 
-    status: 'success', 
-    message: `Cleared ${count} sessions`,
-    active_sessions: 0
+// Get specific category info
+app.get('/categories/:categoryName', (req, res) => {
+  const categoryName = req.params.categoryName.toLowerCase();
+  const category = Object.entries(CATEGORIES).find(([name]) => 
+    name.toLowerCase().replace(/\s+/g, '-') === categoryName
+  );
+  
+  if (!category) {
+    return res.status(404).json({ error: 'Category not found' });
+  }
+  
+  res.json({
+    category: category[0],
+    data: category[1]
   });
 });
 
+// NEW: Initialize CSV data loading when server starts
+console.log('🚀 Starting Zulu Club AI Assistant with Enhanced Product Detection...');
+loadAllCSVData().then(success => {
+  if (success) {
+    console.log('🎉 CSV data initialization completed successfully!');
+  } else {
+    console.log('⚠️ CSV data initialization completed with warnings');
+  }
+});
+
+// Export for Vercel
 module.exports = app;
