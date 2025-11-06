@@ -84,17 +84,23 @@ let categoriesData = []; // Store categories1.csv data
 let galleriesData = [];  // Store galleries1.csv data
 let isCSVLoaded = false;
 let csvLoadAttempts = 0;
-const MAX_CSV_ATTEMPTS = 10;
+const MAX_CSV_ATTEMPTS = 5;
 
 // NEW: Function to load CSV from GitHub raw content
 async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   try {
     console.log(`📥 Loading CSV from: ${csvUrl}`);
     
-    // Convert GitHub blob URL to raw URL
-    const rawUrl = csvUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+    // Use raw GitHub URL directly (no need to convert from blob)
+    const rawUrl = csvUrl;
     
-    const response = await axios.get(rawUrl, { timeout: 15000 });
+    const response = await axios.get(rawUrl, { 
+      timeout: 25000, // Increased timeout
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
     const csvContent = response.data;
     
     return new Promise((resolve, reject) => {
@@ -170,17 +176,35 @@ async function loadAllCSVData() {
     csvLoadAttempts++;
     console.log(`🔄 CSV Load Attempt ${csvLoadAttempts}/${MAX_CSV_ATTEMPTS}`);
 
-    const categoriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/categories1.csv';
-    const galleriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
+    // Use direct raw GitHub URLs
+    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
+    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
 
-    // Load both CSVs in parallel
-    const [categoriesResult, galleriesResult] = await Promise.all([
+    console.log('📥 Loading categories from:', categoriesUrl);
+    console.log('📥 Loading galleries from:', galleriesUrl);
+
+    // Load both CSVs in parallel with better error handling
+    const [categoriesResult, galleriesResult] = await Promise.allSettled([
       loadCSVFromGitHub(categoriesUrl, false),
       loadCSVFromGitHub(galleriesUrl, true)
     ]);
 
-    categoriesData = categoriesResult;
-    galleriesData = galleriesResult;
+    // Handle results
+    if (categoriesResult.status === 'fulfilled') {
+      categoriesData = categoriesResult.value;
+      console.log(`✅ Loaded ${categoriesData.length} categories`);
+    } else {
+      console.error('❌ Failed to load categories:', categoriesResult.reason);
+      categoriesData = [];
+    }
+
+    if (galleriesResult.status === 'fulfilled') {
+      galleriesData = galleriesResult.value;
+      console.log(`✅ Loaded ${galleriesData.length} galleries`);
+    } else {
+      console.error('❌ Failed to load galleries:', galleriesResult.reason);
+      galleriesData = [];
+    }
 
     console.log(`📊 CSV Data Summary:`);
     console.log(`   - Categories loaded: ${categoriesData.length}`);
@@ -198,27 +222,35 @@ async function loadAllCSVData() {
     }
 
     // Check if we have enough data - be more flexible about the count
-    const hasEnoughData = categoriesData.length > 200 && galleriesData.length > 0;
+    const hasEnoughData = categoriesData.length > 50 && galleriesData.length > 0; // Reduced threshold for testing
     if (hasEnoughData) {
       isCSVLoaded = true;
       console.log('🎉 Successfully loaded all CSV data!');
       return true;
     } else {
-      console.log(`⚠️ Loaded ${categoriesData.length} categories (expected 200+) and ${galleriesData.length} galleries`);
+      console.log(`⚠️ Loaded ${categoriesData.length} categories and ${galleriesData.length} galleries`);
       if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
-        console.log(`⏳ Retrying in 3 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        const retryDelay = 5000; // 5 seconds
+        console.log(`⏳ Retrying in ${retryDelay/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
         return loadAllCSVData();
       } else {
         console.log('❌ Max retry attempts reached');
+        // Still mark as loaded if we have some data
+        if (categoriesData.length > 0 && galleriesData.length > 0) {
+          isCSVLoaded = true;
+          console.log('⚠️ Marking as loaded with limited data');
+          return true;
+        }
         return false;
       }
     }
   } catch (error) {
     console.error('💥 Error loading CSV data:', error.message);
     if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
-      console.log(`⏳ Retrying in 3 seconds...`);
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      const retryDelay = 5000; // 5 seconds
+      console.log(`⏳ Retrying in ${retryDelay/1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
       return loadAllCSVData();
     } else {
       console.log('❌ Max retry attempts reached');
@@ -288,13 +320,12 @@ async function generateProductLink(userMessage) {
   try {
     // Wait for CSV data to be loaded
     if (!isCSVLoaded) {
-      console.log('⏳ CSV data not loaded yet, loading now...');
-      await loadAllCSVData();
-    }
-
-    if (!isCSVLoaded) {
-      console.log('❌ CSV data not available for product linking');
-      return null;
+      console.log('⏳ CSV data not loaded yet, trying to load...');
+      const loaded = await loadAllCSVData();
+      if (!loaded) {
+        console.log('❌ CSV data not available for product linking');
+        return null;
+      }
     }
 
     // Detect category using GPT
@@ -329,7 +360,17 @@ async function generateProductLink(userMessage) {
     
     if (!gallery || !gallery.type2) {
       console.log(`❌ No gallery data found for category ID: ${category.id}`);
-      console.log(`🔍 Available cat1 arrays in galleries:`, galleriesData.slice(0, 5).map(g => g.cat1));
+      console.log(`🔍 Searching through ${galleriesData.length} galleries...`);
+      
+      // Try to find any gallery that might match
+      const potentialMatches = galleriesData.filter(g => 
+        Array.isArray(g.cat1) && g.cat1.some(id => id.includes(category.id.substring(0, 3)))
+      ).slice(0, 3);
+      
+      if (potentialMatches.length > 0) {
+        console.log(`🔍 Potential matches found:`, potentialMatches);
+      }
+      
       return null;
     }
 
@@ -514,7 +555,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const userMsgLower = userMessage.toLowerCase();
     const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
 
-    if (isProductQuery && isCSVLoaded) {
+    if (isProductQuery) {
       console.log('🔄 Detected product query, using new logic...');
       
       // Generate product link using new logic
@@ -756,12 +797,17 @@ app.post('/test-product-detection', async (req, res) => {
     }
     
     const productLinkInfo = await generateProductLink(message);
-    const aiResponse = await createProductResponse(message, productLinkInfo);
+    const aiResponse = productLinkInfo ? await createProductResponse(message, productLinkInfo) : 'No product link generated';
     
     res.json({
       userMessage: message,
       productLinkInfo: productLinkInfo,
-      aiResponse: aiResponse
+      aiResponse: aiResponse,
+      csvStatus: {
+        isCSVLoaded: isCSVLoaded,
+        categoriesCount: categoriesData.length,
+        galleriesCount: galleriesData.length
+      }
     });
     
   } catch (error) {
@@ -797,7 +843,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '4.0 - Enhanced with Product Detection & CSV Integration',
+    version: '4.1 - Enhanced with Product Detection & CSV Integration',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       smart_categories: 'AI decides when to show categories',
@@ -888,15 +934,17 @@ app.get('/categories/:categoryName', (req, res) => {
   });
 });
 
-// NEW: Initialize CSV data loading when server starts
+// NEW: Initialize CSV data loading when server starts (but don't block startup)
 console.log('🚀 Starting Zulu Club AI Assistant with Enhanced Product Detection...');
-loadAllCSVData().then(success => {
-  if (success) {
-    console.log('🎉 CSV data initialization completed successfully!');
-  } else {
-    console.log('⚠️ CSV data initialization completed with warnings');
-  }
-});
+setTimeout(() => {
+  loadAllCSVData().then(success => {
+    if (success) {
+      console.log('🎉 CSV data initialization completed successfully!');
+    } else {
+      console.log('⚠️ CSV data initialization completed with warnings');
+    }
+  });
+}, 1000); // Delay startup to let server initialize first
 
 // Export for Vercel
 module.exports = app;
