@@ -84,23 +84,17 @@ let categoriesData = []; // Store categories1.csv data
 let galleriesData = [];  // Store galleries1.csv data
 let isCSVLoaded = false;
 let csvLoadAttempts = 0;
-const MAX_CSV_ATTEMPTS = 5;
+const MAX_CSV_ATTEMPTS = 10;
 
 // NEW: Function to load CSV from GitHub raw content
 async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   try {
     console.log(`📥 Loading CSV from: ${csvUrl}`);
     
-    // Use raw GitHub URL directly (no need to convert from blob)
-    const rawUrl = csvUrl;
+    // Convert GitHub blob URL to raw URL
+    const rawUrl = csvUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
     
-    const response = await axios.get(rawUrl, { 
-      timeout: 25000, // Increased timeout
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
+    const response = await axios.get(rawUrl, { timeout: 15000 });
     const csvContent = response.data;
     
     return new Promise((resolve, reject) => {
@@ -176,35 +170,17 @@ async function loadAllCSVData() {
     csvLoadAttempts++;
     console.log(`🔄 CSV Load Attempt ${csvLoadAttempts}/${MAX_CSV_ATTEMPTS}`);
 
-    // Use direct raw GitHub URLs
-    const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
-    const galleriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
+    const categoriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/categories1.csv';
+    const galleriesUrl = 'https://github.com/Rishi-Singhal-714/gallabox-bot/blob/main/galleries1.csv';
 
-    console.log('📥 Loading categories from:', categoriesUrl);
-    console.log('📥 Loading galleries from:', galleriesUrl);
-
-    // Load both CSVs in parallel with better error handling
-    const [categoriesResult, galleriesResult] = await Promise.allSettled([
+    // Load both CSVs in parallel
+    const [categoriesResult, galleriesResult] = await Promise.all([
       loadCSVFromGitHub(categoriesUrl, false),
       loadCSVFromGitHub(galleriesUrl, true)
     ]);
 
-    // Handle results
-    if (categoriesResult.status === 'fulfilled') {
-      categoriesData = categoriesResult.value;
-      console.log(`✅ Loaded ${categoriesData.length} categories`);
-    } else {
-      console.error('❌ Failed to load categories:', categoriesResult.reason);
-      categoriesData = [];
-    }
-
-    if (galleriesResult.status === 'fulfilled') {
-      galleriesData = galleriesResult.value;
-      console.log(`✅ Loaded ${galleriesData.length} galleries`);
-    } else {
-      console.error('❌ Failed to load galleries:', galleriesResult.reason);
-      galleriesData = [];
-    }
+    categoriesData = categoriesResult;
+    galleriesData = galleriesResult;
 
     console.log(`📊 CSV Data Summary:`);
     console.log(`   - Categories loaded: ${categoriesData.length}`);
@@ -222,35 +198,27 @@ async function loadAllCSVData() {
     }
 
     // Check if we have enough data - be more flexible about the count
-    const hasEnoughData = categoriesData.length > 50 && galleriesData.length > 0; // Reduced threshold for testing
+    const hasEnoughData = categoriesData.length > 200 && galleriesData.length > 0;
     if (hasEnoughData) {
       isCSVLoaded = true;
       console.log('🎉 Successfully loaded all CSV data!');
       return true;
     } else {
-      console.log(`⚠️ Loaded ${categoriesData.length} categories and ${galleriesData.length} galleries`);
+      console.log(`⚠️ Loaded ${categoriesData.length} categories (expected 200+) and ${galleriesData.length} galleries`);
       if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
-        const retryDelay = 5000; // 5 seconds
-        console.log(`⏳ Retrying in ${retryDelay/1000} seconds...`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        console.log(`⏳ Retrying in 3 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
         return loadAllCSVData();
       } else {
         console.log('❌ Max retry attempts reached');
-        // Still mark as loaded if we have some data
-        if (categoriesData.length > 0 && galleriesData.length > 0) {
-          isCSVLoaded = true;
-          console.log('⚠️ Marking as loaded with limited data');
-          return true;
-        }
         return false;
       }
     }
   } catch (error) {
     console.error('💥 Error loading CSV data:', error.message);
     if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
-      const retryDelay = 5000; // 5 seconds
-      console.log(`⏳ Retrying in ${retryDelay/1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      console.log(`⏳ Retrying in 3 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
       return loadAllCSVData();
     } else {
       console.log('❌ Max retry attempts reached');
@@ -315,17 +283,18 @@ async function detectProductCategory(userMessage) {
   }
 }
 
-// NEW: Function to find category ID and generate link
-async function generateProductLink(userMessage) {
+// NEW: Function to find ALL matching galleries and generate multiple links
+async function generateProductLinks(userMessage) {
   try {
     // Wait for CSV data to be loaded
     if (!isCSVLoaded) {
-      console.log('⏳ CSV data not loaded yet, trying to load...');
-      const loaded = await loadAllCSVData();
-      if (!loaded) {
-        console.log('❌ CSV data not available for product linking');
-        return null;
-      }
+      console.log('⏳ CSV data not loaded yet, loading now...');
+      await loadAllCSVData();
+    }
+
+    if (!isCSVLoaded) {
+      console.log('❌ CSV data not available for product linking');
+      return null;
     }
 
     // Detect category using GPT
@@ -349,8 +318,8 @@ async function generateProductLink(userMessage) {
 
     console.log(`✅ Found category: ${category.name} (ID: ${category.id})`);
 
-    // Find matching gallery entry - now checking if cat1 array includes our category ID
-    const gallery = galleriesData.find(g => {
+    // Find ALL matching gallery entries - now checking if cat1 array includes our category ID
+    const matchingGalleries = galleriesData.filter(g => {
       if (Array.isArray(g.cat1)) {
         return g.cat1.includes(category.id);
       } else {
@@ -358,51 +327,59 @@ async function generateProductLink(userMessage) {
       }
     });
     
-    if (!gallery || !gallery.type2) {
+    if (matchingGalleries.length === 0) {
       console.log(`❌ No gallery data found for category ID: ${category.id}`);
-      console.log(`🔍 Searching through ${galleriesData.length} galleries...`);
-      
-      // Try to find any gallery that might match
-      const potentialMatches = galleriesData.filter(g => 
-        Array.isArray(g.cat1) && g.cat1.some(id => id.includes(category.id.substring(0, 3)))
-      ).slice(0, 3);
-      
-      if (potentialMatches.length > 0) {
-        console.log(`🔍 Potential matches found:`, potentialMatches);
-      }
-      
+      console.log(`🔍 Available cat1 arrays in galleries:`, galleriesData.slice(0, 5).map(g => g.cat1));
       return null;
     }
 
-    // Generate the link
-    const encodedType2 = gallery.type2.replace(/ /g, '%20');
-    const productLink = `app.zulu.club/${encodedType2}`;
-    
-    console.log(`🔗 Generated product link: ${productLink}`);
-    console.log(`📊 Gallery match details:`, {
-      categoryId: category.id,
-      cat1Array: gallery.cat1,
-      type2: gallery.type2
+    console.log(`🎯 Found ${matchingGalleries.length} matching galleries for category ${category.name}`);
+
+    // Generate multiple links from all matching galleries
+    const productLinks = matchingGalleries.map(gallery => {
+      const encodedType2 = gallery.type2.replace(/ /g, '%20');
+      const productLink = `app.zulu.club/${encodedType2}`;
+      
+      return {
+        category: category.name,
+        link: productLink,
+        type2: gallery.type2,
+        categoryId: category.id
+      };
+    });
+
+    // Remove duplicate links (same type2)
+    const uniqueLinks = productLinks.filter((link, index, self) => 
+      index === self.findIndex(l => l.link === link.link)
+    );
+
+    console.log(`🔗 Generated ${uniqueLinks.length} unique product links`);
+    uniqueLinks.forEach((link, index) => {
+      console.log(`   ${index + 1}. ${link.link} (${link.type2})`);
     });
     
     return {
       category: category.name,
-      link: productLink,
-      type2: gallery.type2,
-      categoryId: category.id
+      links: uniqueLinks,
+      totalMatches: matchingGalleries.length
     };
 
   } catch (error) {
-    console.error('💥 Error generating product link:', error);
+    console.error('💥 Error generating product links:', error);
     return null;
   }
 }
 
-// NEW: Function to create AI response with product link
-async function createProductResponse(userMessage, productLinkInfo) {
+// NEW: Function to create AI response with multiple product links
+async function createProductResponse(userMessage, productLinksInfo) {
   try {
     if (!process.env.OPENAI_API_KEY) {
-      return `Great choice! Check out our ${productLinkInfo.category} collection here: ${productLinkInfo.link} 🛍️`;
+      let response = `Great choice! Check out our ${productLinksInfo.category} collections:\n\n`;
+      productLinksInfo.links.forEach(link => {
+        response += `• ${link.link}\n`;
+      });
+      response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+      return response;
     }
 
     const completion = await openai.chat.completions.create({
@@ -410,7 +387,7 @@ async function createProductResponse(userMessage, productLinkInfo) {
       messages: [
         {
           role: "system",
-          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response that includes the product link.
+          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response that includes multiple product links.
           
           ZULU CLUB INFORMATION:
           ${ZULU_CLUB_INFO}
@@ -419,34 +396,51 @@ async function createProductResponse(userMessage, productLinkInfo) {
           - 100-minute delivery in Gurgaon
           - Try at home, easy returns
           - Mention the specific product category
-          - Include the provided link
-          - Keep it under 300 characters for WhatsApp
+          - Include ALL the provided links naturally in the response
+          - Keep it under 400 characters for WhatsApp
           - Use emojis to make it engaging
+          - If there are multiple links, mention they are different collections/varieties
           
-          Product Link: ${productLinkInfo.link}
-          Category: ${productLinkInfo.category}`
+          Product Links: ${productLinksInfo.links.map(link => link.link).join(', ')}
+          Category: ${productLinksInfo.category}
+          Total Collections: ${productLinksInfo.links.length}`
         },
         {
           role: "user",
           content: userMessage
         }
       ],
-      max_tokens: 150,
+      max_tokens: 200,
       temperature: 0.7
     });
 
     let response = completion.choices[0].message.content.trim();
     
-    // Ensure the link is included
-    if (!response.includes(productLinkInfo.link)) {
-      response += `\n\nCheck it out here: ${productLinkInfo.link}`;
+    // Ensure all links are included if AI missed some
+    const includedLinks = productLinksInfo.links.filter(link => 
+      response.includes(link.link)
+    );
+    
+    if (includedLinks.length < productLinksInfo.links.length) {
+      console.log(`⚠️ AI missed some links, adding them manually...`);
+      response += `\n\nHere are our ${productLinksInfo.category} collections:\n`;
+      productLinksInfo.links.forEach(link => {
+        if (!response.includes(link.link)) {
+          response += `• ${link.link}\n`;
+        }
+      });
     }
 
     return response;
 
   } catch (error) {
     console.error('❌ Error creating product response:', error);
-    return `Perfect! Explore our ${productLinkInfo.category} collection: ${productLinkInfo.link}\n\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+    let response = `Perfect! Explore our ${productLinksInfo.category} collections:\n\n`;
+    productLinksInfo.links.forEach(link => {
+      response += `• ${link.link}\n`;
+    });
+    response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+    return response;
   }
 }
 
@@ -555,15 +549,15 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const userMsgLower = userMessage.toLowerCase();
     const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
 
-    if (isProductQuery) {
+    if (isProductQuery && isCSVLoaded) {
       console.log('🔄 Detected product query, using new logic...');
       
-      // Generate product link using new logic
-      const productLinkInfo = await generateProductLink(userMessage);
+      // Generate product links using new logic
+      const productLinksInfo = await generateProductLinks(userMessage);
       
-      if (productLinkInfo) {
-        console.log('✅ Product link generated, creating AI response...');
-        const productResponse = await createProductResponse(userMessage, productLinkInfo);
+      if (productLinksInfo) {
+        console.log('✅ Product links generated, creating AI response...');
+        const productResponse = await createProductResponse(userMessage, productLinksInfo);
         return productResponse;
       } else {
         console.log('❌ New logic failed, falling back to original AI...');
@@ -796,18 +790,13 @@ app.post('/test-product-detection', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    const productLinkInfo = await generateProductLink(message);
-    const aiResponse = productLinkInfo ? await createProductResponse(message, productLinkInfo) : 'No product link generated';
+    const productLinksInfo = await generateProductLinks(message);
+    const aiResponse = await createProductResponse(message, productLinksInfo);
     
     res.json({
       userMessage: message,
-      productLinkInfo: productLinkInfo,
-      aiResponse: aiResponse,
-      csvStatus: {
-        isCSVLoaded: isCSVLoaded,
-        categoriesCount: categoriesData.length,
-        galleriesCount: galleriesData.length
-      }
+      productLinksInfo: productLinksInfo,
+      aiResponse: aiResponse
     });
     
   } catch (error) {
@@ -817,12 +806,12 @@ app.post('/test-product-detection', async (req, res) => {
   }
 });
 
-// NEW: Debug endpoint to check specific category matching
+// NEW: Debug endpoint to check ALL matching galleries for a category
 app.get('/debug-category/:categoryId', (req, res) => {
   const categoryId = req.params.categoryId;
   
   const category = categoriesData.find(cat => cat.id === categoryId);
-  const galleries = galleriesData.filter(g => {
+  const matchingGalleries = galleriesData.filter(g => {
     if (Array.isArray(g.cat1)) {
       return g.cat1.includes(categoryId);
     } else {
@@ -830,12 +819,80 @@ app.get('/debug-category/:categoryId', (req, res) => {
     }
   });
   
+  // Generate links for all matching galleries
+  const generatedLinks = matchingGalleries.map(gallery => {
+    const encodedType2 = gallery.type2.replace(/ /g, '%20');
+    const productLink = `app.zulu.club/${encodedType2}`;
+    
+    return {
+      gallery: gallery,
+      link: productLink,
+      type2: gallery.type2
+    };
+  });
+  
   res.json({
     categoryId,
     category: category || 'Not found',
-    matchingGalleries: galleries,
-    totalMatches: galleries.length
+    totalMatches: matchingGalleries.length,
+    matchingGalleries: matchingGalleries,
+    generatedLinks: generatedLinks
   });
+});
+
+// NEW: Endpoint to check all galleries for a specific product
+app.get('/debug-product/:productName', async (req, res) => {
+  try {
+    const productName = req.params.productName;
+    
+    // Detect category
+    const detectedCategory = await detectProductCategory(productName);
+    let result = {
+      productQuery: productName,
+      detectedCategory: detectedCategory
+    };
+    
+    if (detectedCategory) {
+      // Find category
+      const category = categoriesData.find(cat => 
+        cat.name.toLowerCase().includes(detectedCategory.toLowerCase()) ||
+        detectedCategory.toLowerCase().includes(cat.name.toLowerCase())
+      );
+      
+      if (category) {
+        result.category = category;
+        
+        // Find ALL matching galleries
+        const matchingGalleries = galleriesData.filter(g => {
+          if (Array.isArray(g.cat1)) {
+            return g.cat1.includes(category.id);
+          } else {
+            return g.cat1 === category.id;
+          }
+        });
+        
+        result.matchingGalleries = matchingGalleries;
+        result.totalGalleriesFound = matchingGalleries.length;
+        
+        // Generate links
+        result.generatedLinks = matchingGalleries.map(gallery => {
+          const encodedType2 = gallery.type2.replace(/ /g, '%20');
+          return {
+            link: `app.zulu.club/${encodedType2}`,
+            type2: gallery.type2,
+            cat1: gallery.cat1
+          };
+        });
+      }
+    }
+    
+    res.json(result);
+    
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
 });
 
 // Health check endpoint
@@ -843,13 +900,14 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '4.1 - Enhanced with Product Detection & CSV Integration',
+    version: '5.0 - Multi-Link Product Detection',
     features: {
       ai_chat: 'OpenAI GPT-3.5 powered responses',
       smart_categories: 'AI decides when to show categories',
-      product_detection: 'New CSV-based product category detection',
+      product_detection: 'CSV-based product category detection',
+      multi_link_support: 'Finds ALL matching galleries and generates multiple links',
       csv_integration: '268+ categories from GitHub CSV files',
-      dynamic_links: 'Automated product link generation',
+      dynamic_links: 'Automated product link generation from all galleries',
       whatsapp_integration: 'Gallabox API integration'
     },
     csv_status: {
@@ -864,6 +922,7 @@ app.get('/', (req, res) => {
       reload_csv: 'POST /reload-csv',
       test_detection: 'POST /test-product-detection',
       debug_category: 'GET /debug-category/:categoryId',
+      debug_product: 'GET /debug-product/:productName',
       test_message: 'POST /send-test-message',
       categories: 'GET /categories'
     },
@@ -877,7 +936,7 @@ app.get('/categories', (req, res) => {
     categories: CATEGORIES,
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
-    approach: 'Dual-mode: AI-driven category display + CSV-based product detection'
+    approach: 'Dual-mode: AI-driven category display + CSV-based multi-link product detection'
   });
 });
 
@@ -934,17 +993,15 @@ app.get('/categories/:categoryName', (req, res) => {
   });
 });
 
-// NEW: Initialize CSV data loading when server starts (but don't block startup)
-console.log('🚀 Starting Zulu Club AI Assistant with Enhanced Product Detection...');
-setTimeout(() => {
-  loadAllCSVData().then(success => {
-    if (success) {
-      console.log('🎉 CSV data initialization completed successfully!');
-    } else {
-      console.log('⚠️ CSV data initialization completed with warnings');
-    }
-  });
-}, 1000); // Delay startup to let server initialize first
+// NEW: Initialize CSV data loading when server starts
+console.log('🚀 Starting Zulu Club AI Assistant with Multi-Link Product Detection...');
+loadAllCSVData().then(success => {
+  if (success) {
+    console.log('🎉 CSV data initialization completed successfully!');
+  } else {
+    console.log('⚠️ CSV data initialization completed with warnings');
+  }
+});
 
 // Export for Vercel
 module.exports = app;
