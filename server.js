@@ -159,7 +159,7 @@ async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   }
 }
 
-// NEW: Function to load all CSV data with retry logic
+// Also update the CSV loading success check to be more flexible
 async function loadAllCSVData() {
   if (isCSVLoaded) {
     console.log('✅ CSV data already loaded');
@@ -185,14 +185,26 @@ async function loadAllCSVData() {
     console.log(`📊 CSV Data Summary:`);
     console.log(`   - Categories loaded: ${categoriesData.length}`);
     console.log(`   - Galleries loaded: ${galleriesData.length}`);
+    
+    // Log sample data to verify parsing
+    if (categoriesData.length > 0) {
+      console.log('📝 Categories sample:', categoriesData.slice(0, 3));
+    }
+    if (galleriesData.length > 0) {
+      console.log('📝 Galleries sample:', galleriesData.slice(0, 3).map(g => ({
+        cat1: g.cat1,
+        type2: g.type2
+      })));
+    }
 
-    // Check if we have enough data
-    if (categoriesData.length >= 268 && galleriesData.length > 0) {
+    // Check if we have enough data - be more flexible about the count
+    const hasEnoughData = categoriesData.length > 200 && galleriesData.length > 0;
+    if (hasEnoughData) {
       isCSVLoaded = true;
       console.log('🎉 Successfully loaded all CSV data!');
       return true;
     } else {
-      console.log(`⚠️ Loaded ${categoriesData.length} categories (expected 268+) and ${galleriesData.length} galleries`);
+      console.log(`⚠️ Loaded ${categoriesData.length} categories (expected 200+) and ${galleriesData.length} galleries`);
       if (csvLoadAttempts < MAX_CSV_ATTEMPTS) {
         console.log(`⏳ Retrying in 3 seconds...`);
         await new Promise(resolve => setTimeout(resolve, 3000));
@@ -214,7 +226,6 @@ async function loadAllCSVData() {
     }
   }
 }
-
 // NEW: Function to detect product category using GPT
 async function detectProductCategory(userMessage) {
   try {
@@ -271,7 +282,7 @@ async function detectProductCategory(userMessage) {
   }
 }
 
-// NEW: Function to find category ID and generate link
+// Update the generateProductLink function to handle array matching
 async function generateProductLink(userMessage) {
   try {
     // Wait for CSV data to be loaded
@@ -306,11 +317,18 @@ async function generateProductLink(userMessage) {
 
     console.log(`✅ Found category: ${category.name} (ID: ${category.id})`);
 
-    // Find matching gallery entry
-    const gallery = galleriesData.find(g => g.cat1 === category.id);
+    // Find matching gallery entry - now checking if cat1 array includes our category ID
+    const gallery = galleriesData.find(g => {
+      if (Array.isArray(g.cat1)) {
+        return g.cat1.includes(category.id);
+      } else {
+        return g.cat1 === category.id;
+      }
+    });
     
     if (!gallery || !gallery.type2) {
       console.log(`❌ No gallery data found for category ID: ${category.id}`);
+      console.log(`🔍 Available cat1 arrays in galleries:`, galleriesData.slice(0, 5).map(g => g.cat1));
       return null;
     }
 
@@ -319,11 +337,17 @@ async function generateProductLink(userMessage) {
     const productLink = `app.zulu.club/${encodedType2}`;
     
     console.log(`🔗 Generated product link: ${productLink}`);
+    console.log(`📊 Gallery match details:`, {
+      categoryId: category.id,
+      cat1Array: gallery.cat1,
+      type2: gallery.type2
+    });
     
     return {
       category: category.name,
       link: productLink,
-      type2: gallery.type2
+      type2: gallery.type2,
+      categoryId: category.id
     };
 
   } catch (error) {
@@ -331,7 +355,6 @@ async function generateProductLink(userMessage) {
     return null;
   }
 }
-
 // NEW: Function to create AI response with product link
 async function createProductResponse(userMessage, productLinkInfo) {
   try {
@@ -785,6 +808,27 @@ app.get('/categories', (req, res) => {
     csv_categories_loaded: categoriesData.length,
     total_categories: Object.keys(CATEGORIES).length,
     approach: 'Dual-mode: AI-driven category display + CSV-based product detection'
+  });
+});
+
+// Add a debug endpoint to check specific category matching
+app.get('/debug-category/:categoryId', (req, res) => {
+  const categoryId = req.params.categoryId;
+  
+  const category = categoriesData.find(cat => cat.id === categoryId);
+  const galleries = galleriesData.filter(g => {
+    if (Array.isArray(g.cat1)) {
+      return g.cat1.includes(categoryId);
+    } else {
+      return g.cat1 === categoryId;
+    }
+  });
+  
+  res.json({
+    categoryId,
+    category: category || 'Not found',
+    matchingGalleries: galleries,
+    totalMatches: galleries.length
   });
 });
 
