@@ -539,12 +539,91 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   
   try {
     // NEW: Check if this is a product request and handle with new logic
-    const productKeywords = [
-      'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop',
-      'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
-      'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
-      'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle'
-    ];
+const productKeywords = [
+  // Common Buying Intents
+  'need', 'want', 'looking for', 'show me', 'have', 'buy', 'shop', 'order', 'get', 'find',
+
+  // General
+  'tshirt', 'shirt', 'jean', 'pant', 'shoe', 'dress', 'top', 'bottom',
+  'bag', 'watch', 'jewelry', 'accessory', 'beauty', 'skincare', 'home',
+  'decor', 'footwear', 'fashion', 'kids', 'gift', 'lifestyle',
+
+  // 👕 MEN
+  'men', 'mens', 'menswear', 'men clothing', 't shirts', 'casual shirts', 'formal shirts',
+  'co-ord sets', 'sweaters', 'jackets', 'blazers', 'suits', 'rain jackets',
+  'trousers', 'jeans', 'shorts', 'track pants', 'joggers',
+  'briefs', 'trunks', 'boxers', 'vests', 'loungewear', 'sleepwear', 'thermals',
+  'kurta', 'kurta sets', 'sherwani', 'nehru jacket', 'dhoti',
+  'casual shoes', 'sports shoes', 'formal shoes', 'sandals', 'floaters',
+  'flip flops', 'socks', 'belts', 'ties', 'cufflinks', 'pocket squares',
+  'perfume', 'deodorant', 'trimmer', 'grooming kit', 'wallet', 'cap', 'hat',
+  'muffler', 'scarf', 'gloves', 'helmet',
+
+  // 👗 WOMEN
+  'women', 'womenswear', 'ladies', 'girls', 'tops', 'dresses', 'jeans', 'skirts', 'shorts',
+  'co-ords', 'playsuit', 'jumpsuit', 'shrug', 'sweater', 'coat', 'blazer', 'waistcoat',
+  'kurta', 'kurti', 'tunic', 'saree', 'ethnicwear', 'leggings', 'salwar', 'churidar',
+  'palazzo', 'dress material', 'lehenga', 'choli', 'dupatta', 'shawl',
+  'heels', 'flats', 'boots', 'wedges', 'slippers', 'sports shoes', 'floaters',
+  'bra', 'briefs', 'shapewear', 'nightwear', 'swimwear', 'maternity wear',
+  'handbag', 'wallet', 'jewellery', 'necklace', 'earrings', 'rings', 'bracelet',
+  'scarf', 'belt', 'hair accessory', 'sunglasses', 'mask', 'cap',
+
+  // 🧒 KIDS / BOYS / GIRLS
+  'kids', 'boys', 'girls', 'infants', 'baby', 't shirt', 'shirt', 'shorts', 'jeans',
+  'trousers', 'clothing set', 'ethnicwear', 'kurta set', 'partywear',
+  'nightwear', 'thermals', 'jacket', 'sweater', 'school wear',
+  'bodysuit', 'romper', 'sleep suit', 'dress', 'dungaree', 'jumpsuit',
+  'backpack', 'bag', 'shoes', 'flipflops', 'socks', 'sandals', 'school shoes',
+  'caps', 'hair accessories', 'toys', 'stationary', 'lunch box',
+
+  // 🏠 HOME / DECOR
+  'home', 'homedecor', 'home decor', 'bed', 'bedsheet', 'pillow', 'pillow cover',
+  'blanket', 'quilt', 'comforter', 'bed cover', 'bedding set', 'sofa cover',
+  'curtain', 'rug', 'carpet', 'mat', 'bath towel', 'hand towel', 'bathrobe',
+  'bathroom accessory', 'shower curtain', 'floor runner',
+  'wall decor', 'clock', 'mirror', 'lamp', 'lighting', 'wall lamp', 'table lamp',
+  'outdoor lamp', 'string light', 'plant', 'planter', 'candle', 'aroma',
+  'vase', 'showpiece', 'pooja essential', 'wall shelf', 'fountain',
+  'ottoman', 'furniture', 'table runner', 'table cover', 'cushion', 'diwan set',
+
+  // 🍽️ KITCHEN & STORAGE
+  'kitchen', 'kitchenware', 'cookware', 'bakeware', 'serveware', 'dinnerware',
+  'cup', 'mug', 'glass', 'plate', 'bowl', 'barware', 'drinkware',
+  'storage box', 'organiser', 'hanger', 'bin', 'laundry bag', 'hook', 'holder',
+
+  // 🏋️‍♂️ SPORTS / ACTIVEWEAR
+  'sportswear', 'activewear', 'tracksuit', 'trackpant', 'jogger',
+  'sports bra', 'active t shirt', 'sports shorts', 'training jacket', 'sweatshirt',
+  'gym wear', 'yoga pant', 'running shoe', 'sports sandal', 'swimwear',
+  'sports accessory', 'sports equipment', 'fitness', 'athleisure',
+
+  // 🧴 BEAUTY / GROOMING / WELLNESS
+  'beauty', 'grooming', 'wellness', 'skin care', 'makeup', 'cosmetics', 'fragrance',
+  'perfume', 'deodorant', 'shampoo', 'conditioner', 'face wash', 'cleanser',
+  'toner', 'serum', 'moisturizer', 'lipstick', 'lip balm', 'foundation',
+  'concealer', 'eyeliner', 'mascara', 'makeup tool', 'comb', 'brush',
+  'body lotion', 'body wash', 'sunscreen', 'nail polish', 'spa', 'salon',
+  'mens grooming', 'hair care', 'personal care', 'hygiene',
+  'health supplement', 'vitamin', 'protein', 'fitness supplement',
+
+  // 💎 JEWELLERY / METALS
+  'jewellery', 'gold', 'silver', 'platinum', 'gold coin', 'silver coin',
+  'gold bar', 'silver bar', 'necklace', 'ring', 'bracelet', 'chain', 'anklet',
+  'earring', 'bangle', 'pendant',
+
+  // 💻 ELECTRONICS / GADGETS
+  'electronics', 'mobile', 'smartphone', 'laptop', 'tablet', 'camera', 'gadget',
+  'accessory', 'earphones', 'headphones', 'charger', 'smartwatch', 'power bank',
+
+  // 🧸 OTHER LIFESTYLE
+  'toy', 'gift', 'flower', 'food', 'snack', 'munchies', 'collectible',
+  'stationary', 'book', 'notebook', 'art supply', 'pen', 'pencil',
+
+  // 🌸 FESTIVE
+  'festivewear', 'ethnicwear', 'pooja item', 'decorative light', 'diya', 'rangoli'
+];
+
 
     const userMsgLower = userMessage.toLowerCase();
     const isProductQuery = productKeywords.some(keyword => userMsgLower.includes(keyword));
