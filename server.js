@@ -1,366 +1,296 @@
-// ------------------------------
-// ZULU CLUB Product Router - Product-Only CSV Logic
-// ------------------------------
-const express = require('express');
-const axios = require('axios');
-const { OpenAI } = require('openai');
-const csv = require('csv-parser');
-const { Readable } = require('stream');
+// --------------------------------------------
+// ZULU CLUB - Classifier + Product Filtering Pipeline
+// --------------------------------------------
+const express = require("express");
+const axios = require("axios");
+const { OpenAI } = require("openai");
+const csv = require("csv-parser");
+const { Readable } = require("stream");
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ------------------------------
-// ENV / CONFIG
-// ------------------------------
+// -------------------- CONFIG --------------------
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
   apiKey: process.env.GALLABOX_API_KEY,
   apiSecret: process.env.GALLABOX_API_SECRET,
   channelId: process.env.GALLABOX_CHANNEL_ID,
-  baseUrl: 'https://server.gallabox.com/devapi'
+  baseUrl: "https://server.gallabox.com/devapi",
+};
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
+
+// CSV URLs
+const categoriesUrl =
+  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv";
+const galleriesUrl =
+  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv";
+
+// -------------------- DATA --------------------
+let categories = [];
+let galleries = [];
+
+// Classifier IDs (you provided these)
+const CLASSIFIERS = {
+  Men: 1869,
+  Women: 1870,
+  Kids: 1873,
+  Home: 1874,
+  Wellness: 2105,
+  Metals: 2119,
+  Food: 2130,
+  Electronics: 2132,
+  Gadgets: 2135,
+  Discover: 2136,
 };
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || ''
-});
-
-// GitHub RAW CSVs
-const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
-const galleriesUrl  = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
-
-// ------------------------------
-// DATA
-// ------------------------------
-let categories = []; // [{id:Number, name:String}]
-let galleries  = []; // [{cat_id:Number, type2:String, cat1:Number[] }]
-
-// ------------------------------
-// CSV LOADING
-// ------------------------------
+// -------------------- CSV LOADERS --------------------
 async function fetchCSV(url) {
-  const res = await axios.get(url, { responseType: 'text' });
+  const res = await axios.get(url, { responseType: "text" });
   return new Promise((resolve, reject) => {
     const rows = [];
     Readable.from(res.data)
       .pipe(csv())
-      .on('data', (row) => rows.push(row))
-      .on('end', () => resolve(rows))
-      .on('error', reject);
+      .on("data", (r) => rows.push(r))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
   });
 }
 
 function safeParseCat1(raw) {
-  if (raw == null) return [];
+  if (!raw) return [];
   let s = String(raw).trim();
-  if (!s || s.toLowerCase() === 'null') return [];
-  // Normalize to JSON list
-  s = s.replace(/'/g, '"').replace(/,\s+/g, ',');
-  if (!s.startsWith('[')) s = `[${s}]`;
+  if (s === "null" || s === "" || s === "[]") return [];
+  s = s.replace(/'/g, '"').replace(/,\s+/g, ",");
+  if (!s.startsWith("[")) s = `[${s}]`;
   try {
     const arr = JSON.parse(s);
-    if (Array.isArray(arr)) return arr.map(v => Number(String(v).trim())).filter(Number.isFinite);
-  } catch (_) {}
-  return [];
+    return Array.isArray(arr)
+      ? arr.map((v) => Number(String(v).trim())).filter(Number.isFinite)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 async function loadCSVData() {
-  console.log('⬇️ Loading CSVs from GitHub...');
-  const [catRows, galRows] = await Promise.all([fetchCSV(categoriesUrl), fetchCSV(galleriesUrl)]);
+  const [catRows, galRows] = await Promise.all([
+    fetchCSV(categoriesUrl),
+    fetchCSV(galleriesUrl),
+  ]);
 
   categories = catRows
-    .filter(r => r.id != null && r.name != null && String(r.id).trim() && String(r.name).trim())
-    .map(r => ({ id: Number(String(r.id).trim()), name: String(r.name).trim() }))
-    .filter(r => Number.isFinite(r.id));
+    .filter((r) => r.id && r.name)
+    .map((r) => ({ id: Number(r.id), name: r.name }));
 
   galleries = galRows
-    .map(r => {
-      const cat_id = Number(String(r.cat_id ?? '').trim());
-      const type2  = (r.type2 ?? '').toString().trim();
-      const rawCat1 = r.cat1;
-      // Skip rows with null/empty in any of the three columns
-      if (!Number.isFinite(cat_id) || !type2 || rawCat1 == null || String(rawCat1).trim() === '') return null;
-      const cat1 = safeParseCat1(rawCat1);
-      return { cat_id, type2, cat1 };
+    .map((r) => {
+      if (!r.cat_id || !r.type2 || !r.cat1) return null;
+      return {
+        cat_id: Number(r.cat_id),
+        type2: r.type2.trim(),
+        cat1: safeParseCat1(r.cat1),
+      };
     })
     .filter(Boolean);
 
-  console.log(`✅ Loaded ${categories.length} categories & ${galleries.length} galleries`);
+  console.log(
+    `✅ Loaded ${categories.length} categories & ${galleries.length} galleries`
+  );
 }
 
-// ------------------------------
-// TEXT UTILS
-// ------------------------------
-const STOP = new Set(['for','a','an','the','and','or','of','in','on','to','with','&']);
+// -------------------- GPT --------------------
+async function interpretMessage(userMessage) {
+  const sysPrompt = `
+You are a message interpreter for Zulu Club.
+
+Extract:
+- intent: "product_search" | "greeting" | "company_info"
+- product_term: e.g. "jeans", "t-shirt", "kurta"
+- classifier: e.g. "men", "women", "kids", "home", "electronics", "wellness", "metals", "food", "gadgets", "discover"
+If the classifier (gender/category type) is missing, respond with "need_classifier": true.
+
+Example:
+"I want a t-shirt" → { "intent": "product_search", "product_term": "t-shirt", "classifier": null, "need_classifier": true }
+"I want a t-shirt for men" → { "intent": "product_search", "product_term": "t-shirt", "classifier": "men", "need_classifier": false }
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: sysPrompt },
+        { role: "user", content: userMessage },
+      ],
+      max_tokens: 200,
+      temperature: 0,
+    });
+
+    return JSON.parse(response.choices[0].message.content.trim());
+  } catch (err) {
+    console.error("⚠️ GPT Parse Error:", err.message);
+    return { intent: "product_search", product_term: userMessage, classifier: null, need_classifier: true };
+  }
+}
+
+// -------------------- SEARCH LOGIC --------------------
 function normalize(str) {
-  return String(str).toLowerCase().replace(/[^a-z0-9\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(str).toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
 }
 function tokenize(str) {
-  return normalize(str).split(' ').filter(t => t && !STOP.has(t));
-}
-function uniq(arr) { return Array.from(new Set(arr)); }
-
-// Product synonyms to help token matching
-const SYN = {
-  't-shirt': ['tshirt','tee','tee-shirt','t shirt','tees'],
-  'tshirt':  ['t-shirt','tee','tee-shirt','t shirt','tees'],
-  'tee':     ['t-shirt','tshirt','tee-shirt','t shirt','tees'],
-  'jean':    ['jeans','denim','denims'],
-  'pant':    ['pants','trouser','trousers'],
-  'shirt':   ['shirts'],
-  'kurta':   ['kurtas'],
-  'lehenga': ['ghagra','lengha','lehngha'],
-  'shoe':    ['shoes','sneaker','sneakers','footwear'],
-};
-function expandTokens(tokens) {
-  const set = new Set(tokens);
-  for (const t of tokens) {
-    for (const [k, arr] of Object.entries(SYN)) {
-      if (t === k || (arr || []).includes(t)) {
-        set.add(k);
-        (arr || []).forEach(x => set.add(x));
-      }
-    }
-    if (t.endsWith('s')) set.add(t.slice(0, -1)); else set.add(`${t}s`);
-  }
-  return Array.from(set);
+  return normalize(str).split(" ").filter(Boolean);
 }
 
-// ------------------------------
-// CORE CATEGORY FILTER (dynamic IDs from CSV names)
-// ------------------------------
-const CORE_CATEGORY_NAMES = [
-  'men','women','kids','home','electronics','ethnicwear','wellness','metals','food','gadgets','discover'
-];
-
-function findCoreCategoryIds() {
-  const ids = new Set();
-  const names = categories.map(c => ({ id: c.id, name: normalize(c.name) }));
-  for (const term of CORE_CATEGORY_NAMES) {
-    for (const c of names) {
-      if (c.name.includes(term)) ids.add(categories.find(x => x.id === c.id).id);
-    }
-  }
-  return Array.from(ids);
+function top3CategoriesForProduct(productTerm) {
+  const tokens = tokenize(productTerm);
+  const scored = categories.map((c) => {
+    const n = normalize(c.name);
+    const hits = tokens.filter((t) => n.includes(t)).length;
+    return { id: c.id, name: c.name, score: hits };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 3).filter((x) => x.score > 0);
 }
 
-// ------------------------------
-// CATEGORY MATCHING (Top 3 relevant to user text)
-// ------------------------------
-function scoreCategoryByTokens(catName, queryTokens) {
-  const nameTokens = new Set(tokenize(catName));
-  let hits = 0;
-  for (const q of queryTokens) if (nameTokens.has(q)) hits++;
-  // Jaccard-ish
-  return hits / Math.max(1, nameTokens.size);
-}
+function filterGalleries(productTerm, classifier) {
+  const classifierId = CLASSIFIERS[
+    Object.keys(CLASSIFIERS).find(
+      (k) => normalize(k) === normalize(classifier)
+    )
+  ];
 
-function top3RelevantCategories(userText) {
-  const qTokens = expandTokens(tokenize(userText));
-  const scored = categories.map(c => ({
-    id: c.id,
-    name: c.name,
-    score: scoreCategoryByTokens(c.name, qTokens)
-  }));
-  scored.sort((a,b) => b.score - a.score);
-  // Keep non-zeroish matches; if none score >0, still return top 3 by score
-  const top = scored.filter(x => x.score > 0).slice(0,3);
-  return (top.length ? top : scored.slice(0,3));
-}
+  if (!classifierId) return [];
 
-// ------------------------------
-// PRODUCT KEYWORD → CATEGORY IDS (for cat1 filtering)
-// ------------------------------
-function productKeywordCategoryIds(userText) {
-  const tokens = expandTokens(tokenize(userText));
-  const matched = [];
-  for (const c of categories) {
-    const name = normalize(c.name);
-    for (const t of tokens) {
-      if (name.includes(t)) { matched.push(c.id); break; }
-    }
-  }
-  return uniq(matched);
-}
+  const topCats = top3CategoriesForProduct(productTerm);
+  const topIds = topCats.map((x) => x.id);
 
-// ------------------------------
-// GALLERIES FILTER PIPELINE (as per your spec)
-// 1) Start with galleries where cat_id ∈ coreCategoryIds
-// 2) From those, keep rows where cat1 intersects productKeywordCategoryIds
-// ------------------------------
-function filterGalleriesBySpec(userText) {
-  const coreIds = findCoreCategoryIds();
-  const step1 = galleries.filter(g => coreIds.includes(g.cat_id));
-  if (step1.length === 0) return []; // No data under core categories
+  // Step 1: filter by classifier cat_id
+  const step1 = galleries.filter((g) => g.cat_id === classifierId);
 
-  const prodIds = productKeywordCategoryIds(userText);
-  if (prodIds.length === 0) return []; // No product ids matched
-
-  const step2 = step1.filter(g =>
-    (g.cat1 || []).some(cid => prodIds.includes(cid))
+  // Step 2: filter by cat1 containing product IDs
+  const step2 = step1.filter((g) =>
+    g.cat1.some((c1) => topIds.includes(c1))
   );
 
-  return step2;
+  return { rows: step2, topCats, classifierId };
 }
 
-// Fallbacks (if strict pipeline returns nothing)
-function fallbackByCat1Top3(userText) {
-  const top = top3RelevantCategories(userText).map(c => c.id);
-  return galleries.filter(g => (g.cat1 || []).some(cid => top.includes(cid)));
-}
-function fallbackByType2Contains(userText) {
-  const tokens = expandTokens(tokenize(userText));
-  return galleries.filter(g => {
-    const t2 = normalize(g.type2);
-    return tokens.some(t => t2.includes(t));
-  });
+function buildLinks(rows) {
+  const uniq = [...new Set(rows.map((r) => r.type2))];
+  return uniq.slice(0, 5).map((x) => `app.zulu.club/${encodeURIComponent(x)}`);
 }
 
-// ------------------------------
-// LINK BUILDER
-// ------------------------------
-function linksFromGalleries(rows, limit = 6) {
-  const uniqueType2 = uniq(rows.map(r => r.type2).filter(Boolean));
-  return uniqueType2.slice(0, limit).map(t => `app.zulu.club/${encodeURIComponent(t)}`);
-}
-
-// ------------------------------
-// GALLABOX SEND
-// ------------------------------
+// -------------------- GALLABOX MESSAGE --------------------
 async function sendMessage(to, name, message) {
   try {
-    const payload = {
-      channelId: gallaboxConfig.channelId,
-      channelType: "whatsapp",
-      recipient: { name, phone: to },
-      whatsapp: { type: "text", text: { body: message } }
-    };
-    await axios.post(`${gallaboxConfig.baseUrl}/messages/whatsapp`, payload, {
-      headers: {
-        apiKey: gallaboxConfig.apiKey,
-        apiSecret: gallaboxConfig.apiSecret,
-        'Content-Type': 'application/json'
+    await axios.post(
+      `${gallaboxConfig.baseUrl}/messages/whatsapp`,
+      {
+        channelId: gallaboxConfig.channelId,
+        channelType: "whatsapp",
+        recipient: { name, phone: to },
+        whatsapp: { type: "text", text: { body: message } },
+      },
+      {
+        headers: {
+          apiKey: gallaboxConfig.apiKey,
+          apiSecret: gallaboxConfig.apiSecret,
+          "Content-Type": "application/json",
+        },
       }
-    });
-    console.log(`✅ Sent message to ${to}`);
-  } catch (e) {
-    console.error('❌ Gallabox send error:', e.response?.data || e.message);
+    );
+    console.log(`✅ Sent to ${to}`);
+  } catch (err) {
+    console.error("❌ Send error:", err.message);
   }
 }
 
-// ------------------------------
-// GPT: PRODUCT vs COMPANY vs CASUAL
-// (We only need GPT to decide "product query" or not. All CSV logic is in code.)
-// ------------------------------
-async function getIntent(userMessage) {
-  const sys = `
-You are a router. Classify the user's message into:
-- "product_search"
-- "company_info"
-- "greeting"
-
-Return ONLY JSON: {"intent":"..."}.
-
-Examples:
-User: "hi" -> {"intent":"greeting"}
-User: "what is zulu" -> {"intent":"company_info"}
-User: "need a casual tee" -> {"intent":"product_search"}
-`;
-  try {
-    const resp = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: userMessage }
-      ],
-      temperature: 0,
-      max_tokens: 60
-    });
-    const parsed = JSON.parse(resp.choices[0].message.content.trim());
-    return parsed?.intent || 'product_search';
-  } catch (e) {
-    // If GPT fails, assume product query (as you requested: product logic only)
-    return 'product_search';
-  }
-}
-
-// ------------------------------
-// MAIN HANDLER
-// ------------------------------
+// -------------------- MAIN HANDLER --------------------
 async function handleMessage(userPhone, userName, userMessage) {
-  const intent = await getIntent(userMessage);
-  console.log('🤖 Intent:', intent);
+  const intentData = await interpretMessage(userMessage);
+  console.log("🤖 Interpretation:", intentData);
 
-  if (intent === 'greeting') {
-    return sendMessage(userPhone, userName, 'Hey there 👋 How can I help you shop today?');
-  }
-  if (intent === 'company_info') {
-    return sendMessage(userPhone, userName, `Welcome to *Zulu Club*! 🛍️ Premium lifestyle products delivered in *100 minutes*. Now live in *Gurgaon*. Explore: zulu.club`);
+  if (intentData.intent === "greeting") {
+    return sendMessage(userPhone, userName, "Hey 👋 How can I help you shop today?");
   }
 
-  // PRODUCT QUERY LOGIC (the pipeline you asked for)
-  let rows = filterGalleriesBySpec(userMessage);
-
-  // Fallback 1: if nothing, try cat1 contains any of top3 relevant category ids
-  if (rows.length === 0) {
-    rows = fallbackByCat1Top3(userMessage);
+  if (intentData.intent === "company_info") {
+    return sendMessage(
+      userPhone,
+      userName,
+      "Welcome to *Zulu Club*! 🛍️ Premium lifestyle products delivered in *100 minutes*. Explore now at zulu.club."
+    );
   }
 
-  // Fallback 2: if still nothing, try type2 contains keywords
-  if (rows.length === 0) {
-    rows = fallbackByType2Contains(userMessage);
-  }
-
-  const links = linksFromGalleries(rows, 6);
-
-  if (links.length > 0) {
-    const reply = `Here you go 👇\n${links.join('\n')}\n\n🛒 More on app.zulu.club`;
-    return sendMessage(userPhone, userName, reply);
-  }
-
-  return sendMessage(userPhone, userName, "Sorry, I couldn't find an exact match. Try a different keyword like 'graphic tee', 'jeans', or 'kurta'.");
-}
-
-// ------------------------------
-// WEBHOOK
-// ------------------------------
-app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const userMessage = body.whatsapp?.text?.body?.trim();
-    const userPhone   = body.whatsapp?.from;
-    const userName    = body.contact?.name || 'Customer';
-
-    if (!userMessage || !userPhone) {
-      return res.status(400).json({ error: 'Invalid webhook payload' });
+  if (intentData.intent === "product_search") {
+    if (intentData.need_classifier) {
+      return sendMessage(
+        userPhone,
+        userName,
+        "Would you like it for *men, women,* or *kids*? 👕👗👶"
+      );
     }
 
-    await handleMessage(userPhone, userName, userMessage);
+    const { rows, topCats } = filterGalleries(
+      intentData.product_term,
+      intentData.classifier
+    );
+
+    if (!rows.length) {
+      return sendMessage(
+        userPhone,
+        userName,
+        `Sorry, I couldn't find *${intentData.product_term}* for *${intentData.classifier}*. Try another keyword!`
+      );
+    }
+
+    const links = buildLinks(rows);
+    const response = `Here are some *${intentData.product_term}* options for *${intentData.classifier}*:\n\n${links.join(
+      "\n"
+    )}\n\n🛒 Explore more on app.zulu.club`;
+
+    return sendMessage(userPhone, userName, response);
+  }
+
+  return sendMessage(userPhone, userName, "Hi! How can I help you shop today?");
+}
+
+// -------------------- WEBHOOK --------------------
+app.post("/webhook", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const msg = body.whatsapp?.text?.body?.trim();
+    const phone = body.whatsapp?.from;
+    const name = body.contact?.name || "Customer";
+
+    if (!msg || !phone) {
+      return res.status(400).json({ error: "Invalid webhook payload" });
+    }
+
+    await handleMessage(phone, name, msg);
     res.status(200).json({ success: true });
-  } catch (e) {
-    console.error('💥 Webhook error:', e.message);
-    res.status(500).json({ error: e.message });
+  } catch (err) {
+    console.error("Webhook error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ------------------------------
-// HEALTH
-// ------------------------------
-app.get('/', (req, res) => {
+// -------------------- HEALTH --------------------
+app.get("/", (req, res) => {
   res.json({
-    status: '✅ Zulu Club Product Router running',
-    version: '6.0-product-pipeline',
+    status: "✅ Zulu Club Product Assistant",
+    version: "7.0 - Classifier Pipeline",
     categoriesLoaded: categories.length,
     galleriesLoaded: galleries.length,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 
-// ------------------------------
-// START
-// ------------------------------
+// -------------------- START --------------------
 loadCSVData().then(() => {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`🚀 Zulu Club Product Router on ${PORT}`));
+  app.listen(PORT, () =>
+    console.log(`🚀 Zulu Club Product Assistant running on port ${PORT}`)
+  );
 });
