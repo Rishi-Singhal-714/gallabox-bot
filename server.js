@@ -527,89 +527,124 @@ async function generateProductLinks(userMessage) {
   }
 }
 
-// NEW: Function to create AI response with multiple product links
+// NEW: Function to create AI response with ALL product links - FIXED TO INCLUDE ALL LINKS
 async function createProductResponse(userMessage, productLinksInfo) {
   try {
+    // If no OpenAI API key, create a simple response with ALL links
     if (!process.env.OPENAI_API_KEY) {
       let response = `Great choice! `;
       
       if (productLinksInfo.method === 'gpt_recommendation') {
-        response += `Based on your request, I found ${productLinksInfo.links.length} collections in our ${productLinksInfo.category} category:\n\n`;
+        response += `Based on your request for ${userMessage.toLowerCase()}, I found ${productLinksInfo.links.length} collections in our ${productLinksInfo.category} category:\n\n`;
       } else {
-        response += `I found ${productLinksInfo.links.length} collections that might interest you:\n\n`;
+        response += `I found ${productLinksInfo.links.length} collections for "${userMessage.toLowerCase()}":\n\n`;
       }
       
-      productLinksInfo.links.forEach(link => {
-        response += `• ${link.link}\n`;
+      // Include ALL links
+      productLinksInfo.links.forEach((link, index) => {
+        response += `${index + 1}. ${link.link}\n`;
       });
-      response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+      
+      response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
       return response;
     }
 
+    // Create a base message that ensures ALL links are included
+    const allLinksText = productLinksInfo.links.map(link => link.link).join('\n• ');
+    
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
-          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response that includes multiple product links.
-          
+          content: `You are a friendly Zulu Club shopping assistant. Create a helpful, engaging response.
+
           ZULU CLUB INFORMATION:
           ${ZULU_CLUB_INFO}
-          
-          Always include these key points:
-          - 100-minute delivery in Gurgaon
-          - Try at home, easy returns
-          - Mention the specific product category
-          - Include ALL the provided links naturally in the response
-          - Keep it under 400 characters for WhatsApp
-          - Use emojis to make it engaging
-          - If there are multiple links, mention they are different collections/varieties
-          
-          Product Links: ${productLinksInfo.links.map(link => link.link).join(', ')}
+
+          IMPORTANT: You MUST include ALL the product links provided below in your response.
+          Do not skip any links. Make sure every single link is included.
+
+          PRODUCT LINKS TO INCLUDE:
+          ${productLinksInfo.links.map(link => `• ${link.link}`).join('\n')}
+
           Category: ${productLinksInfo.category}
           Total Collections: ${productLinksInfo.links.length}
-          GPT Recommended Categories: ${productLinksInfo.gptCategories ? productLinksInfo.gptCategories.join(', ') : 'Not available'}
-          Method Used: ${productLinksInfo.method}`
+
+          Response Guidelines:
+          - Start with an engaging response to the user's query
+          - Mention we have multiple collections/varieties
+          - Include ALL the product links naturally in the response
+          - End with our key benefits: 100-min delivery, try-at-home, easy returns
+          - Keep it under 500 characters for WhatsApp
+          - Use emojis to make it engaging
+          - Make sure every link is included exactly as provided
+
+          Example structure:
+          "Perfect! For [user request], we have [number] [category] collections: 
+          [Link 1]
+          [Link 2] 
+          [Link 3]
+          🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns"`
         },
         {
           role: "user",
           content: userMessage
         }
       ],
-      max_tokens: 200,
+      max_tokens: 300, // Increased tokens to ensure all links fit
       temperature: 0.7
     });
 
     let response = completion.choices[0].message.content.trim();
     
-    // Ensure all links are included if AI missed some
-    const includedLinks = productLinksInfo.links.filter(link => 
-      response.includes(link.link)
+    // CRITICAL: Verify ALL links are included, if not add them manually
+    const missingLinks = productLinksInfo.links.filter(link => 
+      !response.includes(link.link)
     );
-    
-    if (includedLinks.length < productLinksInfo.links.length) {
-      console.log(`⚠️ AI missed some links, adding them manually...`);
-      response += `\n\nHere are our ${productLinksInfo.category} collections:\n`;
-      productLinksInfo.links.forEach(link => {
-        if (!response.includes(link.link)) {
-          response += `• ${link.link}\n`;
-        }
+
+    if (missingLinks.length > 0) {
+      console.log(`⚠️ AI missed ${missingLinks.length} links, adding them manually...`);
+      
+      // Add a clear separator and then all missing links
+      response += `\n\nHere are all our ${productLinksInfo.category} collections:\n`;
+      missingLinks.forEach(link => {
+        response += `• ${link.link}\n`;
       });
     }
 
+    // Final verification - if still missing links, rebuild the response entirely
+    const finalMissingLinks = productLinksInfo.links.filter(link => 
+      !response.includes(link.link)
+    );
+
+    if (finalMissingLinks.length > 0) {
+      console.log(`🔄 Creating guaranteed response with ALL ${productLinksInfo.links.length} links...`);
+      response = `Perfect! For ${userMessage.toLowerCase()}, we have ${productLinksInfo.links.length} ${productLinksInfo.category} collections:\n\n`;
+      
+      productLinksInfo.links.forEach((link, index) => {
+        response += `${index + 1}. ${link.link}\n`;
+      });
+      
+      response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
+    }
+
+    console.log(`✅ Final response includes ${productLinksInfo.links.length - finalMissingLinks.length}/${productLinksInfo.links.length} links`);
     return response;
 
   } catch (error) {
     console.error('❌ Error creating product response:', error);
-    let response = `Perfect! Explore our ${productLinksInfo.category} collections:\n\n`;
-    productLinksInfo.links.forEach(link => {
-      response += `• ${link.link}\n`;
+    // Fallback that guarantees ALL links are included
+    let response = `Great! For ${userMessage.toLowerCase()}, explore our ${productLinksInfo.links.length} ${productLinksInfo.category} collections:\n\n`;
+    
+    productLinksInfo.links.forEach((link, index) => {
+      response += `${index + 1}. ${link.link}\n`;
     });
-    response += `\n🚀 100-min delivery | 💫 Try at home | 🔄 Easy returns`;
+    
+    response += `\n🚀 100-min delivery in Gurgaon | 💫 Try at home | 🔄 Easy returns`;
     return response;
   }
 }
-
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
   try {
