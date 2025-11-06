@@ -566,6 +566,9 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
+  // Define userMsgLower at the function level so it's available in both try and catch blocks
+  const userMsgLower = userMessage.toLowerCase();
+  
   try {
     // NEW: UNIVERSAL PRODUCT DETECTION - Try for EVERY message
     if (isCSVLoaded) {
@@ -578,7 +581,6 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
         'what can you do', 'who are you', 'what is zulu', 'about', 'information'
       ];
       
-      const userMsgLower = userMessage.toLowerCase();
       const isLikelyProductQuery = !nonProductPatterns.some(pattern => 
         userMsgLower.includes(pattern)
       ) && userMsgLower.split(' ').length >= 2; // At least 2 words
@@ -688,13 +690,14 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const clearProductQueries = [
       'product', 'categor', 'what do you sell', 'what do you have', 'buy', 'shop'
     ];
-    if (clearProductQueries.some(term => userMessage.toLowerCase().includes(term))) {
+    
+    // Now userMsgLower is available in the catch block too
+    if (clearProductQueries.some(term => userMsgLower.includes(term))) {
       return generateCategoryResponse(userMessage);
     }
     return "Hi there! I'm excited to tell you about Zulu Club - your premium lifestyle shopping experience with 100-minute delivery in Gurgaon! What would you like to know about our products? 🛍️";
   }
 }
-
 // Handle user message with AI
 async function handleMessage(sessionId, userMessage) {
   try {
