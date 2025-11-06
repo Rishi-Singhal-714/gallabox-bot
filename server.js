@@ -9,7 +9,7 @@ const app = express();
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-f
+
 // Gallabox API configuration - use environment variables
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
@@ -1026,51 +1026,6 @@ app.get('/debug-product/:productName', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'Server is running on Vercel', 
-    service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - Multi-Link Product Detection',
-    features: {
-      ai_chat: 'OpenAI GPT-3.5 powered responses',
-      smart_categories: 'AI decides when to show categories',
-      product_detection: 'CSV-based product category detection',
-      multi_link_support: 'Finds ALL matching galleries and generates multiple links',
-      csv_integration: '268+ categories from GitHub CSV files',
-      dynamic_links: 'Automated product link generation from all galleries',
-      whatsapp_integration: 'Gallabox API integration'
-    },
-    csv_status: {
-      loaded: isCSVLoaded,
-      categories_loaded: categoriesData.length,
-      galleries_loaded: galleriesData.length
-    },
-    endpoints: {
-      webhook: 'POST /webhook',
-      health: 'GET /',
-      csv_status: 'GET /csv-status',
-      reload_csv: 'POST /reload-csv',
-      test_detection: 'POST /test-product-detection',
-      debug_category: 'GET /debug-category/:categoryId',
-      debug_product: 'GET /debug-product/:productName',
-      test_message: 'POST /send-test-message',
-      categories: 'GET /categories'
-    },
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Get all categories with links
-app.get('/categories', (req, res) => {
-  res.json({
-    categories: CATEGORIES,
-    csv_categories_loaded: categoriesData.length,
-    total_categories: Object.keys(CATEGORIES).length,
-    approach: 'Dual-mode: AI-driven category display + CSV-based multi-link product detection'
-  });
-});
-
 // NEW: Debug endpoint to see category matching for any product
 app.get('/debug-category-matching/:productQuery', async (req, res) => {
   try {
@@ -1142,6 +1097,53 @@ app.get('/debug-category-matching/:productQuery', async (req, res) => {
   }
 });
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running on Vercel', 
+    service: 'Zulu Club WhatsApp AI Assistant',
+    version: '6.0 - Multi-Category Fallback with Product Detection',
+    features: {
+      ai_chat: 'OpenAI GPT-3.5 powered responses',
+      smart_categories: 'AI decides when to show categories',
+      product_detection: 'CSV-based product category detection',
+      multi_category_fallback: 'Tries multiple similar categories when no galleries found',
+      multi_link_support: 'Finds ALL matching galleries and generates multiple links',
+      csv_integration: '268+ categories from GitHub CSV files',
+      dynamic_links: 'Automated product link generation from all galleries',
+      whatsapp_integration: 'Gallabox API integration'
+    },
+    csv_status: {
+      loaded: isCSVLoaded,
+      categories_loaded: categoriesData.length,
+      galleries_loaded: galleriesData.length
+    },
+    endpoints: {
+      webhook: 'POST /webhook',
+      health: 'GET /',
+      csv_status: 'GET /csv-status',
+      reload_csv: 'POST /reload-csv',
+      test_detection: 'POST /test-product-detection',
+      debug_category: 'GET /debug-category/:categoryId',
+      debug_product: 'GET /debug-product/:productName',
+      debug_category_matching: 'GET /debug-category-matching/:productQuery',
+      test_message: 'POST /send-test-message',
+      categories: 'GET /categories'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Get all categories with links
+app.get('/categories', (req, res) => {
+  res.json({
+    categories: CATEGORIES,
+    csv_categories_loaded: categoriesData.length,
+    total_categories: Object.keys(CATEGORIES).length,
+    approach: 'Dual-mode: AI-driven category display + CSV-based multi-category fallback product detection'
+  });
+});
+
 // Test endpoint to send a message manually
 app.post('/send-test-message', async (req, res) => {
   try {
@@ -1196,7 +1198,7 @@ app.get('/categories/:categoryName', (req, res) => {
 });
 
 // NEW: Initialize CSV data loading when server starts
-console.log('🚀 Starting Zulu Club AI Assistant with Multi-Link Product Detection...');
+console.log('🚀 Starting Zulu Club AI Assistant with Multi-Category Fallback Product Detection...');
 loadAllCSVData().then(success => {
   if (success) {
     console.log('🎉 CSV data initialization completed successfully!');
