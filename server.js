@@ -1,5 +1,5 @@
 // ------------------------------
-// ZULU CLUB AI Assistant - Robust Matching + GitHub CSVs
+// ZULU CLUB Product Router - Product-Only CSV Logic
 // ------------------------------
 const express = require('express');
 const axios = require('axios');
@@ -12,7 +12,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ------------------------------
-// CONFIG
+// ENV / CONFIG
 // ------------------------------
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
@@ -22,9 +22,11 @@ const gallaboxConfig = {
   baseUrl: 'https://server.gallabox.com/devapi'
 };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || ''
+});
 
-// GitHub RAW URLs
+// GitHub RAW CSVs
 const categoriesUrl = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv';
 const galleriesUrl  = 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv';
 
@@ -35,7 +37,7 @@ let categories = []; // [{id:Number, name:String}]
 let galleries  = []; // [{cat_id:Number, type2:String, cat1:Number[] }]
 
 // ------------------------------
-// UTIL: CSV LOADING
+// CSV LOADING
 // ------------------------------
 async function fetchCSV(url) {
   const res = await axios.get(url, { responseType: 'text' });
@@ -50,30 +52,25 @@ async function fetchCSV(url) {
 }
 
 function safeParseCat1(raw) {
-  if (!raw) return [];
+  if (raw == null) return [];
   let s = String(raw).trim();
-
-  // treat literal null/empty as empty list
-  if (s === 'null' || s === '' || s === '[]') return [];
-
-  // normalize quotes and strip spaces after commas
+  if (!s || s.toLowerCase() === 'null') return [];
+  // Normalize to JSON list
   s = s.replace(/'/g, '"').replace(/,\s+/g, ',');
-  // If it looks like a bare number (e.g. 1908), wrap into array
   if (!s.startsWith('[')) s = `[${s}]`;
-
   try {
     const arr = JSON.parse(s);
-    if (Array.isArray(arr)) return arr.map(n => Number(String(n).trim())).filter(n => Number.isFinite(n));
+    if (Array.isArray(arr)) return arr.map(v => Number(String(v).trim())).filter(Number.isFinite);
   } catch (_) {}
   return [];
 }
 
 async function loadCSVData() {
-  console.log('⬇️ Fetching CSVs from GitHub...');
+  console.log('⬇️ Loading CSVs from GitHub...');
   const [catRows, galRows] = await Promise.all([fetchCSV(categoriesUrl), fetchCSV(galleriesUrl)]);
 
   categories = catRows
-    .filter(r => r.id != null && r.name != null && String(r.id).trim() !== '' && String(r.name).trim() !== '')
+    .filter(r => r.id != null && r.name != null && String(r.id).trim() && String(r.name).trim())
     .map(r => ({ id: Number(String(r.id).trim()), name: String(r.name).trim() }))
     .filter(r => Number.isFinite(r.id));
 
@@ -81,16 +78,10 @@ async function loadCSVData() {
     .map(r => {
       const cat_id = Number(String(r.cat_id ?? '').trim());
       const type2  = (r.type2 ?? '').toString().trim();
-      const cat1   = safeParseCat1(r.cat1);
-
-      // strict null/empty skip
-      const hasNull = (
-        !Number.isFinite(cat_id) ||
-        type2 === '' ||
-        r.cat1 == null || String(r.cat1).trim() === '' // note: we still parsed into cat1 above
-      );
-      if (hasNull) return null;
-
+      const rawCat1 = r.cat1;
+      // Skip rows with null/empty in any of the three columns
+      if (!Number.isFinite(cat_id) || !type2 || rawCat1 == null || String(rawCat1).trim() === '') return null;
+      const cat1 = safeParseCat1(rawCat1);
       return { cat_id, type2, cat1 };
     })
     .filter(Boolean);
@@ -99,128 +90,143 @@ async function loadCSVData() {
 }
 
 // ------------------------------
-// UTIL: TEXT + MATCHING
+// TEXT UTILS
 // ------------------------------
 const STOP = new Set(['for','a','an','the','and','or','of','in','on','to','with','&']);
-const SYNONYMS = {
+function normalize(str) {
+  return String(str).toLowerCase().replace(/[^a-z0-9\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function tokenize(str) {
+  return normalize(str).split(' ').filter(t => t && !STOP.has(t));
+}
+function uniq(arr) { return Array.from(new Set(arr)); }
+
+// Product synonyms to help token matching
+const SYN = {
   't-shirt': ['tshirt','tee','tee-shirt','t shirt','tees'],
   'tshirt':  ['t-shirt','tee','tee-shirt','t shirt','tees'],
   'tee':     ['t-shirt','tshirt','tee-shirt','t shirt','tees'],
+  'jean':    ['jeans','denim','denims'],
+  'pant':    ['pants','trouser','trousers'],
   'shirt':   ['shirts'],
   'kurta':   ['kurtas'],
   'lehenga': ['ghagra','lengha','lehngha'],
-  'pant':    ['pants','trouser','trousers'],
-  'jean':    ['jeans','denim','denims'],
+  'shoe':    ['shoes','sneaker','sneakers','footwear'],
 };
-
-function normalize(str) {
-  return String(str)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s\-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function tokenize(str) {
-  const norm = normalize(str);
-  return norm.split(' ').filter(t => t && !STOP.has(t));
-}
-
 function expandTokens(tokens) {
   const set = new Set(tokens);
   for (const t of tokens) {
-    for (const [k, arr] of Object.entries(SYNONYMS)) {
-      if (t === k || (SYNONYMS[k] || []).includes(t)) {
+    for (const [k, arr] of Object.entries(SYN)) {
+      if (t === k || (arr || []).includes(t)) {
         set.add(k);
         (arr || []).forEach(x => set.add(x));
       }
     }
-    // singular/plural quick pass
-    if (t.endsWith('s')) set.add(t.slice(0, -1));
-    else set.add(`${t}s`);
+    if (t.endsWith('s')) set.add(t.slice(0, -1)); else set.add(`${t}s`);
   }
   return Array.from(set);
 }
 
-function scoreCategory(name, queryTokens, gender) {
-  const nameTokens = new Set(tokenize(name));
-  let hits = 0;
-  for (const qt of queryTokens) if (nameTokens.has(qt)) hits++;
+// ------------------------------
+// CORE CATEGORY FILTER (dynamic IDs from CSV names)
+// ------------------------------
+const CORE_CATEGORY_NAMES = [
+  'men','women','kids','home','electronics','ethnicwear','wellness','metals','food','gadgets','discover'
+];
 
-  // Jaccard-like + boosts
-  const base = hits / Math.max(1, nameTokens.size);
-  let score = base;
-
-  // gender boost if category name contains gender
-  if (gender && nameTokens.has(gender)) score += 0.2;
-
-  // if the exact product token (e.g., 't-shirt' or synonyms) appears, boost
-  const productHits = queryTokens.filter(q => nameTokens.has(q)).length;
-  score += Math.min(0.3, productHits * 0.05);
-
-  return score;
+function findCoreCategoryIds() {
+  const ids = new Set();
+  const names = categories.map(c => ({ id: c.id, name: normalize(c.name) }));
+  for (const term of CORE_CATEGORY_NAMES) {
+    for (const c of names) {
+      if (c.name.includes(term)) ids.add(categories.find(x => x.id === c.id).id);
+    }
+  }
+  return Array.from(ids);
 }
 
-function topCategoriesForQuery(query, gender, limit = 3) {
-  const qTokens = expandTokens(tokenize(query));
-  // also include gender token in query tokens so we bias toward gendered categories
-  if (gender) qTokens.push(gender);
+// ------------------------------
+// CATEGORY MATCHING (Top 3 relevant to user text)
+// ------------------------------
+function scoreCategoryByTokens(catName, queryTokens) {
+  const nameTokens = new Set(tokenize(catName));
+  let hits = 0;
+  for (const q of queryTokens) if (nameTokens.has(q)) hits++;
+  // Jaccard-ish
+  return hits / Math.max(1, nameTokens.size);
+}
 
+function top3RelevantCategories(userText) {
+  const qTokens = expandTokens(tokenize(userText));
   const scored = categories.map(c => ({
     id: c.id,
     name: c.name,
-    score: scoreCategory(c.name, qTokens, gender)
+    score: scoreCategoryByTokens(c.name, qTokens)
   }));
-
-  scored.sort((a, b) => b.score - a.score);
-  // keep those with meaningful score
-  const filtered = scored.filter(x => x.score >= 0.05).slice(0, limit);
-  return filtered;
+  scored.sort((a,b) => b.score - a.score);
+  // Keep non-zeroish matches; if none score >0, still return top 3 by score
+  const top = scored.filter(x => x.score > 0).slice(0,3);
+  return (top.length ? top : scored.slice(0,3));
 }
 
-function reverseSearchCategoriesViaGalleries(query, gender, limit = 3) {
-  const qTokens = expandTokens(tokenize(query));
-  if (gender) qTokens.push(gender);
-
-  // score galleries by presence of query tokens in type2
-  const galScores = new Map(); // key cat_id => score
-  for (const g of galleries) {
-    const t2Tokens = new Set(tokenize(g.type2));
-    const overlap = qTokens.reduce((acc, t) => acc + (t2Tokens.has(t) ? 1 : 0), 0);
-    if (overlap > 0) {
-      const ids = [g.cat_id, ...(g.cat1 || [])].filter(Number.isFinite);
-      for (const id of ids) {
-        galScores.set(id, (galScores.get(id) || 0) + overlap);
-      }
+// ------------------------------
+// PRODUCT KEYWORD → CATEGORY IDS (for cat1 filtering)
+// ------------------------------
+function productKeywordCategoryIds(userText) {
+  const tokens = expandTokens(tokenize(userText));
+  const matched = [];
+  for (const c of categories) {
+    const name = normalize(c.name);
+    for (const t of tokens) {
+      if (name.includes(t)) { matched.push(c.id); break; }
     }
   }
-  const ranked = Array.from(galScores.entries())
-    .map(([id, score]) => {
-      const found = categories.find(c => c.id === id);
-      const name = found ? found.name : `Category ${id}`;
-      // small gender boost if category name contains gender string
-      const gboost = found && gender && normalize(name).includes(gender) ? 0.2 : 0;
-      return { id, name, score: score + gboost };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-
-  return ranked;
+  return uniq(matched);
 }
 
 // ------------------------------
-// LINKS
+// GALLERIES FILTER PIPELINE (as per your spec)
+// 1) Start with galleries where cat_id ∈ coreCategoryIds
+// 2) From those, keep rows where cat1 intersects productKeywordCategoryIds
 // ------------------------------
-function linksForCategoryIds(catIds, limit = 3) {
-  const filtered = galleries.filter(
-    g => catIds.includes(g.cat_id) || (g.cat1 || []).some(c1 => catIds.includes(c1))
+function filterGalleriesBySpec(userText) {
+  const coreIds = findCoreCategoryIds();
+  const step1 = galleries.filter(g => coreIds.includes(g.cat_id));
+  if (step1.length === 0) return []; // No data under core categories
+
+  const prodIds = productKeywordCategoryIds(userText);
+  if (prodIds.length === 0) return []; // No product ids matched
+
+  const step2 = step1.filter(g =>
+    (g.cat1 || []).some(cid => prodIds.includes(cid))
   );
-  const uniqueType2 = [...new Set(filtered.map(g => g.type2).filter(Boolean))];
+
+  return step2;
+}
+
+// Fallbacks (if strict pipeline returns nothing)
+function fallbackByCat1Top3(userText) {
+  const top = top3RelevantCategories(userText).map(c => c.id);
+  return galleries.filter(g => (g.cat1 || []).some(cid => top.includes(cid)));
+}
+function fallbackByType2Contains(userText) {
+  const tokens = expandTokens(tokenize(userText));
+  return galleries.filter(g => {
+    const t2 = normalize(g.type2);
+    return tokens.some(t => t2.includes(t));
+  });
+}
+
+// ------------------------------
+// LINK BUILDER
+// ------------------------------
+function linksFromGalleries(rows, limit = 6) {
+  const uniqueType2 = uniq(rows.map(r => r.type2).filter(Boolean));
   return uniqueType2.slice(0, limit).map(t => `app.zulu.club/${encodeURIComponent(t)}`);
 }
 
 // ------------------------------
-// GALLABOX SENDER
+// GALLABOX SEND
 // ------------------------------
 async function sendMessage(to, name, message) {
   try {
@@ -244,106 +250,76 @@ async function sendMessage(to, name, message) {
 }
 
 // ------------------------------
-// GPT INTENT
+// GPT: PRODUCT vs COMPANY vs CASUAL
+// (We only need GPT to decide "product query" or not. All CSV logic is in code.)
 // ------------------------------
-async function getAIIntent(userMessage) {
+async function getIntent(userMessage) {
   const sys = `
-You are Zulu Club's router.
-- Detect: "greeting" | "company_info" | "product_search".
-- If product_search, detect gender: "men" | "women" | "kids" | null.
-- Reformulate query with gender if provided.
-Return ONLY JSON: {"intent": "...", "gender": "... or null", "query": "..."}
+You are a router. Classify the user's message into:
+- "product_search"
+- "company_info"
+- "greeting"
+
+Return ONLY JSON: {"intent":"..."}.
+
 Examples:
-{"intent":"product_search","gender":"men","query":"t-shirt for men"}
-{"intent":"greeting","gender":null,"query":"hi"}
-{"intent":"company_info","gender":null,"query":"what is Zulu?"}
-  `;
-  const resp = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: sys },
-      { role: 'user', content: userMessage }
-    ],
-    max_tokens: 150,
-    temperature: 0
-  });
-  let parsed = { intent: 'conversation', gender: null, query: userMessage };
+User: "hi" -> {"intent":"greeting"}
+User: "what is zulu" -> {"intent":"company_info"}
+User: "need a casual tee" -> {"intent":"product_search"}
+`;
   try {
-    parsed = JSON.parse(resp.choices[0].message.content.trim());
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: userMessage }
+      ],
+      temperature: 0,
+      max_tokens: 60
+    });
+    const parsed = JSON.parse(resp.choices[0].message.content.trim());
+    return parsed?.intent || 'product_search';
   } catch (e) {
-    console.warn('⚠️ Could not parse AI intent:', resp.choices[0].message.content);
+    // If GPT fails, assume product query (as you requested: product logic only)
+    return 'product_search';
   }
-  return parsed;
 }
 
 // ------------------------------
 // MAIN HANDLER
 // ------------------------------
 async function handleMessage(userPhone, userName, userMessage) {
-  const ai = await getAIIntent(userMessage);
-  console.log('🤖 AI interpretation:', ai);
+  const intent = await getIntent(userMessage);
+  console.log('🤖 Intent:', intent);
 
-  if (ai.intent === 'greeting') {
+  if (intent === 'greeting') {
     return sendMessage(userPhone, userName, 'Hey there 👋 How can I help you shop today?');
   }
-
-  if (ai.intent === 'company_info') {
-    return sendMessage(
-      userPhone,
-      userName,
-      `Welcome to *Zulu Club*! 🛍️ Premium lifestyle products delivered in *100 minutes*. Now live in *Gurgaon*. Explore: zulu.club`
-    );
+  if (intent === 'company_info') {
+    return sendMessage(userPhone, userName, `Welcome to *Zulu Club*! 🛍️ Premium lifestyle products delivered in *100 minutes*. Now live in *Gurgaon*. Explore: zulu.club`);
   }
 
-  if (ai.intent === 'product_search') {
-    if (!ai.gender) {
-      return sendMessage(userPhone, userName, 'For *men, women,* or *kids*? 👕👗👶');
-    }
+  // PRODUCT QUERY LOGIC (the pipeline you asked for)
+  let rows = filterGalleriesBySpec(userMessage);
 
-    // 1) Try fuzzy category match
-    const topCats = topCategoriesForQuery(ai.query, ai.gender, 3);
-    console.log('🔎 Category candidates:', topCats);
-
-    let catIds = topCats.map(c => c.id);
-    let links  = linksForCategoryIds(catIds, 3);
-
-    // 2) If nothing, reverse search via galleries' type2
-    if (links.length === 0) {
-      console.log('ℹ️ No links from category match. Trying reverse search via galleries...');
-      const revCats = reverseSearchCategoriesViaGalleries(ai.query, ai.gender, 3);
-      console.log('🔁 Reverse candidates:', revCats);
-      catIds = revCats.map(c => c.id);
-      links  = linksForCategoryIds(catIds, 3);
-    }
-
-    // 3) If still nothing, broaden using just product keyword (drop gender)
-    if (links.length === 0) {
-      console.log('↗️ Broadening search without gender token...');
-      const broadCats = topCategoriesForQuery(ai.query.replace(/\b(men|women|kids)\b/gi, '').trim(), null, 3);
-      console.log('🧭 Broad candidates:', broadCats);
-      catIds = broadCats.map(c => c.id);
-      links  = linksForCategoryIds(catIds, 3);
-    }
-
-    if (links.length > 0) {
-      return sendMessage(
-        userPhone,
-        userName,
-        `Here are *${ai.query}* picks for *${ai.gender}*:\n${links.join('\n')}\n\n🛒 More on app.zulu.club`
-      );
-    }
-
-    // Debug help in logs if all failed
-    console.warn('❌ No results after all strategies. Query:', ai.query, 'Gender:', ai.gender);
-    return sendMessage(
-      userPhone,
-      userName,
-      "Sorry, I couldn't find matching products right now. Try a different keyword (e.g., 'graphic tee', 'casual t-shirt')."
-    );
+  // Fallback 1: if nothing, try cat1 contains any of top3 relevant category ids
+  if (rows.length === 0) {
+    rows = fallbackByCat1Top3(userMessage);
   }
 
-  // Default
-  return sendMessage(userPhone, userName, 'Hi! Welcome to Zulu Club 🛍️ — what are you looking for today?');
+  // Fallback 2: if still nothing, try type2 contains keywords
+  if (rows.length === 0) {
+    rows = fallbackByType2Contains(userMessage);
+  }
+
+  const links = linksFromGalleries(rows, 6);
+
+  if (links.length > 0) {
+    const reply = `Here you go 👇\n${links.join('\n')}\n\n🛒 More on app.zulu.club`;
+    return sendMessage(userPhone, userName, reply);
+  }
+
+  return sendMessage(userPhone, userName, "Sorry, I couldn't find an exact match. Try a different keyword like 'graphic tee', 'jeans', or 'kurta'.");
 }
 
 // ------------------------------
@@ -373,8 +349,8 @@ app.post('/webhook', async (req, res) => {
 // ------------------------------
 app.get('/', (req, res) => {
   res.json({
-    status: '✅ Zulu Club AI Assistant running',
-    version: '5.0-robust',
+    status: '✅ Zulu Club Product Router running',
+    version: '6.0-product-pipeline',
     categoriesLoaded: categories.length,
     galleriesLoaded: galleries.length,
     timestamp: new Date().toISOString()
@@ -386,5 +362,5 @@ app.get('/', (req, res) => {
 // ------------------------------
 loadCSVData().then(() => {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`🚀 Zulu Club AI Assistant on ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Zulu Club Product Router on ${PORT}`));
 });
