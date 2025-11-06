@@ -236,7 +236,7 @@ async function loadAllCSVData() {
   }
 }
 
-// NEW: Function to detect gender from user message
+// NEW: Improved Gender Detection with priority for explicit mentions
 function detectGender(userMessage) {
   const msg = userMessage.toLowerCase();
   
@@ -246,28 +246,34 @@ function detectGender(userMessage) {
     'kids': 0
   };
 
-  // Score based on explicit gender mentions
+  // First pass: Check for explicit gender mentions with word boundaries
   Object.entries(GENDER_KEYWORDS).forEach(([gender, keywords]) => {
     keywords.forEach(keyword => {
-      if (msg.includes(keyword)) {
-        genderScores[gender] += 10;
+      // Use word boundary regex to avoid partial matches
+      const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+      if (regex.test(msg)) {
+        genderScores[gender] += 20; // Higher weight for explicit mentions
+        console.log(`✅ Explicit ${gender} mention detected: ${keyword}`);
       }
     });
   });
 
-  // Score based on product context (weaker signals)
-  if (msg.includes('shirt') || msg.includes('tshirt') || msg.includes('jeans') || msg.includes('watch')) {
-    genderScores.men += 2;
-    genderScores.women += 2;
-  }
+  // Second pass: Check for gender pronouns and context
+  const womenContext = ['her', 'she', 'female', 'lady', 'ladies'];
+  const menContext = ['his', 'he', 'male', 'gentleman', 'gentlemen'];
+  const kidsContext = ['child', 'children', 'baby', 'toddler', 'son', 'daughter'];
+
+  womenContext.forEach(word => {
+    if (msg.includes(word)) genderScores.women += 10;
+  });
   
-  if (msg.includes('dress') || msg.includes('makeup') || msg.includes('lipstick') || msg.includes('handbag')) {
-    genderScores.women += 5;
-  }
+  menContext.forEach(word => {
+    if (msg.includes(word)) genderScores.men += 10;
+  });
   
-  if (msg.includes('toy') || msg.includes('baby') || msg.includes('school')) {
-    genderScores.kids += 5;
-  }
+  kidsContext.forEach(word => {
+    if (msg.includes(word)) genderScores.kids += 10;
+  });
 
   // Find the gender with highest score
   const maxScore = Math.max(...Object.values(genderScores));
@@ -277,49 +283,73 @@ function detectGender(userMessage) {
     gender => genderScores[gender] === maxScore
   );
 
-  console.log(`🎯 Gender Detection:`, { scores: genderScores, detected: detectedGender });
+  console.log(`🎯 Gender Detection:`, { 
+    scores: genderScores, 
+    detected: detectedGender,
+    message: msg 
+  });
   return detectedGender;
 }
 
-// NEW: Function to ask gender clarification
+// NEW: Function to filter galleries by gender context
+function filterGalleriesByGender(galleries, gender) {
+  if (!gender) return galleries;
+
+  const genderPatterns = {
+    'men': [/men/i, /male/i, /boy/i, /guy/i, /gentleman/i],
+    'women': [/women/i, /female/i, /lady/i, /girl/i, /her/i, /she/i],
+    'kids': [/kids/i, /child/i, /children/i, /baby/i, /toddler/i, /boy/i, /girl/i]
+  };
+
+  const patterns = genderPatterns[gender] || [];
+  
+  return galleries.filter(gallery => {
+    // Check if gallery type2 matches gender patterns
+    const type2 = gallery.type2 || '';
+    return patterns.some(pattern => pattern.test(type2));
+  });
+}
+
+// NEW: Enhanced gender clarification that shows examples
 function askGenderClarification(productType) {
   const clarifications = {
-    'tshirt': `👕 Would you like T-shirts for Men, Women, or Kids?`,
-    'shirt': `👔 Looking for Men's Shirts or Women's Shirts?`,
-    'shoes': `👟 Are you looking for Shoes for Men, Women, or Kids?`,
-    'kurta': `👘 Interested in Men's Kurtas or Women's Kurtas?`,
-    'dress': `👗 Looking for Women's Dresses or Kids' Dresses?`,
-    'watch': `⌚ Want Watches for Men, Women, or Kids?`,
-    'bag': `👜 Looking for Bags for Men, Women, or Kids?`,
-    'default': `👕 Are you looking for this for Men, Women, or Kids?`
+    'tshirt': `👕 You asked for T-shirts. Should I show you:\n• Men's T-shirts\n• Women's T-shirts\n• Kids T-shirts\n\nPlease reply with "men", "women", or "kids"`,
+    'shirt': `👔 You asked for Shirts. Looking for:\n• Men's Shirts\n• Women's Shirts\n\nPlease reply with "men" or "women"`,
+    'shoes': `👟 You asked for Shoes. Should I show:\n• Men's Shoes\n• Women's Shoes\n• Kids Shoes\n\nPlease reply with "men", "women", or "kids"`,
+    'kurta': `👘 You asked for Kurtas. Interested in:\n• Men's Kurtas\n• Women's Kurtas\n\nPlease reply with "men" or "women"`,
+    'dress': `👗 You asked for Dresses. Looking for:\n• Women's Dresses\n• Kids Dresses\n\nPlease reply with "women" or "kids"`,
+    'watch': `⌚ You asked for Watches. Want:\n• Men's Watches\n• Women's Watches\n• Kids Watches\n\nPlease reply with "men", "women", or "kids"`,
+    'bag': `👜 You asked for Bags. Should I show:\n• Men's Bags\n• Women's Bags\n• Kids Bags\n\nPlease reply with "men", "women", or "kids"`,
+    'default': `👕 You asked for ${productType}. Should I show you options for:\n• Men\n• Women\n• Kids\n\nPlease reply with "men", "women", or "kids"`
   };
 
   return clarifications[productType] || clarifications.default;
 }
-
-// NEW: Function to detect product type for clarification
+// NEW: Improved product type detection for clarification
 function detectProductTypeForClarification(userMessage) {
   const msg = userMessage.toLowerCase();
   
   const productTypes = {
-    'tshirt': ['tshirt', 't-shirt', 'tee'],
-    'shirt': ['shirt', 'formal shirt', 'casual shirt'],
-    'shoes': ['shoes', 'footwear', 'sneakers', 'heels', 'sandals'],
-    'kurta': ['kurta', 'kurti', 'ethnic wear'],
-    'dress': ['dress', 'gown', 'frock'],
-    'watch': ['watch', 'wristwatch'],
-    'bag': ['bag', 'handbag', 'backpack', 'purse']
+    'tshirt': ['tshirt', 't-shirt', 'tee', 't shirt'],
+    'shirt': ['shirt', 'formal shirt', 'casual shirt', 'dress shirt'],
+    'shoes': ['shoes', 'footwear', 'sneakers', 'heels', 'sandals', 'boots'],
+    'kurta': ['kurta', 'kurti', 'ethnic wear', 'traditional wear'],
+    'dress': ['dress', 'gown', 'frock', 'evening dress'],
+    'watch': ['watch', 'wristwatch', 'timepiece'],
+    'bag': ['bag', 'handbag', 'backpack', 'purse', 'clutch']
   };
 
   for (const [productType, keywords] of Object.entries(productTypes)) {
-    if (keywords.some(keyword => msg.includes(keyword))) {
+    if (keywords.some(keyword => {
+      const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+      return regex.test(msg);
+    })) {
       return productType;
     }
   }
   
   return 'default';
 }
-
 // NEW: Enhanced function to detect product categories with gender context
 async function detectProductCategoriesWithGender(userMessage, contextGender = null) {
   try {
@@ -422,7 +452,7 @@ async function detectProductCategoriesWithGender(userMessage, contextGender = nu
   }
 }
 
-// NEW: Enhanced product link generation with gender context
+// NEW: Enhanced product link generation with strict gender filtering
 async function generateProductLinksWithGender(userMessage, contextGender = null) {
   try {
     // Wait for CSV data to be loaded
@@ -446,7 +476,6 @@ async function generateProductLinksWithGender(userMessage, contextGender = null)
 
     console.log(`🎯 Will try ${detectedCategories.length} GPT-recommended categories in order of relevance:`, detectedCategories);
 
-    // Rest of the function remains the same as your existing generateProductLinks function
     let successfulCategory = null;
     let matchingGalleries = [];
     let triedCategories = [];
@@ -469,13 +498,20 @@ async function generateProductLinksWithGender(userMessage, contextGender = null)
       console.log(`🔄 Trying GPT-recommended category: ${category.name} (ID: ${category.id})`);
       
       // Find galleries for this category
-      const galleriesForCategory = galleriesData.filter(g => {
+      let galleriesForCategory = galleriesData.filter(g => {
         if (Array.isArray(g.cat1)) {
           return g.cat1.includes(category.id);
         } else {
           return g.cat1 === category.id;
         }
       });
+
+      // NEW: Apply gender filtering if gender context is provided
+      if (contextGender && galleriesForCategory.length > 0) {
+        const originalCount = galleriesForCategory.length;
+        galleriesForCategory = filterGalleriesByGender(galleriesForCategory, contextGender);
+        console.log(`🎯 Gender filtering: ${originalCount} → ${galleriesForCategory.length} galleries for ${contextGender}`);
+      }
       
       if (galleriesForCategory.length > 0) {
         console.log(`✅ Found ${galleriesForCategory.length} galleries for category: ${category.name}`);
@@ -563,13 +599,20 @@ async function generateProductLinksWithGender(userMessage, contextGender = null)
         triedCategories.push(`${category.name} (score: ${category.score})`);
         console.log(`🔄 Fallback: ${category.name} (score: ${category.score})`);
         
-        const galleriesForCategory = galleriesData.filter(g => {
+        let galleriesForCategory = galleriesData.filter(g => {
           if (Array.isArray(g.cat1)) {
             return g.cat1.includes(category.id);
           } else {
             return g.cat1 === category.id;
           }
         });
+
+        // NEW: Apply gender filtering for fallback too
+        if (contextGender && galleriesForCategory.length > 0) {
+          const originalCount = galleriesForCategory.length;
+          galleriesForCategory = filterGalleriesByGender(galleriesForCategory, contextGender);
+          console.log(`🎯 Gender filtering (fallback): ${originalCount} → ${galleriesForCategory.length} galleries for ${contextGender}`);
+        }
         
         if (galleriesForCategory.length > 0) {
           console.log(`🎉 Fallback success with category: ${category.name}`);
@@ -619,7 +662,7 @@ async function generateProductLinksWithGender(userMessage, contextGender = null)
       gptCategories: detectedCategories,
       method: successfulCategory ? 'gpt_recommendation' : 'similarity_fallback',
       categoriesWithGalleries: allGalleriesFromAllCategories.length,
-      genderContext: contextGender // NEW: Include gender context in response
+      genderContext: contextGender
     };
 
   } catch (error) {
@@ -1055,7 +1098,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 }
 
-// NEW: Enhanced message handler with gender clarification
+// Update the handleMessage function to use improved gender detection
 async function handleMessage(sessionId, userMessage) {
   try {
     // Initialize conversation if not exists
@@ -1074,15 +1117,24 @@ async function handleMessage(sessionId, userMessage) {
       const genderResponse = userMessage.toLowerCase();
       let selectedGender = null;
 
-      // Map user response to gender
-      if (GENDER_KEYWORDS.men.some(keyword => genderResponse.includes(keyword))) {
+      // Map user response to gender with exact matching
+      if (GENDER_KEYWORDS.men.some(keyword => {
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        return regex.test(genderResponse);
+      })) {
         selectedGender = 'men';
-      } else if (GENDER_KEYWORDS.women.some(keyword => genderResponse.includes(keyword))) {
+      } else if (GENDER_KEYWORDS.women.some(keyword => {
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        return regex.test(genderResponse);
+      })) {
         selectedGender = 'women';  
-      } else if (GENDER_KEYWORDS.kids.some(keyword => genderResponse.includes(keyword))) {
+      } else if (GENDER_KEYWORDS.kids.some(keyword => {
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        return regex.test(genderResponse);
+      })) {
         selectedGender = 'kids';
       } else {
-        // If unclear response, ask again
+        // If unclear response, ask again with examples
         const productType = detectProductTypeForClarification(conversations[sessionId].originalQuery);
         const clarification = askGenderClarification(productType);
         
@@ -1142,6 +1194,7 @@ async function handleMessage(sessionId, userMessage) {
     const productType = detectProductTypeForClarification(userMessage);
     
     // If gender is ambiguous for this product type, ask for clarification
+    // Even if gender is detected, if it's a generic product, we might want to confirm
     const needsGenderClarification = !detectedGender && productType !== 'default';
     
     if (needsGenderClarification) {
@@ -1195,8 +1248,6 @@ async function handleMessage(sessionId, userMessage) {
     return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery in Gurgaon!";
   }
 }
-
-// Webhook endpoint to receive messages
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
