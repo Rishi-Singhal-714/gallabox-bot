@@ -86,7 +86,7 @@ let isCSVLoaded = false;
 let csvLoadAttempts = 0;
 const MAX_CSV_ATTEMPTS = 10;
 
-// NEW: Function to load CSV from GitHub raw content
+// Update the loadCSVFromGitHub function for galleries1.csv
 async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
   try {
     console.log(`📥 Loading CSV from: ${csvUrl}`);
@@ -107,10 +107,32 @@ async function loadCSVFromGitHub(csvUrl, isGalleries = false) {
           if (isGalleries) {
             // For galleries1.csv, we need cat1 and type2 columns
             if (data.cat1 && data.type2) {
-              results.push({
-                cat1: data.cat1.trim(),
-                type2: data.type2.trim()
-              });
+              // Parse cat1 which can be in different formats:
+              // Format 1: ["1921", "1922", "1933", "1936", "1939", "1955"]
+              // Format 2: [1921,1922,1989,1993]
+              let cat1Array = [];
+              
+              try {
+                // Try to parse as JSON array first
+                if (data.cat1.startsWith('[') && data.cat1.endsWith(']')) {
+                  // Remove brackets and parse
+                  const cleanCat1 = data.cat1.replace(/[\[\]"]/g, '');
+                  cat1Array = cleanCat1.split(',').map(item => item.trim()).filter(item => item);
+                } else {
+                  // Try direct split by comma
+                  cat1Array = data.cat1.split(',').map(item => item.trim()).filter(item => item);
+                }
+              } catch (error) {
+                console.log(`❌ Error parsing cat1: ${data.cat1}`, error);
+                cat1Array = [];
+              }
+              
+              if (cat1Array.length > 0) {
+                results.push({
+                  cat1: cat1Array, // Store as array of category IDs
+                  type2: data.type2.trim()
+                });
+              }
             }
           } else {
             // For categories1.csv, we need id and name columns
