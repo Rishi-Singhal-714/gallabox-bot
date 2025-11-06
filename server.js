@@ -9,7 +9,7 @@ const app = express();
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
+f
 // Gallabox API configuration - use environment variables
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
@@ -283,7 +283,7 @@ async function detectProductCategory(userMessage) {
   }
 }
 
-// NEW: Function to find ALL matching galleries and generate multiple links
+// NEW: Function to find ALL matching galleries and generate multiple links with fallback categories
 async function generateProductLinks(userMessage) {
   try {
     // Wait for CSV data to be loaded
@@ -305,35 +305,75 @@ async function generateProductLinks(userMessage) {
       return null;
     }
 
-    // Find the category in categories1.csv
-    const category = categoriesData.find(cat => 
-      cat.name.toLowerCase().includes(detectedCategory.toLowerCase()) ||
-      detectedCategory.toLowerCase().includes(cat.name.toLowerCase())
-    );
+    console.log(`🤖 Initially detected category: "${detectedCategory}"`);
 
-    if (!category) {
-      console.log(`❌ Category "${detectedCategory}" not found in categories data`);
-      return null;
-    }
-
-    console.log(`✅ Found category: ${category.name} (ID: ${category.id})`);
-
-    // Find ALL matching gallery entries - now checking if cat1 array includes our category ID
-    const matchingGalleries = galleriesData.filter(g => {
-      if (Array.isArray(g.cat1)) {
-        return g.cat1.includes(category.id);
-      } else {
-        return g.cat1 === category.id;
-      }
+    // Find ALL potential matching categories (not just exact matches)
+    const potentialCategories = categoriesData.filter(cat => {
+      const catNameLower = cat.name.toLowerCase();
+      const detectedLower = detectedCategory.toLowerCase();
+      
+      // Multiple matching strategies:
+      return (
+        // Exact match
+        catNameLower === detectedLower ||
+        // Contains match (either way)
+        catNameLower.includes(detectedLower) ||
+        detectedLower.includes(catNameLower) ||
+        // Word boundary matches
+        catNameLower.split(' ').some(word => detectedLower.includes(word)) ||
+        detectedLower.split(' ').some(word => catNameLower.includes(word)) ||
+        // Common variations (like "home decor" vs "homedecor")
+        catNameLower.replace(/\s+/g, '') === detectedLower.replace(/\s+/g, '') ||
+        // Partial matches for compound categories
+        (detectedLower.length > 3 && (
+          catNameLower.includes(detectedLower) ||
+          detectedLower.includes(catNameLower)
+        ))
+      );
     });
-    
-    if (matchingGalleries.length === 0) {
-      console.log(`❌ No gallery data found for category ID: ${category.id}`);
-      console.log(`🔍 Available cat1 arrays in galleries:`, galleriesData.slice(0, 5).map(g => g.cat1));
+
+    if (potentialCategories.length === 0) {
+      console.log(`❌ No potential categories found for: "${detectedCategory}"`);
       return null;
     }
 
-    console.log(`🎯 Found ${matchingGalleries.length} matching galleries for category ${category.name}`);
+    console.log(`🎯 Found ${potentialCategories.length} potential categories for "${detectedCategory}":`, 
+      potentialCategories.map(cat => `${cat.name} (${cat.id})`));
+
+    // Try each potential category until we find one with galleries
+    let successfulCategory = null;
+    let matchingGalleries = [];
+    let triedCategories = [];
+
+    for (const category of potentialCategories) {
+      triedCategories.push(category.name);
+      console.log(`🔄 Trying category: ${category.name} (ID: ${category.id})`);
+      
+      // Find galleries for this category
+      const galleriesForCategory = galleriesData.filter(g => {
+        if (Array.isArray(g.cat1)) {
+          return g.cat1.includes(category.id);
+        } else {
+          return g.cat1 === category.id;
+        }
+      });
+      
+      if (galleriesForCategory.length > 0) {
+        console.log(`✅ Found ${galleriesForCategory.length} galleries for category: ${category.name}`);
+        successfulCategory = category;
+        matchingGalleries = galleriesForCategory;
+        break;
+      } else {
+        console.log(`❌ No galleries found for category: ${category.name}`);
+      }
+    }
+
+    if (!successfulCategory) {
+      console.log(`💥 No galleries found for any of the ${triedCategories.length} potential categories:`, triedCategories);
+      return null;
+    }
+
+    console.log(`🎉 Using category: ${successfulCategory.name} with ${matchingGalleries.length} galleries`);
 
     // Generate multiple links from all matching galleries
     const productLinks = matchingGalleries.map(gallery => {
@@ -341,10 +381,10 @@ async function generateProductLinks(userMessage) {
       const productLink = `app.zulu.club/${encodedType2}`;
       
       return {
-        category: category.name,
+        category: successfulCategory.name,
         link: productLink,
         type2: gallery.type2,
-        categoryId: category.id
+        categoryId: successfulCategory.id
       };
     });
 
@@ -359,9 +399,11 @@ async function generateProductLinks(userMessage) {
     });
     
     return {
-      category: category.name,
+      category: successfulCategory.name,
       links: uniqueLinks,
-      totalMatches: matchingGalleries.length
+      totalMatches: matchingGalleries.length,
+      triedCategories: triedCategories,
+      finalCategory: successfulCategory.name
     };
 
   } catch (error) {
@@ -374,7 +416,15 @@ async function generateProductLinks(userMessage) {
 async function createProductResponse(userMessage, productLinksInfo) {
   try {
     if (!process.env.OPENAI_API_KEY) {
-      let response = `Great choice! Check out our ${productLinksInfo.category} collections:\n\n`;
+      let response = `Great choice! `;
+      
+      // Mention if we used a fallback category
+      if (productLinksInfo.triedCategories && productLinksInfo.triedCategories.length > 1) {
+        response += `I found ${productLinksInfo.links.length} collections in our ${productLinksInfo.category} category`;
+      } else {
+        response += `Check out our ${productLinksInfo.category} collections:\n\n`;
+      }
+      
       productLinksInfo.links.forEach(link => {
         response += `• ${link.link}\n`;
       });
@@ -403,7 +453,9 @@ async function createProductResponse(userMessage, productLinksInfo) {
           
           Product Links: ${productLinksInfo.links.map(link => link.link).join(', ')}
           Category: ${productLinksInfo.category}
-          Total Collections: ${productLinksInfo.links.length}`
+          Total Collections: ${productLinksInfo.links.length}
+          ${productLinksInfo.triedCategories && productLinksInfo.triedCategories.length > 1 ? 
+            `Note: Found results in category "${productLinksInfo.finalCategory}" after checking multiple similar categories.` : ''}`
         },
         {
           role: "user",
@@ -1017,6 +1069,77 @@ app.get('/categories', (req, res) => {
     total_categories: Object.keys(CATEGORIES).length,
     approach: 'Dual-mode: AI-driven category display + CSV-based multi-link product detection'
   });
+});
+
+// NEW: Debug endpoint to see category matching for any product
+app.get('/debug-category-matching/:productQuery', async (req, res) => {
+  try {
+    const productQuery = req.params.productQuery;
+    
+    // Detect category
+    const detectedCategory = await detectProductCategory(productQuery);
+    
+    if (!detectedCategory) {
+      return res.json({
+        productQuery,
+        detectedCategory: null,
+        message: 'No category detected'
+      });
+    }
+
+    // Find ALL potential matching categories
+    const potentialCategories = categoriesData.filter(cat => {
+      const catNameLower = cat.name.toLowerCase();
+      const detectedLower = detectedCategory.toLowerCase();
+      
+      return (
+        catNameLower === detectedLower ||
+        catNameLower.includes(detectedLower) ||
+        detectedLower.includes(catNameLower) ||
+        catNameLower.split(' ').some(word => detectedLower.includes(word)) ||
+        detectedLower.split(' ').some(word => catNameLower.includes(word)) ||
+        catNameLower.replace(/\s+/g, '') === detectedLower.replace(/\s+/g, '') ||
+        (detectedLower.length > 3 && (
+          catNameLower.includes(detectedLower) ||
+          detectedLower.includes(catNameLower)
+        ))
+      );
+    });
+
+    // Check galleries for each potential category
+    const categoryResults = potentialCategories.map(category => {
+      const galleriesForCategory = galleriesData.filter(g => {
+        if (Array.isArray(g.cat1)) {
+          return g.cat1.includes(category.id);
+        } else {
+          return g.cat1 === category.id;
+        }
+      });
+      
+      return {
+        category: category.name,
+        categoryId: category.id,
+        galleriesFound: galleriesForCategory.length,
+        galleries: galleriesForCategory.slice(0, 5), // First 5 galleries
+        links: galleriesForCategory.map(g => `app.zulu.club/${g.type2.replace(/ /g, '%20')}`)
+      };
+    });
+
+    res.json({
+      productQuery,
+      detectedCategory,
+      potentialCategories: potentialCategories.map(c => `${c.name} (${c.id})`),
+      categoryResults,
+      successfulCategories: categoryResults.filter(r => r.galleriesFound > 0),
+      totalPotentialCategories: potentialCategories.length,
+      totalSuccessfulCategories: categoryResults.filter(r => r.galleriesFound > 0).length
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
 });
 
 // Test endpoint to send a message manually
