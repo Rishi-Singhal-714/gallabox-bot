@@ -145,16 +145,17 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Get category data for GPT
-function getCategoriesForGPT() {
-  return categoriesData.map(cat => `${cat.id}: ${cat.name}`).join('\n');
+// Get ACTUAL category names for GPT reference
+function getActualCategoryNames() {
+  return categoriesData.map(cat => `- ${cat.name} (ID: ${cat.id})`).join('\n');
 }
 
-// Get galleries data for GPT
-function getGalleriesForGPT() {
-  return galleriesData.map(gallery => 
-    `cat_id: ${gallery.cat_id}, type2: ${gallery.type2}, cat1: [${gallery.cat1.join(', ')}]`
-  ).join('\n');
+// Find categories by search term
+function searchCategories(searchTerm) {
+  const term = searchTerm.toLowerCase();
+  return categoriesData.filter(cat => 
+    cat.name.toLowerCase().includes(term)
+  ).slice(0, 3); // Return top 3 matches
 }
 
 // Find galleries by category IDs
@@ -179,7 +180,7 @@ function findGalleriesByCategoryIds(categoryIds) {
   return uniqueGalleries.slice(0, 6);
 }
 
-// Generate gallery links
+// Generate gallery links from ACTUAL galleries
 function generateGalleryLinks(galleries) {
   return galleries.map(gallery => {
     const encodedType2 = gallery.type2.replace(/\s+/g, '%20');
@@ -187,74 +188,81 @@ function generateGalleryLinks(galleries) {
   });
 }
 
-// MAIN GPT FUNCTION - HANDLES EVERYTHING
+// MAIN GPT FUNCTION - WITH STRICT CATEGORY ENFORCEMENT
 async function getGPTResponseWithCategories(userMessage, conversationHistory = []) {
   if (!process.env.OPENAI_API_KEY) {
-    return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club for assistance.";
+    return {
+      response: "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club for assistance.",
+      category_ids: [],
+      needs_gender_clarification: false
+    };
   }
   
   try {
-    // Prepare category and gallery data for GPT
-    const categoryData = getCategoriesForGPT();
-    const galleryData = getGalleriesForGPT();
+    // Get ACTUAL category data
+    const actualCategories = getActualCategoryNames();
     
     const messages = [];
     
-    // System message with ALL data and processing instructions
+    // STRICT system message - GPT MUST use only actual categories
     const systemMessage = {
       role: "system",
-      content: `You are Zulu Club's AI shopping assistant. You have access to our complete product catalog and category system.
+      content: `You are Zulu Club's AI shopping assistant. You MUST use ONLY the actual categories and galleries from our database.
 
 ZULU CLUB INFORMATION:
 ${ZULU_CLUB_INFO}
 
-CATEGORIES DATA (id: name):
-${categoryData}
+ACTUAL CATEGORIES AVAILABLE (YOU MUST USE ONLY THESE):
+${actualCategories}
 
-GALLERIES DATA (cat_id, type2, cat1):
-${galleryData}
+CRITICAL RULES - YOU MUST FOLLOW THESE:
 
-PROCESSING INSTRUCTIONS - FOLLOW THESE EXACTLY:
+1. **USE ONLY ACTUAL CATEGORIES**: You can ONLY use the categories listed above. Do NOT invent or create new category names.
 
-1. **ANALYZE EVERY USER MESSAGE** - Determine if it's about products, company info, or general chat
+2. **CATEGORY MATCHING PROCESS**:
+   - Analyze the user's query and find the MOST RELEVANT categories from the actual list above
+   - Return the EXACT category IDs from the list
+   - If no exact match, find the closest relevant categories
 
-2. **FOR PRODUCT INQUIRIES**:
-   - First identify the product type (tshirt, dress, shoes, etc.)
-   - Determine if gender context is needed
-   - If gender is ambiguous (tshirt, shoes, etc.), ask "For men, women, or kids?"
-   - If gender is clear (lehenga = women, etc.), proceed directly
+3. **GENDER HANDLING**:
+   - If the product is gender-ambiguous (tshirt, shoes, etc.), set needs_gender_clarification: true
+   - If gender is clear (lehenga = women, etc.), proceed with category matching
 
-3. **CATEGORY MATCHING**:
-   - Search through categories and find the TOP 3 most relevant category IDs
-   - Use semantic matching - don't just look for exact words
-   - Consider gender context when matching
-   - Return category IDs in this format: [ID1, ID2, ID3]
-
-4. **GALLERY LINK GENERATION**:
-   - Use the category IDs to find matching galleries
-   - Generate gallery links in format: app.zulu.club/{type2} (replace spaces with %20)
-   - Return 3-6 most relevant gallery links
-
-5. **RESPONSE FORMAT**:
-   - Keep responses under 400 characters for WhatsApp
-   - Use emojis to make it engaging
-   - Include relevant gallery links when showing products
-   - Be conversational and helpful
-
-6. **GENDER HANDLING EXAMPLES**:
-   - "I need tshirt" → Ask "For men, women, or kids?"
-   - "I want lehenga" → Directly show women's fashion categories
-   - "shoes for men" → Directly show men's footwear
-
-ALWAYS RESPOND IN THIS EXACT FORMAT:
+4. **RESPONSE FORMAT - YOU MUST RETURN VALID JSON**:
 {
-  "response": "Your friendly response to the user",
-  "category_ids": ["id1", "id2", "id3"],
-  "needs_gender_clarification": true/false,
-  "gallery_links": ["link1", "link2", "link3"]
+  "response": "Your response text here - be helpful and mention you'll show relevant categories",
+  "category_ids": ["123", "456", "789"],
+  "needs_gender_clarification": false
 }
 
-IMPORTANT: You MUST return valid JSON with these exact fields.`
+5. **GALLERY LINKS**: Do NOT generate gallery links in your response. We will automatically add them based on the category IDs you provide.
+
+6. **IF NO MATCHES FOUND**: If you cannot find relevant categories, return empty category_ids and suggest browsing the main site.
+
+EXAMPLES OF PROPER RESPONSES:
+
+User: "I need tshirt"
+{
+  "response": "I'd love to help you find t-shirts! Could you let me know if this is for men, women, or kids? 👕",
+  "category_ids": [],
+  "needs_gender_clarification": true
+}
+
+User: "I want tshirt for men"
+{
+  "response": "Great! Let me find men's t-shirts for you from our available categories.",
+  "category_ids": ["123", "456", "789"],
+  "needs_gender_clarification": false
+}
+
+User: "Show me home decor"
+{
+  "response": "I'll help you explore our home decor collection!",
+  "category_ids": ["101", "102", "103"],
+  "needs_gender_clarification": false
+}
+
+REMEMBER: You MUST return valid JSON and use ONLY the actual category IDs from the list above.`
     };
     
     messages.push(systemMessage);
@@ -278,60 +286,70 @@ IMPORTANT: You MUST return valid JSON with these exact fields.`
       content: userMessage
     });
     
-    console.log('🤖 Sending to GPT with categories and galleries data...');
+    console.log('🤖 Sending to GPT with strict category enforcement...');
     
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: messages,
       max_tokens: 500,
-      temperature: 0.7
+      temperature: 0.3  // Lower temperature for more consistent responses
     });
     
     const gptResponse = completion.choices[0].message.content.trim();
     
     console.log('🤖 Raw GPT response:', gptResponse);
     
-    // Parse GPT's JSON response
+    // Try to parse JSON response
     try {
-      const parsedResponse = JSON.parse(gptResponse);
+      // Clean the response - remove any non-JSON text
+      const jsonMatch = gptResponse.match(/\{[\s\S]*\}/);
+      const cleanJson = jsonMatch ? jsonMatch[0] : gptResponse;
       
-      // If GPT found category IDs, get the actual galleries
+      const parsedResponse = JSON.parse(cleanJson);
+      
+      // Validate that category_ids are from our actual data
       if (parsedResponse.category_ids && parsedResponse.category_ids.length > 0) {
-        const galleries = findGalleriesByCategoryIds(parsedResponse.category_ids);
-        const galleryLinks = generateGalleryLinks(galleries);
+        const validCategoryIds = parsedResponse.category_ids.filter(catId => 
+          categoriesData.some(cat => cat.id === catId)
+        );
         
-        // Add gallery links to the response
-        if (galleryLinks.length > 0 && !parsedResponse.needs_gender_clarification) {
-          let enhancedResponse = parsedResponse.response;
-          
-          // Add gallery links to the response text
-          if (!enhancedResponse.includes('app.zulu.club')) {
-            enhancedResponse += `\n\n🎨 *Browse related products:*\n`;
-            galleryLinks.forEach(link => {
-              enhancedResponse += `• ${link}\n`;
-            });
-          }
-          
-          return {
-            response: enhancedResponse,
-            needs_gender_clarification: parsedResponse.needs_gender_clarification || false,
-            category_ids: parsedResponse.category_ids,
-            gallery_links: galleryLinks
-          };
+        // If GPT returned invalid category IDs, log warning and use only valid ones
+        if (validCategoryIds.length !== parsedResponse.category_ids.length) {
+          console.warn('⚠️ GPT returned invalid category IDs, filtering to valid ones only');
+          parsedResponse.category_ids = validCategoryIds;
         }
       }
       
       return parsedResponse;
       
     } catch (parseError) {
-      console.error('❌ GPT returned invalid JSON, using fallback:', parseError);
-      // Fallback: GPT didn't return proper JSON, use the response as is
-      return {
-        response: gptResponse,
-        category_ids: [],
-        needs_gender_clarification: false,
-        gallery_links: []
-      };
+      console.error('❌ GPT returned invalid JSON, using category search fallback:', parseError);
+      
+      // FALLBACK: Search categories directly from user message
+      const searchTerm = userMessage.toLowerCase();
+      const matchedCategories = searchCategories(searchTerm);
+      
+      let fallbackResponse = "I'd love to help you find products! ";
+      
+      if (matchedCategories.length > 0) {
+        fallbackResponse += "Here are some relevant categories I found:\n";
+        matchedCategories.forEach(cat => {
+          fallbackResponse += `• ${cat.name}\n`;
+        });
+        fallbackResponse += "\nLet me get the gallery links for you!";
+        
+        return {
+          response: fallbackResponse,
+          category_ids: matchedCategories.map(cat => cat.id),
+          needs_gender_clarification: false
+        };
+      } else {
+        return {
+          response: "I'd love to help you browse our products! Please visit app.zulu.club to explore our full collection, or tell me more specifically what you're looking for. 🛍️",
+          category_ids: [],
+          needs_gender_clarification: false
+        };
+      }
     }
     
   } catch (error) {
@@ -339,13 +357,12 @@ IMPORTANT: You MUST return valid JSON with these exact fields.`
     return {
       response: "Hi! I'm here to help you with Zulu Club products. What are you looking for today? 🛍️",
       category_ids: [],
-      needs_gender_clarification: false,
-      gallery_links: []
+      needs_gender_clarification: false
     };
   }
 }
 
-// Handle user message - EVERYTHING goes through GPT
+// Handle user message
 async function handleMessage(sessionId, userMessage) {
   try {
     // Initialize conversation if not exists
@@ -361,7 +378,7 @@ async function handleMessage(sessionId, userMessage) {
     // Check if we're waiting for gender clarification
     if (conversation.pendingGenderClarification) {
       // Combine the original query with the gender response
-      const combinedMessage = `${conversation.pendingGenderClarification} - ${userMessage}`;
+      const combinedMessage = `${userMessage} for ${conversation.pendingGenderClarification}`;
       
       // Add to history
       conversation.history.push({
@@ -380,14 +397,30 @@ async function handleMessage(sessionId, userMessage) {
       // Process with GPT
       const gptResult = await getGPTResponseWithCategories(combinedMessage, conversation.history);
       
-      // Add GPT response to history
+      // Add gallery links if we have category IDs
+      let finalResponse = gptResult.response;
+      if (gptResult.category_ids && gptResult.category_ids.length > 0 && !gptResult.needs_gender_clarification) {
+        const galleries = findGalleriesByCategoryIds(gptResult.category_ids);
+        const galleryLinks = generateGalleryLinks(galleries);
+        
+        if (galleryLinks.length > 0) {
+          finalResponse += `\n\n🛍️ *Browse these galleries:*\n`;
+          galleryLinks.forEach(link => {
+            finalResponse += `• ${link}\n`;
+          });
+        }
+        
+        finalResponse += `\n🚀 *100-minute delivery* | 💫 *Try at home*`;
+      }
+      
+      // Add to history
       conversation.history.push({
         role: "assistant",
-        content: gptResult.response
+        content: finalResponse
       });
       
       conversation.pendingGenderClarification = null;
-      return gptResult.response;
+      return finalResponse;
     }
     
     // Add user message to history
@@ -396,24 +429,41 @@ async function handleMessage(sessionId, userMessage) {
       content: userMessage
     });
     
-    // ALWAYS send to GPT with all data
+    // Get GPT response
     const gptResult = await getGPTResponseWithCategories(userMessage, conversation.history);
     
     console.log('🤖 GPT Result:', {
       needsGender: gptResult.needs_gender_clarification,
       categoryIds: gptResult.category_ids,
-      galleryLinks: gptResult.gallery_links
+      validCategories: gptResult.category_ids ? gptResult.category_ids.map(id => {
+        const cat = categoriesData.find(c => c.id === id);
+        return cat ? `${id}: ${cat.name}` : `${id}: INVALID`;
+      }) : []
     });
+    
+    let finalResponse = gptResult.response;
     
     // If GPT says we need gender clarification, store the original query
     if (gptResult.needs_gender_clarification) {
       conversation.pendingGenderClarification = userMessage;
+    } else if (gptResult.category_ids && gptResult.category_ids.length > 0) {
+      // Add actual gallery links from our data
+      const galleries = findGalleriesByCategoryIds(gptResult.category_ids);
+      const galleryLinks = generateGalleryLinks(galleries);
+      
+      if (galleryLinks.length > 0) {
+        finalResponse += `\n\n🛍️ *Browse these galleries:*\n`;
+        galleryLinks.forEach(link => {
+          finalResponse += `• ${link}\n`;
+        });
+        finalResponse += `\n🚀 *100-minute delivery* | 💫 *Try at home*`;
+      }
     }
     
-    // Add GPT response to history
+    // Add final response to history
     conversation.history.push({
       role: "assistant",
-      content: gptResult.response
+      content: finalResponse
     });
     
     // Keep history manageable
@@ -421,11 +471,11 @@ async function handleMessage(sessionId, userMessage) {
       conversation.history = conversation.history.slice(-10);
     }
     
-    return gptResult.response;
+    return finalResponse;
     
   } catch (error) {
     console.error('❌ Error handling message:', error);
-    return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products with 100-minute delivery!";
+    return "Hello! Thanks for reaching out to Zulu Club. Please visit zulu.club to explore our premium lifestyle products!";
   }
 }
 
@@ -447,7 +497,7 @@ app.post('/webhook', async (req, res) => {
       // Use phone number as session ID
       const sessionId = userPhone;
       
-      // Get AI response - EVERYTHING goes through GPT
+      // Get AI response
       const aiResponse = await handleMessage(sessionId, userMessage);
       
       // Send response via Gallabox
@@ -478,23 +528,23 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - GPT-First Everything',
+    version: '6.0 - Strict Category Enforcement',
     features: {
-      gpt_first: 'ALL messages processed by GPT',
-      dynamic_categories: 'CSV-based category system',
-      automatic_galleries: 'GPT finds galleries from categories',
-      gender_handling: 'GPT determines when to ask for gender',
-      json_structured: 'GPT returns structured responses'
+      strict_categories: 'GPT can ONLY use actual categories from CSV',
+      actual_galleries: 'Only real gallery links from your data',
+      json_validation: 'Automatic JSON parsing and validation',
+      category_filtering: 'Filters out invalid category IDs'
     },
     data_loaded: {
       categories: categoriesData.length,
       galleries: galleriesData.length
     },
+    sample_categories: categoriesData.slice(0, 5).map(c => `${c.id}: ${c.name}`),
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
-      test_message: 'POST /send-test-message',
-      categories: 'GET /categories'
+      categories: 'GET /categories',
+      search: 'GET /search/:query'
     },
     timestamp: new Date().toISOString()
   });
@@ -504,7 +554,6 @@ app.get('/', (req, res) => {
 app.get('/categories', (req, res) => {
   res.json({
     categories: categoriesData,
-    galleries: galleriesData.slice(0, 50),
     totals: {
       categories: categoriesData.length,
       galleries: galleriesData.length
@@ -512,30 +561,19 @@ app.get('/categories', (req, res) => {
   });
 });
 
-// Test GPT with a query
-app.post('/test-gpt', async (req, res) => {
-  try {
-    const { query } = req.body;
-    
-    if (!query) {
-      return res.status(400).json({ 
-        error: 'Missing "query" in request body'
-      });
-    }
-    
-    const result = await getGPTResponseWithCategories(query);
-    
-    res.json({
-      query,
-      result
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      error: 'Test failed',
-      details: error.message
-    });
-  }
+// Search categories
+app.get('/search/:query', (req, res) => {
+  const query = req.params.query;
+  const results = searchCategories(query);
+  const galleries = findGalleriesByCategoryIds(results.map(r => r.id));
+  const links = generateGalleryLinks(galleries);
+  
+  res.json({
+    query,
+    results,
+    galleries_found: galleries.length,
+    gallery_links: links
+  });
 });
 
 // Test endpoint to send a message manually
@@ -580,6 +618,7 @@ async function initializeServer() {
     console.log('📊 Loading CSV data...');
     await loadCSVData();
     console.log('✅ Server initialized with CSV data');
+    console.log('📋 Sample categories:', categoriesData.slice(0, 3));
   } catch (error) {
     console.error('❌ Failed to initialize server:', error);
     process.exit(1);
