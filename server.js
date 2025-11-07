@@ -216,7 +216,7 @@ async function detectIntent(userMessage) {
   }
 }
 
-// NEW: GPT-Powered Product Intent Handler
+// GPT-Powered Product Intent Handler
 async function handleProductIntentWithGPT(userMessage) {
   try {
     // Prepare CSV data for GPT
@@ -280,7 +280,8 @@ async function handleProductIntentWithGPT(userMessage) {
     
     let matches;
     try {
-      matches = JSON.parse(responseText).matches;
+      const parsedResponse = JSON.parse(responseText);
+      matches = parsedResponse.matches || [];
     } catch (parseError) {
       console.error('Error parsing GPT response:', parseError);
       matches = [];
@@ -308,18 +309,22 @@ async function handleProductIntentWithGPT(userMessage) {
   }
 }
 
-// Generate Product Response with GPT-Matched Categories
+// Generate Product Response with GPT-Matched Categories - FIXED VERSION
 function generateProductResponseWithGPT(matchedCategories, userMessage) {
-  if (matchedCategories.length === 0) {
+  if (!matchedCategories || matchedCategories.length === 0) {
     return generateFallbackProductResponse();
   }
   
   let response = `Perfect! Based on your interest in "${userMessage}", I found these great categories for you: 🛍️\n\n`;
   
   matchedCategories.forEach((category, index) => {
+    // FIX: Use category.type2 instead of category.type2
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
-    // Clean up the category display
-    const displayCategories = category.category.split(',').slice(0, 2).join(', ');
+    
+    // FIX: Use category.cat1 instead of category.category
+    const cat1Text = category.cat1 || 'Products';
+    const displayCategories = cat1Text.split(',').slice(0, 2).join(', ');
+    
     response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
   });
   
@@ -468,7 +473,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - GPT-Powered Product Matching',
+    version: '5.1 - Fixed GPT Product Matching',
     features: {
       intent_detection: 'AI-powered company vs product intent classification',
       product_matching: 'GPT-powered intelligent product matching',
@@ -520,12 +525,56 @@ app.get('/test-gpt-matching', async (req, res) => {
   }
   
   try {
-    const result = await handleProductIntentWithGPT(query);
-    
+    // Test the GPT matching directly
+    const csvDataForGPT = galleriesData.map(item => ({
+      type2: item.type2,
+      cat1: item.cat1,
+      cat_id: item.cat_id
+    }));
+
+    const prompt = `
+    USER MESSAGE: "${query}"
+
+    AVAILABLE PRODUCT CATEGORIES (from CSV):
+    ${JSON.stringify(csvDataForGPT, null, 2)}
+
+    TASK: Find the BEST matching categories from the CSV data
+
+    RESPONSE FORMAT: { "matches": [ { "type2": "value", "reason": "explanation", "relevance_score": 0.9 } ] }
+    `;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: `You are a product matching expert for Zulu Club. Match user queries to product categories intelligently. Return valid JSON.`
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 1000,
+      temperature: 0.3,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    const matches = JSON.parse(responseText).matches || [];
+
+    const matchedCategories = matches
+      .map(match => {
+        const category = galleriesData.find(item => item.type2 === match.type2);
+        return category ? { ...category, reason: match.reason } : null;
+      })
+      .filter(Boolean);
+
     res.json({
       query,
-      result: result,
-      categories_loaded: galleriesData.length
+      gpt_response: JSON.parse(responseText),
+      matched_categories: matchedCategories,
+      total_categories_available: galleriesData.length
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
