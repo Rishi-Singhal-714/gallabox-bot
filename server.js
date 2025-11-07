@@ -162,9 +162,25 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const intent = await detectIntent(userMessage);
     console.log(`🎯 Detected intent: ${intent}`);
     
-    // If product intent, use GPT to find best matching categories
+    // If product intent, use traditional matching FIRST for exact/80% matches in cat1
     if (intent === 'product' && galleriesData.length > 0) {
-      console.log(`🔍 Using GPT to find best matches from ${galleriesData.length} categories`);
+      console.log(`🔍 Checking for exact/80% matches in cat1 from ${galleriesData.length} categories`);
+      
+      // FIRST: Try traditional exact/80% matching in cat1
+      const traditionalMatches = await handleProductIntentTraditional(userMessage);
+      
+      // If we found exact or 80% matches in cat1, return ALL related galleries
+      const exactOrHighMatches = traditionalMatches.filter(match => 
+        match.relevance_score >= 2.0 // Exact or high confidence matches
+      );
+      
+      if (exactOrHighMatches.length > 0) {
+        console.log(`🎯 Found ${exactOrHighMatches.length} exact/high matches in cat1, returning ALL related galleries`);
+        return generateResponseForExactCat1Matches(exactOrHighMatches, userMessage);
+      }
+      
+      // SECOND: If no exact matches, use GPT for intelligent matching
+      console.log(`🔍 No exact matches found, using GPT for intelligent matching`);
       const productResponse = await handleProductIntentWithGPT(userMessage);
       return productResponse;
     }
@@ -216,7 +232,150 @@ async function detectIntent(userMessage) {
   }
 }
 
-// UPDATED: GPT-Powered Product Intent Handler with BOTH cat1 and type2 matching
+// UPDATED: Traditional keyword-based matching with EXACT/80% priority for cat1
+async function handleProductIntentTraditional(userMessage) {
+  console.log('🔍 Using traditional keyword matching with cat1 priority...');
+  
+  const searchTerms = userMessage.toLowerCase().split(/\s+/).filter(term => term.length > 2);
+  const matches = [];
+
+  // If no meaningful search terms, return empty
+  if (searchTerms.length === 0) {
+    return matches;
+  }
+
+  // Search through galleries data
+  galleriesData.forEach(item => {
+    let score = 0;
+    let matchedField = '';
+    let reason = '';
+    let matchedTerm = '';
+
+    // PRIORITY 1: Exact or 80% matches in cat1 (comma-separated categories)
+    if (item.cat1) {
+      const cat1Categories = item.cat1.toLowerCase().split(',').map(cat => cat.trim());
+      
+      searchTerms.forEach(term => {
+        cat1Categories.forEach(catTerm => {
+          // Exact match in cat1 - HIGHEST SCORE
+          if (catTerm === term) {
+            score += 3.0;
+            matchedField = 'cat1';
+            matchedTerm = term;
+            reason = `Exact match for "${term}" in categories: ${item.cat1}`;
+          }
+          // 80% match (contains the term) in cat1 - HIGH SCORE
+          else if (catTerm.includes(term)) {
+            score += 2.5;
+            matchedField = 'cat1';
+            matchedTerm = term;
+            reason = `High match for "${term}" in categories: ${item.cat1}`;
+          }
+          // Partial match in cat1 - MEDIUM SCORE
+          else if (term.includes(catTerm.substring(0, 4)) || catTerm.includes(term.substring(0, 4))) {
+            score += 1.5;
+            if (!matchedField) {
+              matchedField = 'cat1';
+              matchedTerm = term;
+              reason = `Partial match for "${term}" in categories: ${item.cat1}`;
+            }
+          }
+        });
+      });
+    }
+
+    // PRIORITY 2: Search in type2 (only if no good cat1 match found)
+    if (score < 2.0 && item.type2) {
+      const type2Lower = item.type2.toLowerCase();
+      
+      searchTerms.forEach(term => {
+        // Exact match in type2
+        if (type2Lower === term) {
+          score += 2.0;
+          matchedField = 'type2';
+          matchedTerm = term;
+          reason = `Exact match for "${term}" in category: ${item.type2}`;
+        }
+        // Contains match in type2
+        else if (type2Lower.includes(term)) {
+          score += 1.0;
+          if (!matchedField) {
+            matchedField = 'type2';
+            matchedTerm = term;
+            reason = `Match for "${term}" in category: ${item.type2}`;
+          }
+        }
+      });
+    }
+
+    if (score > 0) {
+      matches.push({
+        ...item,
+        relevance_score: score,
+        matched_field: matchedField,
+        reason: reason,
+        matched_term: matchedTerm
+      });
+    }
+  });
+
+  // Sort by relevance score (highest first) - cat1 exact matches will be at top
+  matches.sort((a, b) => b.relevance_score - a.relevance_score);
+  
+  console.log(`📊 Traditional matching found ${matches.length} matches, top scores:`, 
+    matches.slice(0, 3).map(m => ({ score: m.relevance_score, field: m.matched_field }))
+  );
+  
+  return matches;
+}
+
+// NEW: Generate response for EXACT cat1 matches - return ALL related galleries
+function generateResponseForExactCat1Matches(matches, userMessage) {
+  // Group by matched category to find all unique type2 for the same cat1 match
+  const categoryMap = new Map();
+  
+  matches.forEach(match => {
+    const key = match.matched_term || match.reason;
+    if (!categoryMap.has(key)) {
+      categoryMap.set(key, []);
+    }
+    categoryMap.get(key).push(match);
+  });
+
+  let response = `🎉 Perfect! I found exact matches for "${userMessage}" in our categories. Here are ALL related galleries:\n\n`;
+
+  let galleryCount = 0;
+  const maxGalleries = 15; // Limit to prevent message too long
+
+  categoryMap.forEach((galleries, category) => {
+    response += `📂 ${category}:\n`;
+    
+    // Take unique type2 entries (avoid duplicates)
+    const uniqueGalleries = [...new Map(galleries.map(item => [item.type2, item])).values()];
+    
+    uniqueGalleries.slice(0, 5).forEach((gallery, index) => {
+      const link = `app.zulu.club/${gallery.type2.replace(/ /g, '%20')}`;
+      response += `   ${index + 1}. ${gallery.type2}\n      🔗 ${link}\n`;
+      galleryCount++;
+    });
+    
+    if (uniqueGalleries.length > 5) {
+      response += `   ... and ${uniqueGalleries.length - 5} more galleries\n`;
+    }
+    response += '\n';
+  });
+
+  response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
+
+  // If message is too long, truncate
+  if (response.length > 1500) {
+    response = response.substring(0, 1500) + `\n\n... and ${galleryCount - 10} more galleries! Visit zulu.club for complete catalog.`;
+  }
+
+  return response;
+}
+
+// GPT-Powered Product Intent Handler (for non-exact matches)
 async function handleProductIntentWithGPT(userMessage) {
   try {
     // Prepare CSV data for GPT with BOTH cat1 and type2
@@ -233,7 +392,7 @@ async function handleProductIntentWithGPT(userMessage) {
     ${JSON.stringify(csvDataForGPT, null, 2)}
 
     TASK:
-    1. Understand what product the user is looking for (even if misspelled or incomplete like "tshir" for "t-shirt")
+    1. Understand what product the user is looking for (even if misspelled or incomplete)
     2. Find the BEST matching categories from the CSV data by searching BOTH fields:
        - PRIMARY SEARCH: "cat1" field (contains multiple categories separated by commas) - HIGHEST PRIORITY
        - SECONDARY SEARCH: "type2" field (single category name) - SECOND PRIORITY
@@ -321,72 +480,7 @@ async function handleProductIntentWithGPT(userMessage) {
   }
 }
 
-// NEW: Traditional keyword-based matching as fallback
-async function handleProductIntentTraditional(userMessage) {
-  console.log('🔍 Using traditional keyword matching...');
-  
-  const searchTerms = userMessage.toLowerCase().split(/\s+/);
-  const matches = [];
-
-  // Search through galleries data
-  galleriesData.forEach(item => {
-    let score = 0;
-    let matchedField = '';
-    let reason = '';
-
-    // Priority 1: Search in cat1 (comma-separated categories)
-    if (item.cat1) {
-      const cat1Terms = item.cat1.toLowerCase().split(',');
-      searchTerms.forEach(term => {
-        cat1Terms.forEach(catTerm => {
-          if (catTerm.includes(term.trim()) && term.length > 2) {
-            score += 2; // Higher score for cat1 matches
-            matchedField = 'cat1';
-            reason = `Found "${term}" in categories: ${item.cat1}`;
-          }
-        });
-      });
-    }
-
-    // Priority 2: Search in type2
-    if (item.type2 && item.type2.toLowerCase().includes(userMessage.toLowerCase())) {
-      score += 1.5; // Good score for type2 matches
-      if (!matchedField) {
-        matchedField = 'type2';
-        reason = `Found match in category: ${item.type2}`;
-      }
-    }
-
-    // Partial matches in type2
-    if (item.type2) {
-      searchTerms.forEach(term => {
-        if (item.type2.toLowerCase().includes(term) && term.length > 2) {
-          score += 1; // Lower score for partial matches
-          if (!matchedField) {
-            matchedField = 'type2';
-            reason = `Found "${term}" in category: ${item.type2}`;
-          }
-        }
-      });
-    }
-
-    if (score > 0) {
-      matches.push({
-        ...item,
-        relevance_score: score,
-        matched_field: matchedField,
-        reason: reason
-      });
-    }
-  });
-
-  // Sort by relevance score (highest first)
-  matches.sort((a, b) => b.relevance_score - a.relevance_score);
-  
-  return matches.slice(0, 5);
-}
-
-// Generate Product Response with GPT-Matched Categories
+// Generate Product Response with GPT-Matched Categories (for non-exact matches)
 function generateProductResponseWithGPT(matchedCategories, userMessage) {
   if (matchedCategories.length === 0) {
     return generateFallbackProductResponse();
@@ -402,11 +496,6 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
       : category.type2;
     
     response += `${index + 1}. ${displayInfo}\n   🔗 ${link}\n`;
-    
-    // Add which field matched for debugging
-    if (category.reason) {
-      response += `   💡 ${category.reason}\n`;
-    }
   });
   
   response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
@@ -554,10 +643,11 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Dual Field Product Matching (cat1 + type2)',
+    version: '7.0 - Exact Match Priority with ALL Galleries',
     features: {
       intent_detection: 'AI-powered company vs product intent classification',
-      product_matching: 'GPT-powered intelligent product matching',
+      exact_match_priority: 'Exact/80% matches in cat1 return ALL related galleries',
+      product_matching: 'GPT-powered intelligent product matching for non-exact queries',
       dual_field_search: 'Priority: cat1 (primary), type2 (secondary)',
       intelligent_matching: 'Understands misspellings, abbreviations, and related terms',
       link_generation: 'Dynamic app.zulu.club link generation',
@@ -574,7 +664,8 @@ app.get('/', (req, res) => {
       test_message: 'POST /send-test-message',
       refresh_csv: 'GET /refresh-csv',
       test_matching: 'GET /test-gpt-matching',
-      test_traditional: 'GET /test-traditional-matching'
+      test_traditional: 'GET /test-traditional-matching',
+      test_exact_match: 'GET /test-exact-match'
     },
     timestamp: new Date().toISOString()
   });
@@ -620,7 +711,7 @@ app.get('/test-gpt-matching', async (req, res) => {
   }
 });
 
-// NEW: Test traditional matching endpoint
+// Test traditional matching endpoint
 app.get('/test-traditional-matching', async (req, res) => {
   const { query } = req.query;
   
@@ -633,9 +724,36 @@ app.get('/test-traditional-matching', async (req, res) => {
     
     res.json({
       query,
-      matches: matches,
+      matches: matches.slice(0, 10), // Show top 10
       total_matches: matches.length,
+      exact_matches: matches.filter(m => m.relevance_score >= 2.5).length,
       categories_loaded: galleriesData.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Test exact match endpoint
+app.get('/test-exact-match', async (req, res) => {
+  const { query } = req.query;
+  
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query parameter' });
+  }
+  
+  try {
+    const matches = await handleProductIntentTraditional(query);
+    const exactMatches = matches.filter(match => match.relevance_score >= 2.0);
+    const response = exactMatches.length > 0 
+      ? generateResponseForExactCat1Matches(exactMatches, query)
+      : "No exact matches found";
+    
+    res.json({
+      query,
+      exact_matches_count: exactMatches.length,
+      response: response,
+      all_matches_count: matches.length
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
