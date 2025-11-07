@@ -1,5 +1,5 @@
 // --------------------------------------------
-// ZULU CLUB - Strict CSV Matching Logic (no type2 fallback)
+// ZULU CLUB - Enhanced GPT Understanding + Strict CSV Matching
 // --------------------------------------------
 const express = require("express");
 const axios = require("axios");
@@ -44,6 +44,41 @@ const CLASSIFIERS = {
   gadgets: 2135,
   discover: 2136,
 };
+
+// -------------------- BUSINESS CONTEXT --------------------
+const ZULU_BUSINESS_CONTEXT = `
+ZULU CLUB BUSINESS CONTEXT:
+We are a premium lifestyle e-commerce platform offering 100-minute delivery in Gurgaon.
+
+OUR CATEGORIES & CLASSIFIERS:
+• "women" - Women's Fashion: dresses, tops, co-ords, winterwear, loungewear & more
+• "men" - Men's Fashion: shirts, tees, jackets, athleisure & more  
+• "kids" - Kids: clothing, toys, learning kits & accessories
+• "home" - Home Decor: showpieces, vases, lamps, aroma decor, premium home accessories, fountains
+• "wellness" - Beauty & Self-Care: skincare, bodycare, fragrances & grooming essentials
+• "metals" - Fashion Accessories: bags, jewelry, watches, sunglasses & belts
+• "discover" - Lifestyle Gifting: curated gift sets & décor-based gifting
+• "electronics" - Electronics
+• "gadgets" - Gadgets
+• "food" - Food
+
+KEY FEATURES:
+• 100-minute delivery in Gurgaon
+• Try products at home, keep what you love
+• Pop-up locations: AIPL Joy Street & AIPL Central
+• Website: app.zulu.club
+
+PRODUCT EXAMPLES:
+• "I want jeans" → classifier: "men" or "women" (ask if needed)
+• "Looking for skincare" → classifier: "wellness"
+• "Home decoration items" → classifier: "home" 
+• "Gift for friend" → classifier: "discover"
+• "Kids toys" → classifier: "kids"
+• "Watch" → classifier: "metals"
+• "Perfume" → classifier: "wellness"
+• "Sneakers" → classifier: "men"/"women"/"kids"
+• "Smartphone" → classifier: "electronics"
+`;
 
 // -------------------- CSV LOADERS --------------------
 async function fetchCSV(url) {
@@ -95,16 +130,45 @@ async function loadCSVData() {
   console.log(`✅ Loaded ${categories.length} categories & ${galleries.length} galleries`);
 }
 
-// -------------------- GPT INTERPRETER --------------------
+// -------------------- ENHANCED GPT INTERPRETER --------------------
 async function interpretMessage(userMessage) {
   const sysPrompt = `
-Classify the user's message for Zulu Club.
+${ZULU_BUSINESS_CONTEXT}
 
-Return JSON with:
-- intent: "product_search" | "greeting" | "company_info"
-- product_term: e.g. "jeans", "t-shirt"
-- classifier: e.g. "men", "women", "kids", "home", "electronics", "wellness", "metals", "food", "gadgets", "discover" | null
-- need_classifier: true if classifier missing
+YOUR ROLE: You are a shopping assistant for Zulu Club. Classify user messages to help them find products quickly.
+
+CRITICAL RULES:
+1. Always map products to our EXACT classifier names: "men", "women", "kids", "home", "wellness", "metals", "food", "electronics", "gadgets", "discover"
+2. Be smart about category mapping - perfumes→wellness, watches→metals, gifts→discover, etc.
+3. If classifier is ambiguous (like "shoes" without gender), set need_classifier: true
+
+RESPONSE FORMAT (JSON only):
+{
+  "intent": "product_search" | "greeting" | "company_info" | "delivery_info",
+  "product_term": "specific product mentioned",
+  "classifier": "exact classifier from our list" | null,
+  "need_classifier": true | false,
+  "confidence": "high" | "medium" | "low"
+}
+
+INTENT GUIDELINES:
+- "greeting": hi, hello, hey, good morning
+- "company_info": "what is zulu club", "who are you", "tell me about your company"  
+- "delivery_info": "delivery time", "100 minute delivery", "where do you deliver"
+- "product_search": everything else about products
+
+CLASSIFIER MAPPING EXAMPLES:
+- "jeans", "shirt", "jacket" → "men" or "women" (ask if not specified)
+- "skincare", "perfume", "makeup" → "wellness"
+- "vase", "lamp", "home decor" → "home"
+- "watch", "bag", "jewelry" → "metals"
+- "gift", "present" → "discover"
+- "toy", "kids clothes" → "kids"
+- "phone", "laptop" → "electronics"
+- "smartwatch", "earbuds" → "gadgets"
+- "chocolate", "food" → "food"
+
+User message: "${userMessage}"
 `;
 
   try {
@@ -114,14 +178,33 @@ Return JSON with:
         { role: "system", content: sysPrompt },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 200,
-      temperature: 0,
+      max_tokens: 300,
+      temperature: 0.1,
+      response_format: { type: "json_object" }
     });
 
-    return JSON.parse(res.choices[0].message.content.trim());
+    const interpretation = JSON.parse(res.choices[0].message.content.trim());
+    
+    // Validation
+    if (!["product_search", "greeting", "company_info", "delivery_info"].includes(interpretation.intent)) {
+      interpretation.intent = "product_search";
+    }
+    if (!interpretation.product_term && interpretation.intent === "product_search") {
+      interpretation.product_term = userMessage;
+    }
+    
+    console.log("🤖 Enhanced Interpretation:", interpretation);
+    return interpretation;
+    
   } catch (err) {
     console.error("⚠️ GPT Parse Error:", err.message);
-    return { intent: "product_search", product_term: userMessage, classifier: null, need_classifier: true };
+    return { 
+      intent: "product_search", 
+      product_term: userMessage, 
+      classifier: null, 
+      need_classifier: true,
+      confidence: "low"
+    };
   }
 }
 
@@ -129,6 +212,7 @@ Return JSON with:
 function normalize(str) {
   return String(str).toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
 }
+
 function tokenize(str) {
   return normalize(str).split(" ").filter(Boolean);
 }
@@ -150,7 +234,7 @@ function filterGalleries(productTerm, classifier) {
   );
   const classifierId = CLASSIFIERS[classifierKey];
 
-  if (!classifierId) return [];
+  if (!classifierId) return { rows: [], topCats: [], classifierId: null };
 
   const topCats = top3CategoriesForProduct(productTerm);
   const topIds = topCats.map((x) => x.id);
@@ -169,6 +253,20 @@ function filterGalleries(productTerm, classifier) {
 function buildLinks(rows) {
   const unique = [...new Set(rows.map((r) => r.type2))];
   return unique.slice(0, 5).map((x) => `app.zulu.club/${encodeURIComponent(x)}`);
+}
+
+// -------------------- RESPONSE BUILDERS --------------------
+function buildClassifierOptions() {
+  const options = ["men", "women", "kids", "home", "wellness", "metals", "discover"];
+  return `Would you like it for *${options.slice(0, -1).join("*, *")}*, or *${options[options.length - 1]}*? 🛍️`;
+}
+
+function buildDeliveryResponse() {
+  return `🚚 *100-Minute Delivery Info:*\n\nWe deliver in *Gurgaon* within 100 minutes! ⚡\n\n• Try products at home\n• Keep what you love  \n• Return instantly\n• Pop-ups: AIPL Joy Street & AIPL Central\n\nShop now: app.zulu.club`;
+}
+
+function buildCompanyInfo() {
+  return `🛍️ *Welcome to Zulu Club!*\n\nYour personalized lifestyle shopping experience with *100-minute delivery* in Gurgaon!\n\n*Categories:*\n• Women's & Men's Fashion\n• Kids, Home Decor, Wellness\n• Beauty, Accessories, Gifting\n• Electronics, Gadgets & more\n\n*Experience us:*\n📍 AIPL Joy Street & AIPL Central pop-ups\n🌐 app.zulu.club\n\nWhat would you like to explore today? 😊`;
 }
 
 // -------------------- GALLABOX SENDER --------------------
@@ -196,44 +294,47 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// -------------------- MESSAGE HANDLER --------------------
+// -------------------- ENHANCED MESSAGE HANDLER --------------------
 async function handleMessage(userPhone, userName, userMessage) {
   const intent = await interpretMessage(userMessage);
-  console.log("🤖 Interpretation:", intent);
+  console.log("🤖 Enhanced Interpretation:", intent);
 
-  if (intent.intent === "greeting")
-    return sendMessage(userPhone, userName, "Hey 👋 How can I help you shop today?");
+  switch (intent.intent) {
+    case "greeting":
+      return sendMessage(userPhone, userName, "Hey 👋 Welcome to Zulu Club! How can I help you shop today? 🛍️");
 
-  if (intent.intent === "company_info")
-    return sendMessage(
-      userPhone,
-      userName,
-      "Welcome to *Zulu Club*! 🛍️ Shop lifestyle products with *100-minute delivery*! Explore at zulu.club."
-    );
+    case "company_info":
+      return sendMessage(userPhone, userName, buildCompanyInfo());
 
-  if (intent.intent === "product_search") {
-    if (intent.need_classifier)
-      return sendMessage(userPhone, userName, "Would you like it for *men, women,* or *kids*? 👕👗👶");
+    case "delivery_info":
+      return sendMessage(userPhone, userName, buildDeliveryResponse());
 
-    const { rows, topCats } = filterGalleries(intent.product_term, intent.classifier);
+    case "product_search":
+      if (intent.need_classifier || !intent.classifier) {
+        return sendMessage(userPhone, userName, buildClassifierOptions());
+      }
 
-    if (!rows.length) {
-      return sendMessage(
-        userPhone,
-        userName,
-        `Sorry, I couldn't find *${intent.product_term}* for *${intent.classifier}*. Try another keyword!`
-      );
-    }
+      const { rows, topCats } = filterGalleries(intent.product_term, intent.classifier);
 
-    const links = buildLinks(rows);
-    const response = `Here are *${intent.product_term}* options for *${intent.classifier}*:\n${links.join(
-      "\n"
-    )}\n\n🛒 More on app.zulu.club`;
+      if (!rows.length) {
+        // Try to suggest alternatives
+        const alternativeMsg = intent.confidence === "low" 
+          ? `I'm not sure about *${intent.product_term}*. Try searching for specific items like "jeans", "perfume", "watch", or "home decor"?`
+          : `Sorry, I couldn't find *${intent.product_term}* for *${intent.classifier}*. Try another keyword or check app.zulu.club for more options!`;
+        
+        return sendMessage(userPhone, userName, alternativeMsg);
+      }
 
-    return sendMessage(userPhone, userName, response);
+      const links = buildLinks(rows);
+      const response = `Here are *${intent.product_term}* options for *${intent.classifier}*:\n${links.join(
+        "\n"
+      )}\n\n🛒 More on app.zulu.club\n🚚 100-min delivery in Gurgaon!`;
+
+      return sendMessage(userPhone, userName, response);
+
+    default:
+      return sendMessage(userPhone, userName, "Hi! What product are you looking for? I can help you find fashion, home decor, wellness products, and more! 🛍️");
   }
-
-  return sendMessage(userPhone, userName, "Hi there! What product are you looking for?");
 }
 
 // -------------------- WEBHOOK --------------------
@@ -257,10 +358,11 @@ app.post("/webhook", async (req, res) => {
 // -------------------- HEALTH --------------------
 app.get("/", (req, res) => {
   res.json({
-    status: "✅ Zulu Club Product Assistant",
-    version: "8.0 - Strict CSV Logic",
+    status: "✅ Zulu Club Enhanced Product Assistant",
+    version: "9.0 - Enhanced GPT + Business Context",
     categoriesLoaded: categories.length,
     galleriesLoaded: galleries.length,
+    classifiers: Object.keys(CLASSIFIERS),
     timestamp: new Date().toISOString(),
   });
 });
@@ -269,6 +371,6 @@ app.get("/", (req, res) => {
 loadCSVData().then(() => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () =>
-    console.log(`🚀 Zulu Club Assistant running on port ${PORT}`)
+    console.log(`🚀 Zulu Club Enhanced Assistant running on port ${PORT}`)
   );
 });
