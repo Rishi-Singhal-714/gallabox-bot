@@ -1,5 +1,5 @@
 // --------------------------------------------
-// ZULU CLUB - Enhanced AI Response System
+// ZULU CLUB - Strict CSV Matching Logic (no type2 fallback) - DEBUG VERSION
 // --------------------------------------------
 const express = require("express");
 const axios = require("axios");
@@ -45,69 +45,43 @@ const CLASSIFIERS = {
   discover: 2136,
 };
 
-// -------------------- DEBUG LOGGER --------------------
-class DebugLogger {
-  static log(module, message, data = null) {
-    const timestamp = new Date().toISOString();
-    console.log(`\n🔍 [${timestamp}] ${module}: ${message}`);
-    if (data) {
-      console.log(`📊 Data:`, JSON.stringify(data, null, 2));
-    }
-    console.log('─'.repeat(50));
+// -------------------- DEBUG UTILS --------------------
+function debugLog(module, message, data = null) {
+  const timestamp = new Date().toISOString();
+  console.log(`\n🔍 [${timestamp}] ${module}: ${message}`);
+  if (data) {
+    console.log(`📊 Data:`, JSON.stringify(data, null, 2));
   }
-
-  static error(module, error, context = null) {
-    const timestamp = new Date().toISOString();
-    console.error(`\n❌ [${timestamp}] ${module} ERROR:`, error.message);
-    if (context) {
-      console.error(`📝 Context:`, JSON.stringify(context, null, 2));
-    }
-    if (error.stack) {
-      console.error(`🔦 Stack:`, error.stack);
-    }
-    console.log('─'.repeat(50));
-  }
-
-  static warn(module, warning, data = null) {
-    const timestamp = new Date().toISOString();
-    console.warn(`\n⚠️ [${timestamp}] ${module} WARNING: ${warning}`);
-    if (data) console.warn(`📝 Details:`, data);
-    console.log('─'.repeat(50));
-  }
+  console.log('─'.repeat(50));
 }
 
-// -------------------- ENHANCED CSV LOADERS --------------------
-async function fetchCSV(url) {
-  try {
-    DebugLogger.log("CSV_LOADER", `Fetching CSV from: ${url}`);
-    const res = await axios.get(url, { 
-      responseType: "text",
-      timeout: 10000 
-    });
-    
-    DebugLogger.log("CSV_LOADER", `CSV fetched successfully`, {
-      size: res.data.length,
-      firstLines: res.data.split('\n').slice(0, 3)
-    });
-    
-    return new Promise((resolve, reject) => {
-      const rows = [];
-      Readable.from(res.data)
-        .pipe(csv())
-        .on("data", (r) => rows.push(r))
-        .on("end", () => {
-          DebugLogger.log("CSV_LOADER", `Parsed ${rows.length} rows`);
-          resolve(rows);
-        })
-        .on("error", (error) => {
-          DebugLogger.error("CSV_LOADER", error, { url });
-          reject(error);
-        });
-    });
-  } catch (error) {
-    DebugLogger.error("CSV_LOADER", error, { url });
-    throw error;
+function debugError(module, error, context = null) {
+  const timestamp = new Date().toISOString();
+  console.error(`\n❌ [${timestamp}] ${module} ERROR:`, error.message);
+  if (context) {
+    console.error(`📝 Context:`, JSON.stringify(context, null, 2));
   }
+  console.log('─'.repeat(50));
+}
+
+function debugWarn(module, warning, data = null) {
+  const timestamp = new Date().toISOString();
+  console.warn(`\n⚠️ [${timestamp}] ${module} WARNING: ${warning}`);
+  if (data) console.warn(`📝 Details:`, data);
+  console.log('─'.repeat(50));
+}
+
+// -------------------- CSV LOADERS --------------------
+async function fetchCSV(url) {
+  const res = await axios.get(url, { responseType: "text" });
+  return new Promise((resolve, reject) => {
+    const rows = [];
+    Readable.from(res.data)
+      .pipe(csv())
+      .on("data", (r) => rows.push(r))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
+  });
 }
 
 function safeParseCat1(raw) {
@@ -121,85 +95,53 @@ function safeParseCat1(raw) {
     return Array.isArray(arr)
       ? arr.map((v) => Number(String(v).trim())).filter(Number.isFinite)
       : [];
-  } catch (error) {
-    DebugLogger.warn("CSV_PARSER", `Failed to parse cat1: ${raw}`, { error: error.message });
+  } catch {
     return [];
   }
 }
 
 async function loadCSVData() {
-  try {
-    DebugLogger.log("DATA_LOADER", "Starting CSV data loading...");
-    
-    const [catRows, galRows] = await Promise.all([
-      fetchCSV(categoriesUrl),
-      fetchCSV(galleriesUrl),
-    ]);
+  const [catRows, galRows] = await Promise.all([
+    fetchCSV(categoriesUrl),
+    fetchCSV(galleriesUrl),
+  ]);
 
-    // Enhanced category processing
-    categories = catRows
-      .filter((r) => r.id && r.name)
-      .map((r) => ({ 
-        id: Number(r.id), 
-        name: String(r.name).trim(),
-        original: r 
-      }));
+  categories = catRows
+    .filter((r) => r.id && r.name)
+    .map((r) => ({ id: Number(r.id), name: String(r.name).trim() }));
 
-    // Enhanced gallery processing
-    galleries = galRows
-      .filter((r) => r.cat_id && r.type2 && r.cat1)
-      .map((r) => ({
-        cat_id: Number(r.cat_id),
-        type2: String(r.type2).trim(),
-        cat1: safeParseCat1(r.cat1),
-        original: r
-      }));
+  galleries = galRows
+    .filter((r) => r.cat_id && r.type2 && r.cat1)
+    .map((r) => ({
+      cat_id: Number(r.cat_id),
+      type2: String(r.type2).trim(),
+      cat1: safeParseCat1(r.cat1),
+    }));
 
-    DebugLogger.log("DATA_LOADER", "Data loading completed", {
-      categories: {
-        total: categories.length,
-        sample: categories.slice(0, 3)
-      },
-      galleries: {
-        total: galleries.length,
-        sample: galleries.slice(0, 3)
-      },
-      classifiers: CLASSIFIERS
-    });
-
-    console.log(`✅ Loaded ${categories.length} categories & ${galleries.length} galleries`);
-  } catch (error) {
-    DebugLogger.error("DATA_LOADER", error);
-    throw error;
-  }
+  debugLog("DATA_LOADER", "CSV data loaded", {
+    categories: categories.length,
+    galleries: galleries.length,
+    categoriesSample: categories.slice(0, 3),
+    galleriesSample: galleries.slice(0, 3)
+  });
+  
+  console.log(`✅ Loaded ${categories.length} categories & ${galleries.length} galleries`);
 }
 
-// -------------------- ENHANCED GPT INTERPRETER --------------------
+// -------------------- GPT INTERPRETER --------------------
 async function interpretMessage(userMessage) {
   const sysPrompt = `
-You are a shopping assistant classifier for Zulu Club. Analyze the user's message and extract:
-
-CRITICAL RULES:
-- classifier MUST be one of: men, women, kids, home, wellness, metals, food, electronics, gadgets, discover
-- product_term should be specific (e.g., "jeans", "t-shirt", "home decor")
-- be precise with category matching
+Classify the user's message for Zulu Club.
 
 Return JSON with:
-- intent: "product_search" | "greeting" | "company_info" | "help" | "fallback"
-- product_term: specific product being searched for
-- classifier: exact category from the list above
-- need_classifier: true if classifier is missing but required
-- confidence: 0.0 to 1.0 (how confident you are in the classification)
-- reasoning: brief explanation of your classification
-
-Examples:
-User: "I want jeans for men" → {"intent":"product_search","product_term":"jeans","classifier":"men","need_classifier":false,"confidence":0.95,"reasoning":"Clear product and category"}
-User: "Hello" → {"intent":"greeting","product_term":null,"classifier":null,"need_classifier":false,"confidence":0.98,"reasoning":"Simple greeting"}
-User: "What is Zulu Club?" → {"intent":"company_info","product_term":null,"classifier":null,"need_classifier":false,"confidence":0.99,"reasoning":"Asking about company"}
+- intent: "product_search" | "greeting" | "company_info"
+- product_term: e.g. "jeans", "t-shirt"
+- classifier: e.g. "men", "women", "kids", "home", "electronics", "wellness", "metals", "food", "gadgets", "discover" | null
+- need_classifier: true if classifier missing
 `;
 
   try {
-    DebugLogger.log("GPT_INTERPRETER", "Analyzing user message", { userMessage });
+    debugLog("GPT_INTERPRETER", "Analyzing user message", { userMessage });
 
     const res = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -207,93 +149,50 @@ User: "What is Zulu Club?" → {"intent":"company_info","product_term":null,"cla
         { role: "system", content: sysPrompt },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 300,
-      temperature: 0.1,
-      response_format: { type: "json_object" }
+      max_tokens: 200,
+      temperature: 0,
     });
 
     const interpretation = JSON.parse(res.choices[0].message.content.trim());
     
-    DebugLogger.log("GPT_INTERPRETER", "Analysis completed", {
+    debugLog("GPT_INTERPRETER", "Analysis completed", {
       interpretation,
       usage: res.usage
     });
 
     return interpretation;
-  } catch (error) {
-    DebugLogger.error("GPT_INTERPRETER", error, { userMessage });
-    return { 
-      intent: "fallback", 
-      product_term: userMessage, 
-      classifier: null, 
-      need_classifier: true,
-      confidence: 0.1,
-      reasoning: "GPT parsing failed, using fallback"
-    };
+  } catch (err) {
+    debugError("GPT_INTERPRETER", err, { userMessage });
+    return { intent: "product_search", product_term: userMessage, classifier: null, need_classifier: true };
   }
 }
 
-// -------------------- ENHANCED CATEGORY SEARCH LOGIC --------------------
+// -------------------- CATEGORY SEARCH LOGIC --------------------
 function normalize(str) {
-  return String(str).toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(str).toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
 }
-
 function tokenize(str) {
   return normalize(str).split(" ").filter(Boolean);
 }
 
-function calculateMatchScore(productTokens, categoryName) {
-  const categoryTokens = tokenize(categoryName);
-  let score = 0;
-  
-  // Exact matches get highest score
-  productTokens.forEach(token => {
-    categoryTokens.forEach(catToken => {
-      if (catToken === token) score += 3;
-      else if (catToken.includes(token) || token.includes(catToken)) score += 1;
-      else if (catToken.startsWith(token) || token.startsWith(catToken)) score += 2;
-    });
-  });
-
-  // Bonus for longer matches and exact phrase matches
-  const productPhrase = productTokens.join(' ');
-  const categoryPhrase = categoryTokens.join(' ');
-  
-  if (categoryPhrase.includes(productPhrase)) score += 5;
-  if (productPhrase.includes(categoryPhrase)) score += 3;
-
-  return score;
-}
-
 function top3CategoriesForProduct(productTerm) {
   const tokens = tokenize(productTerm);
-  
   const scored = categories.map((c) => {
-    const score = calculateMatchScore(tokens, c.name);
-    return { 
-      id: c.id, 
-      name: c.name, 
-      score: score,
-      tokens: tokens,
-      categoryTokens: tokenize(c.name)
-    };
+    const name = normalize(c.name);
+    const hits = tokens.filter((t) => name.includes(t)).length;
+    return { id: c.id, name: c.name, score: hits };
   });
-
   scored.sort((a, b) => b.score - a.score);
   
-  const topResults = scored.slice(0, 5).filter((x) => x.score > 0);
+  const results = scored.slice(0, 3).filter((x) => x.score > 0);
   
-  DebugLogger.log("CATEGORY_MATCHER", "Category matching results", {
+  debugLog("CATEGORY_MATCHER", "Top categories found", {
     productTerm,
     tokens,
-    topResults: topResults.map(r => ({ name: r.name, score: r.score, id: r.id })),
-    allScores: scored.filter(s => s.score > 0).map(s => ({ name: s.name, score: s.score }))
+    results: results.map(r => ({ name: r.name, score: r.score, id: r.id }))
   });
-
-  return topResults.slice(0, 3);
+  
+  return results;
 }
 
 function filterGalleries(productTerm, classifier) {
@@ -302,7 +201,7 @@ function filterGalleries(productTerm, classifier) {
   );
   const classifierId = CLASSIFIERS[classifierKey];
 
-  DebugLogger.log("GALLERY_FILTER", "Starting gallery filtering", {
+  debugLog("GALLERY_FILTER", "Starting gallery filtering", {
     productTerm,
     classifier,
     classifierKey,
@@ -310,7 +209,10 @@ function filterGalleries(productTerm, classifier) {
   });
 
   if (!classifierId) {
-    DebugLogger.warn("GALLERY_FILTER", "Classifier not found", { classifier, available: Object.keys(CLASSIFIERS) });
+    debugWarn("GALLERY_FILTER", "Classifier not found", { 
+      classifier, 
+      availableClassifiers: Object.keys(CLASSIFIERS) 
+    });
     return { rows: [], topCats: [], classifierId: null };
   }
 
@@ -320,25 +222,21 @@ function filterGalleries(productTerm, classifier) {
   // Step 1: keep galleries with this classifier cat_id
   const step1 = galleries.filter((g) => g.cat_id === classifierId);
   
-  DebugLogger.log("GALLERY_FILTER", "After classifier filter", {
+  debugLog("GALLERY_FILTER", "After classifier filter", {
     classifierId,
     step1Count: step1.length,
     step1Sample: step1.slice(0, 3)
   });
 
-  // Step 2: filter by cat1 containing any of the top product category IDs
+  // Step 2: filter by cat1 containing any of the top 3 product IDs
   const step2 = step1.filter((g) =>
     g.cat1.some((id) => topIds.includes(id))
   );
 
-  DebugLogger.log("GALLERY_FILTER", "After category ID filter", {
+  debugLog("GALLERY_FILTER", "After category ID filter", {
     topIds,
     step2Count: step2.length,
-    step2Sample: step2.slice(0, 3),
-    matchingCombinations: step2.map(g => ({
-      type2: g.type2,
-      matchingCat1: g.cat1.filter(id => topIds.includes(id))
-    }))
+    step2Sample: step2.slice(0, 3)
   });
 
   return { rows: step2, topCats, classifierId };
@@ -348,7 +246,7 @@ function buildLinks(rows) {
   const unique = [...new Set(rows.map((r) => r.type2))];
   const links = unique.slice(0, 5).map((x) => `app.zulu.club/${encodeURIComponent(x)}`);
   
-  DebugLogger.log("LINK_BUILDER", "Generated links", {
+  debugLog("LINK_BUILDER", "Generated links", {
     inputRows: rows.length,
     uniqueType2: unique.length,
     generatedLinks: links
@@ -357,92 +255,14 @@ function buildLinks(rows) {
   return links;
 }
 
-// -------------------- AI RESPONSE GENERATOR --------------------
-async function generateAIResponse(intent, context = {}) {
-  const responseTemplates = {
-    greeting: `Hey 👋 Welcome to Zulu Club! I'm your personal shopping assistant. I can help you discover amazing products across fashion, home decor, electronics, and more. What are you looking for today?`,
-
-    help: `I can help you shop for various products! Here's what I can do:
-
-🔍 *Product Search* - Tell me what you're looking for (e.g., "jeans for men", "home decor items")
-🏪 *Company Info* - Learn about Zulu Club
-🎯 *Categories* - men, women, kids, home, wellness, electronics, gadgets, food, metals, discover
-
-Just tell me what product you're interested in and who it's for!`,
-
-    no_results: `I searched for *${context.productTerm}* in *${context.classifier}* category, but couldn't find exact matches. 😔
-
-Try these tips:
-• Use simpler terms (e.g., "shirt" instead of "formal office shirt")
-• Check other categories
-• Browse directly: app.zulu.club
-
-What else can I help you find?`,
-
-    results_found: `Great! I found ${context.resultCount} options for *${context.productTerm}* in *${context.classifier}* category 🎉
-
-${context.links.join('\n')}
-
-🛒 *More options:* app.zulu.club
-💡 *Need help?* Just ask!`,
-
-    fallback: `I'm not sure I understand. I'm here to help you shop for:
-• 👕 Fashion (men, women, kids)
-• 🏠 Home & Decor
-• 📱 Electronics & Gadgets
-• 🍔 Food & Wellness
-• 💎 Metals & More
-
-What specific product are you looking for?`
-  };
-
-  // Use AI to generate dynamic responses for complex cases
-  if (intent === 'product_search' && context.hasResults) {
-    try {
-      const dynamicPrompt = `
-Generate a friendly, engaging WhatsApp message for a shopping assistant. Context:
-- Product: ${context.productTerm}
-- Category: ${context.classifier}
-- Results found: ${context.resultCount}
-- Links: ${context.links.join(', ')}
-
-Make it:
-- Friendly and emoji-rich
-- Encouraging but not pushy
-- Include the product and category
-- Mention the results count
-- Keep it under 2 sentences plus links
-- No markdown, just WhatsApp formatting`;
-
-      const res = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: dynamicPrompt }],
-        max_tokens: 100,
-        temperature: 0.7
-      });
-
-      return res.choices[0].message.content.trim();
-    } catch (error) {
-      DebugLogger.warn("AI_RESPONSE", "Failed to generate dynamic response, using template", error);
-      return responseTemplates.results_found
-        .replace('${context.productTerm}', context.productTerm)
-        .replace('${context.classifier}', context.classifier)
-        .replace('${context.resultCount}', context.resultCount)
-        .replace('${context.links.join(\'\\n\')}', context.links.join('\n'));
-    }
-  }
-
-  return responseTemplates[intent] || responseTemplates.fallback;
-}
-
-// -------------------- ENHANCED GALLABOX SENDER --------------------
-async function sendMessage(to, name, message, context = {}) {
+// -------------------- GALLABOX SENDER --------------------
+async function sendMessage(to, name, message) {
   try {
-    DebugLogger.log("MESSAGE_SENDER", "Sending message", {
+    debugLog("MESSAGE_SENDER", "Sending message", {
       to,
       name,
       messageLength: message.length,
-      context
+      messagePreview: message.substring(0, 100) + "..."
     });
 
     await axios.post(
@@ -459,122 +279,107 @@ async function sendMessage(to, name, message, context = {}) {
           apiSecret: gallaboxConfig.apiSecret,
           "Content-Type": "application/json",
         },
-        timeout: 10000
       }
     );
     
-    DebugLogger.log("MESSAGE_SENDER", "Message sent successfully", { to });
-    return true;
-  } catch (error) {
-    DebugLogger.error("MESSAGE_SENDER", error, { to, name, messageLength: message.length });
-    return false;
+    debugLog("MESSAGE_SENDER", "Message sent successfully", { to });
+    console.log(`✅ Sent to ${to}`);
+  } catch (err) {
+    debugError("MESSAGE_SENDER", err, { to, name });
+    console.error("❌ Send error:", err.message);
   }
 }
 
-// -------------------- ENHANCED MESSAGE HANDLER --------------------
+// -------------------- MESSAGE HANDLER --------------------
 async function handleMessage(userPhone, userName, userMessage) {
   const sessionId = `${userPhone}-${Date.now()}`;
   
-  DebugLogger.log("MESSAGE_HANDLER", "New message received", {
+  debugLog("MESSAGE_HANDLER", "New message received", {
     sessionId,
     userPhone,
     userName,
     userMessage
   });
 
-  try {
-    const intent = await interpretMessage(userMessage);
-    
-    DebugLogger.log("MESSAGE_HANDLER", "Intent analysis completed", {
+  const intent = await interpretMessage(userMessage);
+  debugLog("MESSAGE_HANDLER", "Intent analysis completed", {
+    sessionId,
+    intent
+  });
+
+  if (intent.intent === "greeting") {
+    debugLog("MESSAGE_HANDLER", "Processing greeting intent", { sessionId });
+    return sendMessage(userPhone, userName, "Hey 👋 How can I help you shop today?");
+  }
+
+  if (intent.intent === "company_info") {
+    debugLog("MESSAGE_HANDLER", "Processing company_info intent", { sessionId });
+    return sendMessage(
+      userPhone,
+      userName,
+      "We're building a new way to shop and discover lifestyle products online. We all love visiting a premium store — exploring new arrivals, discovering chic home pieces, finding stylish outfits, or picking adorable toys for kids. But we know making time for mall visits isn't always easy. Traffic, work, busy schedules… it happens. Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep. Browse and shop high-quality lifestyle products across categories you love: - Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more - Men's Fashion — shirts, tees, jackets, athleisure & more - Kids — clothing, toys, learning kits & accessories - Footwear — sneakers, heels, flats, sandals & kids shoes - Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories - Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials - Fashion Accessories — bags, jewelry, watches, sunglasses & belts - Lifestyle Gifting — curated gift sets & décor-based gifting And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free. We're bringing the magic of premium in-store shopping to your home — curated, fast, and elevated. Now live in Gurgaon Experience us at our pop-ups: AIPL Joy Street & AIPL Central Explore & shop on zulu.club "
+    );
+  }
+
+  if (intent.intent === "product_search") {
+    debugLog("MESSAGE_HANDLER", "Processing product_search intent", { 
       sessionId,
-      intent
+      product_term: intent.product_term,
+      classifier: intent.classifier,
+      need_classifier: intent.need_classifier
     });
 
-    switch (intent.intent) {
-      case "greeting":
-        const greetingMsg = await generateAIResponse('greeting');
-        await sendMessage(userPhone, userName, greetingMsg, { sessionId, intent });
-        break;
-
-      case "company_info":
-        const companyMsg = await generateAIResponse('company_info');
-        await sendMessage(userPhone, userName, companyMsg, { sessionId, intent });
-        break;
-
-      case "help":
-        const helpMsg = await generateAIResponse('help');
-        await sendMessage(userPhone, userName, helpMsg, { sessionId, intent });
-        break;
-
-      case "product_search":
-        if (intent.need_classifier || !intent.classifier) {
-          const classifierMsg = "Would you like it for *men, women, kids, home, electronics, gadgets, wellness, food, metals,* or *discover*? 👕👗👶🏠📱";
-          await sendMessage(userPhone, userName, classifierMsg, { sessionId, intent });
-          break;
-        }
-
-        const { rows, topCats } = filterGalleries(intent.product_term, intent.classifier);
-        
-        DebugLogger.log("MESSAGE_HANDLER", "Product search results", {
-          sessionId,
-          productTerm: intent.product_term,
-          classifier: intent.classifier,
-          foundGalleries: rows.length,
-          topCategories: topCats
-        });
-
-        if (!rows.length) {
-          const noResultsMsg = await generateAIResponse('no_results', {
-            productTerm: intent.product_term,
-            classifier: intent.classifier
-          });
-          await sendMessage(userPhone, userName, noResultsMsg, { 
-            sessionId, 
-            intent,
-            searchResults: { found: 0, topCats }
-          });
-        } else {
-          const links = buildLinks(rows);
-          const resultsMsg = await generateAIResponse('product_search', {
-            productTerm: intent.product_term,
-            classifier: intent.classifier,
-            resultCount: rows.length,
-            links: links,
-            hasResults: true
-          });
-          await sendMessage(userPhone, userName, resultsMsg, { 
-            sessionId, 
-            intent,
-            searchResults: { found: rows.length, links, topCats }
-          });
-        }
-        break;
-
-      default:
-        const fallbackMsg = await generateAIResponse('fallback');
-        await sendMessage(userPhone, userName, fallbackMsg, { sessionId, intent });
+    if (intent.need_classifier) {
+      debugLog("MESSAGE_HANDLER", "Classifier needed, asking user", { sessionId });
+      return sendMessage(userPhone, userName, "Would you like it for *men, women,* or *kids*? 👕👗👶");
     }
 
-    DebugLogger.log("MESSAGE_HANDLER", "Message processing completed", { sessionId });
+    const { rows, topCats } = filterGalleries(intent.product_term, intent.classifier);
 
-  } catch (error) {
-    DebugLogger.error("MESSAGE_HANDLER", error, { sessionId, userPhone, userMessage });
-    
-    const errorMsg = "Sorry, I'm having trouble right now. Please try again in a moment or visit app.zulu.club directly! 🛒";
-    await sendMessage(userPhone, userName, errorMsg, { 
-      sessionId, 
-      error: true 
+    debugLog("MESSAGE_HANDLER", "Product search results", {
+      sessionId,
+      productTerm: intent.product_term,
+      classifier: intent.classifier,
+      foundGalleries: rows.length,
+      topCategories: topCats
     });
+
+    if (!rows.length) {
+      debugLog("MESSAGE_HANDLER", "No results found", { sessionId });
+      return sendMessage(
+        userPhone,
+        userName,
+        `Sorry, I couldn't find *${intent.product_term}* for *${intent.classifier}*. Try another keyword!`
+      );
+    }
+
+    const links = buildLinks(rows);
+    const response = `Here are *${intent.product_term}* options for *${intent.classifier}*:\n${links.join(
+      "\n"
+    )}\n\n🛒 More on app.zulu.club`;
+
+    debugLog("MESSAGE_HANDLER", "Sending results to user", {
+      sessionId,
+      responseLength: response.length,
+      linksCount: links.length
+    });
+
+    return sendMessage(userPhone, userName, response);
   }
+
+  debugLog("MESSAGE_HANDLER", "Fallback response", { sessionId });
+  return sendMessage(userPhone, userName, "Hi there! What product are you looking for?");
 }
 
-// -------------------- ENHANCED WEBHOOK --------------------
+// -------------------- WEBHOOK --------------------
 app.post("/webhook", async (req, res) => {
   const webhookId = `webhook-${Date.now()}`;
   
-  DebugLogger.log("WEBHOOK", "Incoming webhook", {
+  debugLog("WEBHOOK", "Incoming webhook request", {
     webhookId,
-    body: req.body
+    headers: req.headers,
+    bodyKeys: Object.keys(req.body),
+    fullBody: req.body
   });
 
   try {
@@ -582,110 +387,77 @@ app.post("/webhook", async (req, res) => {
     const phone = req.body?.whatsapp?.from;
     const name = req.body?.contact?.name || "Customer";
 
+    debugLog("WEBHOOK", "Parsed webhook data", {
+      webhookId,
+      msg,
+      phone,
+      name,
+      whatsappKeys: req.body?.whatsapp ? Object.keys(req.body.whatsapp) : 'NO_WHATSAPP_KEY',
+      contactKeys: req.body?.contact ? Object.keys(req.body.contact) : 'NO_CONTACT_KEY'
+    });
+
     if (!msg || !phone) {
-      DebugLogger.warn("WEBHOOK", "Invalid webhook payload", { msg, phone });
-      return res.status(400).json({ error: "Invalid webhook payload", webhookId });
+      debugWarn("WEBHOOK", "Invalid webhook payload - missing msg or phone", {
+        webhookId,
+        hasMsg: !!msg,
+        hasPhone: !!phone,
+        bodyStructure: {
+          whatsapp: req.body?.whatsapp ? {
+            text: req.body.whatsapp.text ? {
+              body: req.body.whatsapp.text.body ? 'PRESENT' : 'MISSING'
+            } : 'NO_TEXT',
+            from: req.body.whatsapp.from ? 'PRESENT' : 'MISSING'
+          } : 'NO_WHATSAPP',
+          contact: req.body?.contact ? 'PRESENT' : 'NO_CONTACT'
+        }
+      });
+      return res.status(400).json({ error: "Invalid webhook payload" });
     }
 
-    // Immediate response to webhook
-    res.status(200).json({ 
-      success: true, 
+    debugLog("WEBHOOK", "Webhook payload validated", {
       webhookId,
-      message: "Processing started"
+      phone,
+      name,
+      messageLength: msg.length
     });
 
-    // Process message asynchronously
     await handleMessage(phone, name, msg);
-
-  } catch (error) {
-    DebugLogger.error("WEBHOOK", error, { webhookId });
-    res.status(500).json({ 
-      error: "Internal server error", 
-      webhookId,
-      message: error.message 
-    });
+    
+    debugLog("WEBHOOK", "Webhook processing completed", { webhookId });
+    res.status(200).json({ success: true });
+  } catch (err) {
+    debugError("WEBHOOK", err, { webhookId });
+    console.error("💥 Webhook error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// -------------------- ENHANCED HEALTH ENDPOINT --------------------
+// -------------------- HEALTH --------------------
 app.get("/", (req, res) => {
   const healthInfo = {
-    status: "✅ Zulu Club AI Shopping Assistant",
-    version: "9.0 - Enhanced AI Response System",
-    data: {
-      categoriesLoaded: categories.length,
-      galleriesLoaded: galleries.length,
-      classifiers: Object.keys(CLASSIFIERS).length
-    },
-    system: {
-      nodeVersion: process.version,
-      memory: process.memoryUsage(),
-      uptime: process.uptime()
-    },
-    timestamp: new Date().toISOString()
+    status: "✅ Zulu Club Product Assistant",
+    version: "8.0 - Strict CSV Logic - DEBUG",
+    categoriesLoaded: categories.length,
+    galleriesLoaded: galleries.length,
+    classifiers: Object.keys(CLASSIFIERS),
+    timestamp: new Date().toISOString(),
   };
-
-  DebugLogger.log("HEALTH_CHECK", "Health check requested", healthInfo);
+  
+  debugLog("HEALTH_CHECK", "Health check requested", healthInfo);
   
   res.json(healthInfo);
 });
 
-// -------------------- DATA REFRESH ENDPOINT --------------------
-app.post("/refresh-data", async (req, res) => {
-  try {
-    DebugLogger.log("DATA_REFRESH", "Manual data refresh requested");
-    await loadCSVData();
-    res.json({ 
-      success: true, 
-      message: "Data refreshed successfully",
-      stats: {
-        categories: categories.length,
-        galleries: galleries.length
-      }
-    });
-  } catch (error) {
-    DebugLogger.error("DATA_REFRESH", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
+// -------------------- START --------------------
+loadCSVData().then(() => {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Zulu Club Assistant running on port ${PORT}`);
+    console.log('═'.repeat(60));
+    console.log('🔍 DEBUG MODE: Enhanced logging enabled');
+    console.log('📊 Endpoints:');
+    console.log('   • POST /webhook - WhatsApp webhook');
+    console.log('   • GET / - Health check');
+    console.log('═'.repeat(60));
+  });
 });
-
-// -------------------- START SERVER --------------------
-async function startServer() {
-  try {
-    DebugLogger.log("SERVER", "Starting Zulu Club Assistant...");
-    
-    await loadCSVData();
-    
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
-      console.log(`\n🎉 🚀 Zulu Club AI Assistant running on port ${PORT}`);
-      console.log('═'.repeat(60));
-      console.log('✅ Enhanced Features:');
-      console.log('   • AI-Powered Response Generation');
-      console.log('   • Advanced Debugging System');
-      console.log('   • Enhanced Category Matching');
-      console.log('   • Real-time Session Tracking');
-      console.log('   • Dynamic Link Generation');
-      console.log('═'.repeat(60));
-    });
-  } catch (error) {
-    DebugLogger.error("SERVER", error, { message: "Failed to start server" });
-    process.exit(1);
-  }
-}
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  DebugLogger.log("SERVER", "Received SIGTERM, shutting down gracefully");
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  DebugLogger.log("SERVER", "Received SIGINT, shutting down gracefully");
-  process.exit(0);
-});
-
-startServer();
