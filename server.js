@@ -216,10 +216,10 @@ async function detectIntent(userMessage) {
   }
 }
 
-// NEW: GPT-Powered Product Intent Handler
+// UPDATED: GPT-Powered Product Intent Handler with BOTH cat1 and type2 matching
 async function handleProductIntentWithGPT(userMessage) {
   try {
-    // Prepare CSV data for GPT
+    // Prepare CSV data for GPT with BOTH cat1 and type2
     const csvDataForGPT = galleriesData.map(item => ({
       type2: item.type2,
       cat1: item.cat1,
@@ -234,22 +234,27 @@ async function handleProductIntentWithGPT(userMessage) {
 
     TASK:
     1. Understand what product the user is looking for (even if misspelled or incomplete like "tshir" for "t-shirt")
-    2. Find the BEST matching categories from the CSV data
+    2. Find the BEST matching categories from the CSV data by searching BOTH fields:
+       - PRIMARY SEARCH: "cat1" field (contains multiple categories separated by commas) - HIGHEST PRIORITY
+       - SECONDARY SEARCH: "type2" field (single category name) - SECOND PRIORITY
     3. Return the top 5 most relevant matches in JSON format
 
-    MATCHING RULES:
-    - Be intelligent about matching: "tshir" → "T Shirts", "fountain" → "Home Decor", "makeup" → "Beauty"
-    - Consider synonyms and related products
-    - Look for any match in the cat1 field (which contains multiple categories separated by commas)
-    - Prioritize closer matches
+    MATCHING RULES (PRIORITY ORDER):
+    1. FIRST check "cat1" field (contains comma-separated categories) - HIGHEST PRIORITY
+    2. THEN check "type2" field - SECOND PRIORITY
+    3. Be intelligent about matching: "tshir" → "T Shirts", "fountain" → "Home Decor", "makeup" → "Beauty"
+    4. Consider synonyms and related products
+    5. Prioritize closer matches in cat1 over type2
 
     RESPONSE FORMAT:
     {
       "matches": [
         {
           "type2": "exact-type2-value-from-csv",
-          "reason": "brief explanation why this matches",
-          "relevance_score": 0.9
+          "cat1": "exact-cat1-value-from-csv",
+          "reason": "brief explanation why this matches and which field matched (cat1 or type2)",
+          "relevance_score": 0.9,
+          "matched_field": "cat1" // or "type2"
         }
       ]
     }
@@ -263,14 +268,15 @@ async function handleProductIntentWithGPT(userMessage) {
         {
           role: "system",
           content: `You are a product matching expert for Zulu Club. You match user queries to product categories intelligently. 
-          You understand misspellings, abbreviations, and related terms. Always return valid JSON with matches array.`
+          You understand misspellings, abbreviations, and related terms. You search BOTH cat1 (priority 1) and type2 (priority 2) fields.
+          Always return valid JSON with matches array.`
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      max_tokens: 1000,
+      max_tokens: 1500,
       temperature: 0.3,
       response_format: { type: "json_object" }
     });
@@ -293,8 +299,15 @@ async function handleProductIntentWithGPT(userMessage) {
     // Get the actual category data for the matched type2 values
     const matchedCategories = matches
       .map(match => {
-        const category = galleriesData.find(item => item.type2 === match.type2);
-        return category ? { ...category, reason: match.reason } : null;
+        const category = galleriesData.find(item => 
+          item.type2 === match.type2 && item.cat1 === match.cat1
+        );
+        return category ? { 
+          ...category, 
+          reason: match.reason,
+          matched_field: match.matched_field,
+          relevance_score: match.relevance_score 
+        } : null;
       })
       .filter(Boolean)
       .slice(0, 5);
@@ -308,6 +321,71 @@ async function handleProductIntentWithGPT(userMessage) {
   }
 }
 
+// NEW: Traditional keyword-based matching as fallback
+async function handleProductIntentTraditional(userMessage) {
+  console.log('🔍 Using traditional keyword matching...');
+  
+  const searchTerms = userMessage.toLowerCase().split(/\s+/);
+  const matches = [];
+
+  // Search through galleries data
+  galleriesData.forEach(item => {
+    let score = 0;
+    let matchedField = '';
+    let reason = '';
+
+    // Priority 1: Search in cat1 (comma-separated categories)
+    if (item.cat1) {
+      const cat1Terms = item.cat1.toLowerCase().split(',');
+      searchTerms.forEach(term => {
+        cat1Terms.forEach(catTerm => {
+          if (catTerm.includes(term.trim()) && term.length > 2) {
+            score += 2; // Higher score for cat1 matches
+            matchedField = 'cat1';
+            reason = `Found "${term}" in categories: ${item.cat1}`;
+          }
+        });
+      });
+    }
+
+    // Priority 2: Search in type2
+    if (item.type2 && item.type2.toLowerCase().includes(userMessage.toLowerCase())) {
+      score += 1.5; // Good score for type2 matches
+      if (!matchedField) {
+        matchedField = 'type2';
+        reason = `Found match in category: ${item.type2}`;
+      }
+    }
+
+    // Partial matches in type2
+    if (item.type2) {
+      searchTerms.forEach(term => {
+        if (item.type2.toLowerCase().includes(term) && term.length > 2) {
+          score += 1; // Lower score for partial matches
+          if (!matchedField) {
+            matchedField = 'type2';
+            reason = `Found "${term}" in category: ${item.type2}`;
+          }
+        }
+      });
+    }
+
+    if (score > 0) {
+      matches.push({
+        ...item,
+        relevance_score: score,
+        matched_field: matchedField,
+        reason: reason
+      });
+    }
+  });
+
+  // Sort by relevance score (highest first)
+  matches.sort((a, b) => b.relevance_score - a.relevance_score);
+  
+  return matches.slice(0, 5);
+}
+
 // Generate Product Response with GPT-Matched Categories
 function generateProductResponseWithGPT(matchedCategories, userMessage) {
   if (matchedCategories.length === 0) {
@@ -318,9 +396,17 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
   
   matchedCategories.forEach((category, index) => {
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
-    // Clean up the category display
-    const displayCategories = category.type2.split(',').slice(0, 2).join(', ');
-    response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
+    // Clean up the category display - show both cat1 and type2 info
+    const displayInfo = category.matched_field === 'cat1' 
+      ? `${category.cat1.split(',')[0].trim()} (${category.type2})` 
+      : category.type2;
+    
+    response += `${index + 1}. ${displayInfo}\n   🔗 ${link}\n`;
+    
+    // Add which field matched for debugging
+    if (category.reason) {
+      response += `   💡 ${category.reason}\n`;
+    }
   });
   
   response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
@@ -468,10 +554,11 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '5.0 - GPT-Powered Product Matching',
+    version: '6.0 - Dual Field Product Matching (cat1 + type2)',
     features: {
       intent_detection: 'AI-powered company vs product intent classification',
       product_matching: 'GPT-powered intelligent product matching',
+      dual_field_search: 'Priority: cat1 (primary), type2 (secondary)',
       intelligent_matching: 'Understands misspellings, abbreviations, and related terms',
       link_generation: 'Dynamic app.zulu.club link generation',
       ai_chat: 'OpenAI GPT-3.5 powered responses',
@@ -486,7 +573,8 @@ app.get('/', (req, res) => {
       health: 'GET /',
       test_message: 'POST /send-test-message',
       refresh_csv: 'GET /refresh-csv',
-      test_matching: 'GET /test-gpt-matching'
+      test_matching: 'GET /test-gpt-matching',
+      test_traditional: 'GET /test-traditional-matching'
     },
     timestamp: new Date().toISOString()
   });
@@ -525,6 +613,28 @@ app.get('/test-gpt-matching', async (req, res) => {
     res.json({
       query,
       result: result,
+      categories_loaded: galleriesData.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Test traditional matching endpoint
+app.get('/test-traditional-matching', async (req, res) => {
+  const { query } = req.query;
+  
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query parameter' });
+  }
+  
+  try {
+    const matches = await handleProductIntentTraditional(query);
+    
+    res.json({
+      query,
+      matches: matches,
+      total_matches: matches.length,
       categories_loaded: galleriesData.length
     });
   } catch (error) {
