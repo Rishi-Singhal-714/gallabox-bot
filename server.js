@@ -1,5 +1,5 @@
 // --------------------------------------------
-// ZULU CLUB - Strict CSV Matching Logic (no type2 fallback) - DEBUG VERSION
+// ZULU CLUB - Single CSV GPT Matching Logic
 // --------------------------------------------
 const express = require("express");
 const axios = require("axios");
@@ -21,29 +21,52 @@ const gallaboxConfig = {
 };
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
 
-// GitHub CSV URLs
-const categoriesUrl =
-  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/categories1.csv";
+// GitHub CSV URL - Only one CSV now
 const galleriesUrl =
-  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv";
+  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv";
 
 // -------------------- DATA --------------------
-let categories = [];
 let galleries = [];
 
-// Classifier IDs (fixed mapping)
-const CLASSIFIERS = {
-  men: 1869,
-  women: 1870,
-  kids: 1873,
-  home: 1874,
-  wellness: 2105,
-  metals: 2119,
-  food: 2130,
-  electronics: 2132,
-  gadgets: 2135,
-  discover: 2136,
+// Category mapping
+const CATEGORY_NAMES = {
+  1869: "Men",
+  1870: "Women", 
+  1873: "Kids",
+  1874: "Home",
+  2105: "Wellness",
+  2119: "Metals",
+  2130: "Food",
+  2132: "Electronics",
+  2135: "Gadgets",
+  2136: "Discover"
 };
+
+// Company Information
+const COMPANY_INFO = `We're building a new way to shop and discover lifestyle products online.
+
+We all love visiting a premium store — exploring new arrivals, discovering chic home pieces, finding stylish outfits, or picking adorable toys for kids. But we know making time for mall visits isn't always easy. Traffic, work, busy schedules… it happens.
+
+Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
+
+Browse and shop high-quality lifestyle products across categories you love:
+
+- Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more
+- Men's Fashion — shirts, tees, jackets, athleisure & more
+- Kids — clothing, toys, learning kits & accessories
+- Footwear — sneakers, heels, flats, sandals & kids shoes
+- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories
+- Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
+- Fashion Accessories — bags, jewelry, watches, sunglasses & belts
+- Lifestyle Gifting — curated gift sets & décor-based gifting
+
+And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
+
+We're bringing the magic of premium in-store shopping to your home — curated, fast, and elevated.
+
+Now live in only Gurgaon india 
+Experience us at our pop-ups: AIPL Joy Street & AIPL Central
+Explore & shop on zulu.club`;
 
 // -------------------- DEBUG UTILS --------------------
 function debugLog(module, message, data = null) {
@@ -71,7 +94,7 @@ function debugWarn(module, warning, data = null) {
   console.log('─'.repeat(50));
 }
 
-// -------------------- CSV LOADERS --------------------
+// -------------------- CSV LOADER --------------------
 async function fetchCSV(url) {
   const res = await axios.get(url, { responseType: "text" });
   return new Promise((resolve, reject) => {
@@ -93,7 +116,7 @@ function safeParseCat1(raw) {
   try {
     const arr = JSON.parse(s);
     return Array.isArray(arr)
-      ? arr.map((v) => Number(String(v).trim())).filter(Number.isFinite)
+      ? arr.map((v) => String(v).trim().toLowerCase()).filter(Boolean)
       : [];
   } catch {
     return [];
@@ -101,14 +124,7 @@ function safeParseCat1(raw) {
 }
 
 async function loadCSVData() {
-  const [catRows, galRows] = await Promise.all([
-    fetchCSV(categoriesUrl),
-    fetchCSV(galleriesUrl),
-  ]);
-
-  categories = catRows
-    .filter((r) => r.id && r.name)
-    .map((r) => ({ id: Number(r.id), name: String(r.name).trim() }));
+  const galRows = await fetchCSV(galleriesUrl);
 
   galleries = galRows
     .filter((r) => r.cat_id && r.type2 && r.cat1)
@@ -116,32 +132,90 @@ async function loadCSVData() {
       cat_id: Number(r.cat_id),
       type2: String(r.type2).trim(),
       cat1: safeParseCat1(r.cat1),
+      original: r
     }));
 
-  debugLog("DATA_LOADER", "CSV data loaded", {
-    categories: categories.length,
+  debugLog("DATA_LOADER", "Galleries CSV loaded", {
     galleries: galleries.length,
-    categoriesSample: categories.slice(0, 3),
-    galleriesSample: galleries.slice(0, 3)
+    sample: galleries.slice(0, 3),
+    categoryCounts: Object.keys(CATEGORY_NAMES).reduce((acc, catId) => {
+      acc[CATEGORY_NAMES[catId]] = galleries.filter(g => g.cat_id === Number(catId)).length;
+      return acc;
+    }, {})
   });
   
-  console.log(`✅ Loaded ${categories.length} categories & ${galleries.length} galleries`);
+  console.log(`✅ Loaded ${galleries.length} galleries from single CSV`);
 }
 
-// -------------------- GPT INTERPRETER --------------------
-async function interpretMessage(userMessage) {
+// -------------------- GPT PRODUCT MATCHER --------------------
+async function findProductsWithGPT(userMessage) {
+  // Prepare galleries data for GPT
+  const galleriesData = galleries.map(g => ({
+    category: CATEGORY_NAMES[g.cat_id] || `Category-${g.cat_id}`,
+    type2: g.type2,
+    product_keywords: g.cat1
+  }));
+
   const sysPrompt = `
-Classify the user's message for Zulu Club.
+You are a shopping assistant for Zulu Club. Analyze the user's message and find matching products from our galleries.
+
+GALLERIES DATA:
+${JSON.stringify(galleriesData, null, 2)}
+
+CATEGORIES:
+- Men (cat_id: 1869)
+- Women (cat_id: 1870) 
+- Kids (cat_id: 1873)
+- Home (cat_id: 1874)
+- Wellness (cat_id: 2105)
+- Metals (cat_id: 2119)
+- Food (cat_id: 2130)
+- Electronics (cat_id: 2132)
+- Gadgets (cat_id: 2135)
+- Discover (cat_id: 2136)
+
+COMPANY INFO: 
+${COMPANY_INFO}
+
+INSTRUCTIONS:
+1. First, determine if the user wants company info or product search
+2. For product search, extract the product keyword (tshirt, jeans, sarees, etc.)
+3. Find all galleries where product_keywords contain similar terms to the user's product
+4. Group results by category (Men, Women, Kids, etc.)
+5. Return type2 links for each category
 
 Return JSON with:
-- intent: "product_search" | "greeting" | "company_info"
-- product_term: e.g. "jeans", "t-shirt"
-- classifier: e.g. "men", "women", "kids", "home", "electronics", "wellness", "metals", "food", "gadgets", "discover" | null
-- need_classifier: true if classifier missing
+- intent: "company_info" | "product_search"
+- product_keyword: extracted product term (if product search)
+- results: { 
+    "Men": { found: boolean, links: string[] },
+    "Women": { found: boolean, links: string[] },
+    "Kids": { found: boolean, links: string[] },
+    "Home": { found: boolean, links: string[] },
+    "Wellness": { found: boolean, links: string[] },
+    "Metals": { found: boolean, links: string[] },
+    "Food": { found: boolean, links: string[] },
+    "Electronics": { found: boolean, links: string[] },
+    "Gadgets": { found: boolean, links: string[] },
+    "Discover": { found: boolean, links: string[] }
+  }
+- reasoning: brief explanation of matching logic
+
+Example response for "tshirt":
+{
+  "intent": "product_search",
+  "product_keyword": "tshirt",
+  "results": {
+    "Men": { "found": true, "links": ["app.zulu.club/men-tshirt1", "app.zulu.club/men-tshirt2"] },
+    "Women": { "found": true, "links": ["app.zulu.club/women-tshirt1"] },
+    "Kids": { "found": false, "links": [] }
+    ... other categories
+  }
+}
 `;
 
   try {
-    debugLog("GPT_INTERPRETER", "Analyzing user message", { userMessage });
+    debugLog("GPT_MATCHER", "Finding products with GPT", { userMessage });
 
     const res = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -149,110 +223,65 @@ Return JSON with:
         { role: "system", content: sysPrompt },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 200,
-      temperature: 0,
+      max_tokens: 2000,
+      temperature: 0.1,
+      response_format: { type: "json_object" }
     });
 
-    const interpretation = JSON.parse(res.choices[0].message.content.trim());
+    const result = JSON.parse(res.choices[0].message.content.trim());
     
-    debugLog("GPT_INTERPRETER", "Analysis completed", {
-      interpretation,
-      usage: res.usage
+    debugLog("GPT_MATCHER", "Product matching completed", {
+      intent: result.intent,
+      product_keyword: result.product_keyword,
+      resultsSummary: Object.keys(result.results || {}).reduce((acc, category) => {
+        acc[category] = `${result.results[category].links.length} links`;
+        return acc;
+      }, {}),
+      reasoning: result.reasoning
     });
 
-    return interpretation;
-  } catch (err) {
-    debugError("GPT_INTERPRETER", err, { userMessage });
-    return { intent: "product_search", product_term: userMessage, classifier: null, need_classifier: true };
+    return result;
+  } catch (error) {
+    debugError("GPT_MATCHER", error, { userMessage });
+    return { 
+      intent: "product_search", 
+      product_keyword: userMessage,
+      results: {},
+      reasoning: "GPT matching failed"
+    };
   }
 }
 
-// -------------------- CATEGORY SEARCH LOGIC --------------------
-function normalize(str) {
-  return String(str).toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
-}
-function tokenize(str) {
-  return normalize(str).split(" ").filter(Boolean);
-}
-
-function top3CategoriesForProduct(productTerm) {
-  const tokens = tokenize(productTerm);
-  const scored = categories.map((c) => {
-    const name = normalize(c.name);
-    const hits = tokens.filter((t) => name.includes(t)).length;
-    return { id: c.id, name: c.name, score: hits };
-  });
-  scored.sort((a, b) => b.score - a.score);
+// -------------------- RESPONSE BUILDER --------------------
+function buildProductResponse(gptResult) {
+  const { product_keyword, results } = gptResult;
   
-  const results = scored.slice(0, 3).filter((x) => x.score > 0);
-  
-  debugLog("CATEGORY_MATCHER", "Top categories found", {
-    productTerm,
-    tokens,
-    results: results.map(r => ({ name: r.name, score: r.score, id: r.id }))
-  });
-  
-  return results;
-}
+  let response = `Here are your *${product_keyword}* search results:\n\n`;
+  let hasAnyResults = false;
 
-function filterGalleries(productTerm, classifier) {
-  const classifierKey = Object.keys(CLASSIFIERS).find(
-    (k) => normalize(k) === normalize(classifier)
-  );
-  const classifierId = CLASSIFIERS[classifierKey];
-
-  debugLog("GALLERY_FILTER", "Starting gallery filtering", {
-    productTerm,
-    classifier,
-    classifierKey,
-    classifierId
+  // Add results for each category
+  Object.keys(results).forEach(category => {
+    const categoryData = results[category];
+    
+    if (categoryData.found && categoryData.links.length > 0) {
+      hasAnyResults = true;
+      response += `*${category} ${product_keyword} Galleries:*\n`;
+      categoryData.links.forEach(link => {
+        response += `• ${link}\n`;
+      });
+      response += `\n`;
+    } else {
+      response += `*${category} ${product_keyword} Galleries:*\n`;
+      response += `No galleries found for ${category.toLowerCase()}\n\n`;
+    }
   });
 
-  if (!classifierId) {
-    debugWarn("GALLERY_FILTER", "Classifier not found", { 
-      classifier, 
-      availableClassifiers: Object.keys(CLASSIFIERS) 
-    });
-    return { rows: [], topCats: [], classifierId: null };
+  if (!hasAnyResults) {
+    return `Sorry, I couldn't find any *${product_keyword}* options across all categories. Try searching for something else! 🔍`;
   }
 
-  const topCats = top3CategoriesForProduct(productTerm);
-  const topIds = topCats.map((x) => x.id);
-
-  // Step 1: keep galleries with this classifier cat_id
-  const step1 = galleries.filter((g) => g.cat_id === classifierId);
-  
-  debugLog("GALLERY_FILTER", "After classifier filter", {
-    classifierId,
-    step1Count: step1.length,
-    step1Sample: step1.slice(0, 3)
-  });
-
-  // Step 2: filter by cat1 containing any of the top 3 product IDs
-  const step2 = step1.filter((g) =>
-    g.cat1.some((id) => topIds.includes(id))
-  );
-
-  debugLog("GALLERY_FILTER", "After category ID filter", {
-    topIds,
-    step2Count: step2.length,
-    step2Sample: step2.slice(0, 3)
-  });
-
-  return { rows: step2, topCats, classifierId };
-}
-
-function buildLinks(rows) {
-  const unique = [...new Set(rows.map((r) => r.type2))];
-  const links = unique.slice(0, 5).map((x) => `app.zulu.club/${encodeURIComponent(x)}`);
-  
-  debugLog("LINK_BUILDER", "Generated links", {
-    inputRows: rows.length,
-    uniqueType2: unique.length,
-    generatedLinks: links
-  });
-  
-  return links;
+  response += `\n🛒 Explore more on app.zulu.club`;
+  return response;
 }
 
 // -------------------- GALLABOX SENDER --------------------
@@ -301,74 +330,43 @@ async function handleMessage(userPhone, userName, userMessage) {
     userMessage
   });
 
-  const intent = await interpretMessage(userMessage);
-  debugLog("MESSAGE_HANDLER", "Intent analysis completed", {
-    sessionId,
-    intent
-  });
+  try {
+    const gptResult = await findProductsWithGPT(userMessage);
+    
+    debugLog("MESSAGE_HANDLER", "GPT processing completed", {
+      sessionId,
+      intent: gptResult.intent,
+      product_keyword: gptResult.product_keyword
+    });
 
-  if (intent.intent === "greeting") {
-    debugLog("MESSAGE_HANDLER", "Processing greeting intent", { sessionId });
-    return sendMessage(userPhone, userName, "Hey 👋 How can I help you shop today?");
-  }
+    if (gptResult.intent === "company_info") {
+      debugLog("MESSAGE_HANDLER", "Sending company info", { sessionId });
+      return sendMessage(userPhone, userName, COMPANY_INFO);
+    }
 
-  if (intent.intent === "company_info") {
-    debugLog("MESSAGE_HANDLER", "Processing company_info intent", { sessionId });
+    if (gptResult.intent === "product_search") {
+      debugLog("MESSAGE_HANDLER", "Building product response", {
+        sessionId,
+        product_keyword: gptResult.product_keyword,
+        resultsCount: Object.keys(gptResult.results).length
+      });
+
+      const response = buildProductResponse(gptResult);
+      return sendMessage(userPhone, userName, response);
+    }
+
+    // Fallback for any other intent
+    debugLog("MESSAGE_HANDLER", "Fallback response", { sessionId });
+    return sendMessage(userPhone, userName, "Hi there! What product are you looking for today? 👕👗🛍️");
+
+  } catch (error) {
+    debugError("MESSAGE_HANDLER", error, { sessionId, userMessage });
     return sendMessage(
-      userPhone,
-      userName,
-      "We're building a new way to shop and discover lifestyle products online. We all love visiting a premium store — exploring new arrivals, discovering chic home pieces, finding stylish outfits, or picking adorable toys for kids. But we know making time for mall visits isn't always easy. Traffic, work, busy schedules… it happens. Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep. Browse and shop high-quality lifestyle products across categories you love: - Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more - Men's Fashion — shirts, tees, jackets, athleisure & more - Kids — clothing, toys, learning kits & accessories - Footwear — sneakers, heels, flats, sandals & kids shoes - Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories - Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials - Fashion Accessories — bags, jewelry, watches, sunglasses & belts - Lifestyle Gifting — curated gift sets & décor-based gifting And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free. We're bringing the magic of premium in-store shopping to your home — curated, fast, and elevated. Now live in Gurgaon Experience us at our pop-ups: AIPL Joy Street & AIPL Central Explore & shop on zulu.club "
+      userPhone, 
+      userName, 
+      "Sorry, I'm having trouble right now. Please try again or visit app.zulu.club directly! 🛒"
     );
   }
-
-  if (intent.intent === "product_search") {
-    debugLog("MESSAGE_HANDLER", "Processing product_search intent", { 
-      sessionId,
-      product_term: intent.product_term,
-      classifier: intent.classifier,
-      need_classifier: intent.need_classifier
-    });
-
-    if (intent.need_classifier) {
-      debugLog("MESSAGE_HANDLER", "Classifier needed, asking user", { sessionId });
-      return sendMessage(userPhone, userName, "Would you like it for *men, women,* or *kids*? 👕👗👶");
-    }
-
-    const { rows, topCats } = filterGalleries(intent.product_term, intent.classifier);
-
-    debugLog("MESSAGE_HANDLER", "Product search results", {
-      sessionId,
-      productTerm: intent.product_term,
-      classifier: intent.classifier,
-      foundGalleries: rows.length,
-      topCategories: topCats
-    });
-
-    if (!rows.length) {
-      debugLog("MESSAGE_HANDLER", "No results found", { sessionId });
-      return sendMessage(
-        userPhone,
-        userName,
-        `Sorry, I couldn't find *${intent.product_term}* for *${intent.classifier}*. Try another keyword!`
-      );
-    }
-
-    const links = buildLinks(rows);
-    const response = `Here are *${intent.product_term}* options for *${intent.classifier}*:\n${links.join(
-      "\n"
-    )}\n\n🛒 More on app.zulu.club`;
-
-    debugLog("MESSAGE_HANDLER", "Sending results to user", {
-      sessionId,
-      responseLength: response.length,
-      linksCount: links.length
-    });
-
-    return sendMessage(userPhone, userName, response);
-  }
-
-  debugLog("MESSAGE_HANDLER", "Fallback response", { sessionId });
-  return sendMessage(userPhone, userName, "Hi there! What product are you looking for?");
 }
 
 // -------------------- WEBHOOK --------------------
@@ -435,11 +433,10 @@ app.post("/webhook", async (req, res) => {
 // -------------------- HEALTH --------------------
 app.get("/", (req, res) => {
   const healthInfo = {
-    status: "✅ Zulu Club Product Assistant",
-    version: "8.0 - Strict CSV Logic - DEBUG",
-    categoriesLoaded: categories.length,
+    status: "✅ Zulu Club GPT Product Matcher",
+    version: "1.0 - Single CSV GPT Logic",
     galleriesLoaded: galleries.length,
-    classifiers: Object.keys(CLASSIFIERS),
+    categories: CATEGORY_NAMES,
     timestamp: new Date().toISOString(),
   };
   
@@ -452,9 +449,13 @@ app.get("/", (req, res) => {
 loadCSVData().then(() => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`\n🚀 Zulu Club Assistant running on port ${PORT}`);
+    console.log(`\n🚀 Zulu Club GPT Assistant running on port ${PORT}`);
     console.log('═'.repeat(60));
-    console.log('🔍 DEBUG MODE: Enhanced logging enabled');
+    console.log('🎯 NEW FEATURES:');
+    console.log('   • Single CSV Processing');
+    console.log('   • GPT-Powered Product Matching');
+    console.log('   • Category-wise Results');
+    console.log('   • Automatic Company Info Responses');
     console.log('📊 Endpoints:');
     console.log('   • POST /webhook - WhatsApp webhook');
     console.log('   • GET / - Health check');
