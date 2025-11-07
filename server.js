@@ -57,7 +57,7 @@ async function loadGalleriesData() {
   try {
     console.log('📥 Loading galleries CSV data...');
     const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv', {
-      timeout: 15000
+      timeout: 60000 
     });
     
     return new Promise((resolve, reject) => {
