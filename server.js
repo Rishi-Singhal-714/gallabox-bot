@@ -319,7 +319,7 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
   matchedCategories.forEach((category, index) => {
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
     // Clean up the category display
-    const displayCategories = category.cat1.split(',').slice(0, 2).join(', ');
+    const displayCategories = category.type2.split(',').slice(0, 2).join(', ');
     response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
   });
   
