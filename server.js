@@ -63,7 +63,6 @@ async function loadGalleriesData() {
     return new Promise((resolve, reject) => {
       const results = [];
       
-      // Check if we got valid CSV data
       if (!response.data || response.data.trim().length === 0) {
         console.log('❌ Empty CSV data received');
         resolve([]);
@@ -75,27 +74,18 @@ async function loadGalleriesData() {
       stream
         .pipe(csv())
         .on('data', (data) => {
-          // Debug: log raw data
-          console.log('📊 Raw CSV row:', data);
-          
-          // Map CSV columns - handle different possible column names
           const mappedData = {
             type2: data.type2 || data.Type2 || data.TYPE2 || '',
             cat_id: data.cat_id || data.cat_id || data.CAT_ID || '',
             cat1: data.cat1 || data.Cat1 || data.CAT1 || ''
           };
           
-          // Only add if we have valid data
           if (mappedData.type2 && mappedData.cat1) {
             results.push(mappedData);
-            console.log(`✅ Added category: ${mappedData.cat1} -> ${mappedData.type2}`);
-          } else {
-            console.log('❌ Skipping row - missing type2 or cat1:', mappedData);
           }
         })
         .on('end', () => {
           console.log(`✅ Loaded ${results.length} product categories from CSV`);
-          console.log('📋 Sample categories:', results.slice(0, 3));
           resolve(results);
         })
         .on('error', (error) => {
@@ -112,7 +102,6 @@ async function loadGalleriesData() {
 // Initialize CSV data on server start
 loadGalleriesData().then(data => {
   galleriesData = data;
-  console.log(`🎉 Final loaded data: ${galleriesData.length} categories`);
 }).catch(error => {
   console.error('Failed to load galleries data:', error);
 });
@@ -162,7 +151,7 @@ async function sendMessage(to, name, message) {
   }
 }
 
-// Enhanced AI Chat Functionality with Intent Detection
+// Enhanced AI Chat Functionality with GPT-Powered Product Matching
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
@@ -173,10 +162,10 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     const intent = await detectIntent(userMessage);
     console.log(`🎯 Detected intent: ${intent}`);
     
-    // If product intent, find relevant categories and generate links
+    // If product intent, use GPT to find best matching categories
     if (intent === 'product' && galleriesData.length > 0) {
-      console.log(`🔍 Searching through ${galleriesData.length} categories for: ${userMessage}`);
-      const productResponse = await handleProductIntent(userMessage);
+      console.log(`🔍 Using GPT to find best matches from ${galleriesData.length} categories`);
+      const productResponse = await handleProductIntentWithGPT(userMessage);
       return productResponse;
     }
     
@@ -223,42 +212,49 @@ async function detectIntent(userMessage) {
     
   } catch (error) {
     console.error('Error in intent detection:', error);
-    return 'company'; // Default to company intent on error
+    return 'company';
   }
 }
 
-// Product Intent Handler
-async function handleProductIntent(userMessage) {
+// NEW: GPT-Powered Product Intent Handler
+async function handleProductIntentWithGPT(userMessage) {
   try {
-    // Extract product keywords using GPT
-    const productKeywords = await extractProductKeywords(userMessage);
-    console.log(`🔍 Extracted product keywords:`, productKeywords);
-    
-    // Find matching categories
-    const matchingCategories = findMatchingCategories(productKeywords);
-    console.log(`📋 Found ${matchingCategories.length} matching categories`);
-    
-    // Generate response with links
-    return generateProductResponse(matchingCategories, userMessage);
-    
-  } catch (error) {
-    console.error('Error handling product intent:', error);
-    return generateFallbackProductResponse();
-  }
-}
+    // Prepare CSV data for GPT
+    const csvDataForGPT = galleriesData.map(item => ({
+      type2: item.type2,
+      cat1: item.cat1,
+      cat_id: item.cat_id
+    }));
 
-// Extract Product Keywords using GPT
-async function extractProductKeywords(userMessage) {
-  try {
     const prompt = `
-    Extract product-related keywords from the user's message. Focus on:
-    - Product types (shirts, dresses, shoes, home decor, jewellery, accessories, handbags, sandals, kurtas, suits, sarees, t-shirts, shorts, skirts, etc.)
-    - Categories (fashion, beauty, home, kids, women, men, clothing, footwear, etc.)
-    - Specific items they might be looking for
+    USER MESSAGE: "${userMessage}"
 
-    User Message: "${userMessage}"
+    AVAILABLE PRODUCT CATEGORIES (from CSV):
+    ${JSON.stringify(csvDataForGPT, null, 2)}
 
-    Return the keywords as a comma-separated list. Be broad and inclusive in your interpretation.
+    TASK:
+    1. Understand what product the user is looking for (even if misspelled or incomplete like "tshir" for "t-shirt")
+    2. Find the BEST matching categories from the CSV data
+    3. Return the top 5 most relevant matches in JSON format
+
+    MATCHING RULES:
+    - Be intelligent about matching: "tshir" → "T Shirts", "fountain" → "Home Decor", "makeup" → "Beauty"
+    - Consider synonyms and related products
+    - Look for any match in the cat1 field (which contains multiple categories separated by commas)
+    - Prioritize closer matches
+
+    RESPONSE FORMAT:
+    {
+      "matches": [
+        {
+          "type2": "exact-type2-value-from-csv",
+          "reason": "brief explanation why this matches",
+          "relevance_score": 0.9
+        }
+      ]
+    }
+
+    Only return JSON, no additional text.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -266,129 +262,69 @@ async function extractProductKeywords(userMessage) {
       messages: [
         {
           role: "system",
-          content: "You are a keyword extractor for shopping queries. Extract relevant product keywords from the user's message and return them as a comma-separated list. Focus on fashion, lifestyle, and home products."
+          content: `You are a product matching expert for Zulu Club. You match user queries to product categories intelligently. 
+          You understand misspellings, abbreviations, and related terms. Always return valid JSON with matches array.`
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      max_tokens: 100,
-      temperature: 0.3
+      max_tokens: 1000,
+      temperature: 0.3,
+      response_format: { type: "json_object" }
     });
 
-    const keywordsText = completion.choices[0].message.content.trim();
-    const keywords = keywordsText.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('🤖 GPT Product Matching Response:', responseText);
     
-    return keywords;
+    let matches;
+    try {
+      matches = JSON.parse(responseText).matches;
+    } catch (parseError) {
+      console.error('Error parsing GPT response:', parseError);
+      matches = [];
+    }
+
+    if (!matches || matches.length === 0) {
+      return generateFallbackProductResponse();
+    }
+
+    // Get the actual category data for the matched type2 values
+    const matchedCategories = matches
+      .map(match => {
+        const category = galleriesData.find(item => item.type2 === match.type2);
+        return category ? { ...category, reason: match.reason } : null;
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+
+    console.log(`🎯 Final matched categories:`, matchedCategories);
+    return generateProductResponseWithGPT(matchedCategories, userMessage);
     
   } catch (error) {
-    console.error('Error extracting keywords:', error);
-    // Fallback: simple keyword extraction
-    return userMessage.toLowerCase().split(' ').filter(word => 
-      word.length > 3 && !['what', 'where', 'when', 'how', 'show', 'looking', 'want', 'need', 'tell', 'about'].includes(word)
-    );
+    console.error('Error in GPT product matching:', error);
+    return generateFallbackProductResponse();
   }
 }
 
-// Find Matching Categories in CSV Data - FIXED VERSION
-function findMatchingCategories(keywords) {
-  if (galleriesData.length === 0) {
-    console.log('❌ No galleries data available');
-    return [];
-  }
-
-  const matches = [];
-  console.log(`🔍 Starting category matching with ${keywords.length} keywords:`, keywords);
-  
-  galleriesData.forEach((item, index) => {
-    if (!item.cat1 || !item.type2) {
-      console.log(`❌ Skipping item ${index} - missing cat1 or type2:`, item);
-      return;
-    }
-
-    const cat1String = item.cat1.toLowerCase();
-    const type2 = item.type2.toLowerCase();
-    
-    // Split cat1 by commas and clean up each category
-    const cat1Categories = cat1String.split(',').map(cat => cat.trim());
-    
-    // Check if any keyword matches any category in cat1 or type2
-    const hasMatch = keywords.some(keyword => {
-      // Check against each individual category in cat1
-      const cat1Match = cat1Categories.some(cat => {
-        // Check if keyword is contained in category or category contains keyword
-        const keywordInCat = cat.includes(keyword);
-        const catInKeyword = keyword.includes(cat);
-        const exactMatch = cat === keyword;
-        
-        if (keywordInCat || catInKeyword || exactMatch) {
-          console.log(`✅ Match found: keyword "${keyword}" matches category "${cat}"`);
-          return true;
-        }
-        return false;
-      });
-      
-      // Check against type2
-      const type2Match = type2.includes(keyword) || keyword.includes(type2);
-      if (type2Match) {
-        console.log(`✅ Match found: keyword "${keyword}" matches type2 "${type2}"`);
-      }
-      
-      return cat1Match || type2Match;
-    });
-    
-    if (hasMatch) {
-      console.log(`🎯 Adding match: ${item.cat1} -> ${item.type2}`);
-      matches.push({
-        category: item.cat1,
-        type2: item.type2,
-        cat_id: item.cat_id
-      });
-    }
-  });
-  
-  // Sort by cat_id if available
-  matches.sort((a, b) => {
-    const idA = parseInt(a.cat_id) || 0;
-    const idB = parseInt(b.cat_id) || 0;
-    return idA - idB;
-  });
-  
-  // Remove duplicates based on type2
-  const uniqueMatches = [];
-  const seenType2 = new Set();
-  
-  matches.forEach(match => {
-    if (!seenType2.has(match.type2)) {
-      seenType2.add(match.type2);
-      uniqueMatches.push(match);
-    }
-  });
-  
-  console.log(`📊 Final unique matches: ${uniqueMatches.length}`);
-  return uniqueMatches.slice(0, 8); // Return top 8 matches
-}
-
-// Generate Product Response with Links
-function generateProductResponse(matchingCategories, userMessage) {
-  if (matchingCategories.length === 0) {
-    console.log('❌ No matching categories found, using fallback');
+// Generate Product Response with GPT-Matched Categories
+function generateProductResponseWithGPT(matchedCategories, userMessage) {
+  if (matchedCategories.length === 0) {
     return generateFallbackProductResponse();
   }
   
-  let response = `Great! Based on your interest in "${userMessage}", I found these perfect categories for you: 🛍️\n\n`;
+  let response = `Perfect! Based on your interest in "${userMessage}", I found these great categories for you: 🛍️\n\n`;
   
-  matchingCategories.forEach((category, index) => {
+  matchedCategories.forEach((category, index) => {
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
-    // Clean up the category display - take first few categories if there are many
-    const displayCategories = category.category.split(',').slice(0, 3).join(', ');
-    response += `${index + 1}. ${displayCategories}: ${link}\n`;
+    // Clean up the category display
+    const displayCategories = category.category.split(',').slice(0, 2).join(', ');
+    response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
   });
   
   response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
   
-  // Ensure response is within WhatsApp limits
   if (response.length > 1500) {
     response = response.substring(0, 1500) + '...\n\nVisit zulu.club for more categories!';
   }
@@ -398,15 +334,13 @@ function generateProductResponse(matchingCategories, userMessage) {
 
 // Fallback Product Response
 function generateFallbackProductResponse() {
-  console.log('🔄 Using fallback product response');
   return `🎉 Exciting news! Zulu Club offers amazing products across all categories:\n\n• 👗 Women's Fashion (Dresses, Jewellery, Handbags)\n• 👔 Men's Fashion (Shirts, T-Shirts, Kurtas)\n• 👶 Kids & Toys\n• 🏠 Home Decor\n• 💄 Beauty & Self-Care\n• 👠 Footwear & Sandals\n• 👜 Accessories\n• 🎁 Lifestyle Gifting\n\nExperience 100-minute delivery in Gurgaon! 🚀\n\nBrowse all categories at: zulu.club\nOr tell me what specific products you're looking for!`;
 }
 
-// Company Response Generator (existing logic)
+// Company Response Generator
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
   
-  // System message with Zulu Club information
   const systemMessage = {
     role: "system",
     content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
@@ -430,7 +364,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   
   messages.push(systemMessage);
   
-  // Add conversation history if available
   if (conversationHistory && conversationHistory.length > 0) {
     const recentHistory = conversationHistory.slice(-6);
     recentHistory.forEach(msg => {
@@ -443,7 +376,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     });
   }
   
-  // Add current user message
   messages.push({
     role: "user",
     content: userMessage
@@ -462,30 +394,25 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 // Handle user message with AI
 async function handleMessage(sessionId, userMessage) {
   try {
-    // Initialize conversation if not exists
     if (!conversations[sessionId]) {
       conversations[sessionId] = { history: [] };
     }
     
-    // Add user message to history
     conversations[sessionId].history.push({
       role: "user",
       content: userMessage
     });
     
-    // Get AI response with intent detection
     const aiResponse = await getChatGPTResponse(
       userMessage, 
       conversations[sessionId].history
     );
     
-    // Add AI response to history
     conversations[sessionId].history.push({
       role: "assistant",
       content: aiResponse
     });
     
-    // Keep history manageable (last 10 messages)
     if (conversations[sessionId].history.length > 10) {
       conversations[sessionId].history = conversations[sessionId].history.slice(-10);
     }
@@ -505,7 +432,6 @@ app.post('/webhook', async (req, res) => {
     
     const webhookData = req.body;
     
-    // Extract message and contact info from Gallabox webhook
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
@@ -513,13 +439,8 @@ app.post('/webhook', async (req, res) => {
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
     
     if (userMessage && userPhone) {
-      // Use phone number as session ID
       const sessionId = userPhone;
-      
-      // Get AI response
       const aiResponse = await handleMessage(sessionId, userMessage);
-      
-      // Send response via Gallabox
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
@@ -547,28 +468,25 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '4.1 - Fixed Category Matching',
+    version: '5.0 - GPT-Powered Product Matching',
     features: {
       intent_detection: 'AI-powered company vs product intent classification',
-      product_matching: 'Enhanced CSV category matching with multi-category support',
+      product_matching: 'GPT-powered intelligent product matching',
+      intelligent_matching: 'Understands misspellings, abbreviations, and related terms',
       link_generation: 'Dynamic app.zulu.club link generation',
       ai_chat: 'OpenAI GPT-3.5 powered responses',
-      whatsapp_integration: 'Gallabox API integration',
-      conversation_memory: 'Session-based conversation history'
+      whatsapp_integration: 'Gallabox API integration'
     },
     stats: {
       product_categories_loaded: galleriesData.length,
-      active_conversations: Object.keys(conversations).length,
-      sample_categories: galleriesData.slice(0, 3).map(item => ({
-        cat1: item.cat1,
-        type2: item.type2
-      }))
+      active_conversations: Object.keys(conversations).length
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
       test_message: 'POST /send-test-message',
-      refresh_csv: 'GET /refresh-csv'
+      refresh_csv: 'GET /refresh-csv',
+      test_matching: 'GET /test-gpt-matching'
     },
     timestamp: new Date().toISOString()
   });
@@ -583,14 +501,34 @@ app.get('/refresh-csv', async (req, res) => {
     res.json({ 
       status: 'success', 
       message: 'CSV data refreshed successfully',
-      categories_loaded: galleriesData.length,
-      sample_categories: galleriesData.slice(0, 5)
+      categories_loaded: galleriesData.length
     });
   } catch (error) {
     res.status(500).json({ 
       status: 'error',
       message: error.message
     });
+  }
+});
+
+// Test GPT matching endpoint
+app.get('/test-gpt-matching', async (req, res) => {
+  const { query } = req.query;
+  
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query parameter' });
+  }
+  
+  try {
+    const result = await handleProductIntentWithGPT(query);
+    
+    res.json({
+      query,
+      result: result,
+      categories_loaded: galleriesData.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -627,31 +565,6 @@ app.post('/send-test-message', async (req, res) => {
       error: 'Failed to send test message',
       details: error.message
     });
-  }
-});
-
-// Test product matching endpoint
-app.get('/test-matching', async (req, res) => {
-  const { query } = req.query;
-  
-  if (!query) {
-    return res.status(400).json({ error: 'Missing query parameter' });
-  }
-  
-  try {
-    const keywords = await extractProductKeywords(query);
-    const matches = findMatchingCategories(keywords);
-    
-    res.json({
-      query,
-      extracted_keywords: keywords,
-      matches_found: matches.length,
-      matches: matches,
-      all_categories_count: galleriesData.length,
-      sample_categories: galleriesData.slice(0, 5)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
