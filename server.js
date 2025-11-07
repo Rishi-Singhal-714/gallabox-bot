@@ -1,5 +1,5 @@
 // --------------------------------------------
-// ZULU CLUB - Single CSV GPT Matching Logic
+// ZULU CLUB - Single CSV GPT Product Matcher
 // --------------------------------------------
 const express = require("express");
 const axios = require("axios");
@@ -21,14 +21,14 @@ const gallaboxConfig = {
 };
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
 
-// GitHub CSV URL - Only one CSV now
+// GitHub CSV URL
 const galleriesUrl =
-  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv";
+  "https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries1.csv";
 
 // -------------------- DATA --------------------
 let galleries = [];
 
-// Category mapping
+// Category mapping by ID
 const CATEGORY_NAMES = {
   1869: "Men",
   1870: "Women", 
@@ -144,11 +144,11 @@ async function loadCSVData() {
     }, {})
   });
   
-  console.log(`✅ Loaded ${galleries.length} galleries from single CSV`);
+  console.log(`✅ Loaded ${galleries.length} galleries from CSV`);
 }
 
 // -------------------- GPT PRODUCT MATCHER --------------------
-async function findProductsWithGPT(userMessage) {
+async function analyzeUserMessage(userMessage) {
   // Prepare galleries data for GPT
   const galleriesData = galleries.map(g => ({
     category: CATEGORY_NAMES[g.cat_id] || `Category-${g.cat_id}`,
@@ -157,65 +157,38 @@ async function findProductsWithGPT(userMessage) {
   }));
 
   const sysPrompt = `
-You are a shopping assistant for Zulu Club. Analyze the user's message and find matching products from our galleries.
+You are a shopping assistant for Zulu Club. Analyze the user's message and:
+
+1. FIRST, check if the user is asking about the company - if yes, return "company_info" intent
+2. If not, check if they are looking for products - if yes, extract the main product keyword
+3. Use the galleries data to find matching products
 
 GALLERIES DATA:
 ${JSON.stringify(galleriesData, null, 2)}
-
-CATEGORIES:
-- Men (cat_id: 1869)
-- Women (cat_id: 1870) 
-- Kids (cat_id: 1873)
-- Home (cat_id: 1874)
-- Wellness (cat_id: 2105)
-- Metals (cat_id: 2119)
-- Food (cat_id: 2130)
-- Electronics (cat_id: 2132)
-- Gadgets (cat_id: 2135)
-- Discover (cat_id: 2136)
 
 COMPANY INFO: 
 ${COMPANY_INFO}
 
 INSTRUCTIONS:
-1. First, determine if the user wants company info or product search
-2. For product search, extract the product keyword (tshirt, jeans, sarees, etc.)
-3. Find all galleries where product_keywords contain similar terms to the user's product
-4. Group results by category (Men, Women, Kids, etc.)
-5. Return type2 links for each category
+- If user asks about company, team, what is zulu club, about us → return "company_info"
+- If user asks for products → extract product keyword and return "product_search"
+- For product search, find the main product term (tshirt, jeans, sarees, etc.)
 
-Return JSON with:
-- intent: "company_info" | "product_search"
-- product_keyword: extracted product term (if product search)
-- results: { 
-    "Men": { found: boolean, links: string[] },
-    "Women": { found: boolean, links: string[] },
-    "Kids": { found: boolean, links: string[] },
-    "Home": { found: boolean, links: string[] },
-    "Wellness": { found: boolean, links: string[] },
-    "Metals": { found: boolean, links: string[] },
-    "Food": { found: boolean, links: string[] },
-    "Electronics": { found: boolean, links: string[] },
-    "Gadgets": { found: boolean, links: string[] },
-    "Discover": { found: boolean, links: string[] }
-  }
-- reasoning: brief explanation of matching logic
-
-Example response for "tshirt":
+Return ONLY JSON with:
 {
-  "intent": "product_search",
-  "product_keyword": "tshirt",
-  "results": {
-    "Men": { "found": true, "links": ["app.zulu.club/men-tshirt1", "app.zulu.club/men-tshirt2"] },
-    "Women": { "found": true, "links": ["app.zulu.club/women-tshirt1"] },
-    "Kids": { "found": false, "links": [] }
-    ... other categories
-  }
+  "intent": "company_info" | "product_search",
+  "product_keyword": "extracted product term" (only for product_search),
+  "reasoning": "brief explanation"
 }
+
+Examples:
+User: "What is Zulu Club?" → {"intent": "company_info", "product_keyword": "", "reasoning": "User asked about company"}
+User: "I need tshirt" → {"intent": "product_search", "product_keyword": "tshirt", "reasoning": "User looking for tshirt"}
+User: "Show me jeans" → {"intent": "product_search", "product_keyword": "jeans", "reasoning": "User wants jeans"}
 `;
 
   try {
-    debugLog("GPT_MATCHER", "Finding products with GPT", { userMessage });
+    debugLog("GPT_ANALYZER", "Analyzing user message", { userMessage });
 
     const res = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -223,64 +196,99 @@ Example response for "tshirt":
         { role: "system", content: sysPrompt },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 2000,
+      max_tokens: 500,
       temperature: 0.1,
       response_format: { type: "json_object" }
     });
 
     const result = JSON.parse(res.choices[0].message.content.trim());
     
-    debugLog("GPT_MATCHER", "Product matching completed", {
-      intent: result.intent,
-      product_keyword: result.product_keyword,
-      resultsSummary: Object.keys(result.results || {}).reduce((acc, category) => {
-        acc[category] = `${result.results[category].links.length} links`;
-        return acc;
-      }, {}),
-      reasoning: result.reasoning
-    });
+    debugLog("GPT_ANALYZER", "Analysis completed", result);
 
     return result;
   } catch (error) {
-    debugError("GPT_MATCHER", error, { userMessage });
+    debugError("GPT_ANALYZER", error, { userMessage });
     return { 
       intent: "product_search", 
       product_keyword: userMessage,
-      results: {},
-      reasoning: "GPT matching failed"
+      reasoning: "GPT analysis failed, defaulting to product search"
     };
   }
 }
 
-// -------------------- RESPONSE BUILDER --------------------
-function buildProductResponse(gptResult) {
-  const { product_keyword, results } = gptResult;
+// -------------------- PRODUCT SEARCH LOGIC --------------------
+function searchProducts(productKeyword) {
+  debugLog("PRODUCT_SEARCH", "Starting product search", { productKeyword });
   
-  let response = `Here are your *${product_keyword}* search results:\n\n`;
-  let hasAnyResults = false;
+  const results = {};
+  
+  // Initialize all categories
+  Object.values(CATEGORY_NAMES).forEach(category => {
+    results[category] = { found: false, links: [] };
+  });
 
-  // Add results for each category
-  Object.keys(results).forEach(category => {
-    const categoryData = results[category];
-    
-    if (categoryData.found && categoryData.links.length > 0) {
-      hasAnyResults = true;
-      response += `*${category} ${product_keyword} Galleries:*\n`;
-      categoryData.links.forEach(link => {
-        response += `• ${link}\n`;
-      });
-      response += `\n`;
-    } else {
-      response += `*${category} ${product_keyword} Galleries:*\n`;
-      response += `No galleries found for ${category.toLowerCase()}\n\n`;
+  // Search through all galleries
+  galleries.forEach(gallery => {
+    const categoryName = CATEGORY_NAMES[gallery.cat_id];
+    if (!categoryName) return;
+
+    // Check if any keyword in cat1 matches the product keyword
+    const hasMatch = gallery.cat1.some(keyword => 
+      keyword.includes(productKeyword.toLowerCase()) || 
+      productKeyword.toLowerCase().includes(keyword)
+    );
+
+    if (hasMatch) {
+      results[categoryName].found = true;
+      if (!results[categoryName].links.includes(gallery.type2)) {
+        results[categoryName].links.push(gallery.type2);
+      }
     }
   });
 
+  debugLog("PRODUCT_SEARCH", "Search results", {
+    productKeyword,
+    results: Object.keys(results).reduce((acc, category) => {
+      acc[category] = `${results[category].links.length} links`;
+      return acc;
+    }, {})
+  });
+
+  return results;
+}
+
+// -------------------- RESPONSE BUILDER --------------------
+function buildProductResponse(productKeyword, searchResults) {
+  debugLog("RESPONSE_BUILDER", "Building product response", {
+    productKeyword,
+    results: searchResults
+  });
+
+  let response = `Here are your *${productKeyword}* search results:\n\n`;
+  let hasAnyResults = false;
+
+  // Add results for each category
+  Object.keys(searchResults).forEach(category => {
+    const categoryData = searchResults[category];
+    
+    response += `*${category} ${productKeyword} Galleries*\n`;
+    
+    if (categoryData.found && categoryData.links.length > 0) {
+      hasAnyResults = true;
+      categoryData.links.forEach(link => {
+        response += `• ${link}\n`;
+      });
+    } else {
+      response += `No galleries found for ${category.toLowerCase()}\n`;
+    }
+    response += `\n`;
+  });
+
   if (!hasAnyResults) {
-    return `Sorry, I couldn't find any *${product_keyword}* options across all categories. Try searching for something else! 🔍`;
+    return `Sorry, I couldn't find any *${productKeyword}* options across all categories. Try searching for something else! 🔍`;
   }
 
-  response += `\n🛒 Explore more on app.zulu.club`;
+  response += `🛒 Explore more on app.zulu.club`;
   return response;
 }
 
@@ -331,33 +339,42 @@ async function handleMessage(userPhone, userName, userMessage) {
   });
 
   try {
-    const gptResult = await findProductsWithGPT(userMessage);
+    // Step 1: Analyze user message with GPT
+    const analysis = await analyzeUserMessage(userMessage);
     
-    debugLog("MESSAGE_HANDLER", "GPT processing completed", {
+    debugLog("MESSAGE_HANDLER", "Message analysis completed", {
       sessionId,
-      intent: gptResult.intent,
-      product_keyword: gptResult.product_keyword
+      intent: analysis.intent,
+      product_keyword: analysis.product_keyword
     });
 
-    if (gptResult.intent === "company_info") {
+    // Step 2: Handle based on intent
+    if (analysis.intent === "company_info") {
       debugLog("MESSAGE_HANDLER", "Sending company info", { sessionId });
       return sendMessage(userPhone, userName, COMPANY_INFO);
     }
 
-    if (gptResult.intent === "product_search") {
-      debugLog("MESSAGE_HANDLER", "Building product response", {
+    if (analysis.intent === "product_search" && analysis.product_keyword) {
+      debugLog("MESSAGE_HANDLER", "Processing product search", {
         sessionId,
-        product_keyword: gptResult.product_keyword,
-        resultsCount: Object.keys(gptResult.results).length
+        product_keyword: analysis.product_keyword
       });
 
-      const response = buildProductResponse(gptResult);
+      // Step 3: Search for products in galleries
+      const searchResults = searchProducts(analysis.product_keyword);
+      
+      // Step 4: Build and send response
+      const response = buildProductResponse(analysis.product_keyword, searchResults);
       return sendMessage(userPhone, userName, response);
     }
 
-    // Fallback for any other intent
-    debugLog("MESSAGE_HANDLER", "Fallback response", { sessionId });
-    return sendMessage(userPhone, userName, "Hi there! What product are you looking for today? 👕👗🛍️");
+    // Fallback for unclear product search
+    debugLog("MESSAGE_HANDLER", "Unclear product search", { sessionId });
+    return sendMessage(
+      userPhone, 
+      userName, 
+      "I'd love to help you find products! Could you tell me what specific item you're looking for? For example: 'tshirt', 'jeans', 'sarees', etc. 👕👗🛍️"
+    );
 
   } catch (error) {
     debugError("MESSAGE_HANDLER", error, { sessionId, userMessage });
@@ -433,8 +450,8 @@ app.post("/webhook", async (req, res) => {
 // -------------------- HEALTH --------------------
 app.get("/", (req, res) => {
   const healthInfo = {
-    status: "✅ Zulu Club GPT Product Matcher",
-    version: "1.0 - Single CSV GPT Logic",
+    status: "✅ Zulu Club Product Matcher",
+    version: "1.0 - Single CSV Logic",
     galleriesLoaded: galleries.length,
     categories: CATEGORY_NAMES,
     timestamp: new Date().toISOString(),
@@ -449,13 +466,14 @@ app.get("/", (req, res) => {
 loadCSVData().then(() => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`\n🚀 Zulu Club GPT Assistant running on port ${PORT}`);
+    console.log(`\n🚀 Zulu Club Assistant running on port ${PORT}`);
     console.log('═'.repeat(60));
-    console.log('🎯 NEW FEATURES:');
-    console.log('   • Single CSV Processing');
-    console.log('   • GPT-Powered Product Matching');
-    console.log('   • Category-wise Results');
-    console.log('   • Automatic Company Info Responses');
+    console.log('🎯 LOGIC FLOW:');
+    console.log('   1. User message → GPT analyzes intent');
+    console.log('   2. If company_info → Send COMPANY_INFO');
+    console.log('   3. If product_search → Search galleries CSV');
+    console.log('   4. Show results by category (Men/Women/Kids/etc)');
+    console.log('   5. Format: "Category Product Galleries" + links');
     console.log('📊 Endpoints:');
     console.log('   • POST /webhook - WhatsApp webhook');
     console.log('   • GET / - Health check');
