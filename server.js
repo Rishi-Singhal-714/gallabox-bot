@@ -28,9 +28,6 @@ const openai = new OpenAI({
 let conversations = {};
 let galleriesData = [];
 
-// Session configuration - 1 hour timeout
-const SESSION_TIMEOUT = 60 * 60 * 1000; // 1 hour in milliseconds
-
 // ZULU CLUB INFORMATION
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
@@ -108,26 +105,6 @@ loadGalleriesData().then(data => {
 }).catch(error => {
   console.error('Failed to load galleries data:', error);
 });
-
-// NEW: Session cleanup function
-function cleanupExpiredSessions() {
-  const now = Date.now();
-  let cleanedCount = 0;
-  
-  Object.keys(conversations).forEach(sessionId => {
-    if (now - conversations[sessionId].lastActivity > SESSION_TIMEOUT) {
-      delete conversations[sessionId];
-      cleanedCount++;
-    }
-  });
-  
-  if (cleanedCount > 0) {
-    console.log(`🧹 Cleaned up ${cleanedCount} expired sessions`);
-  }
-}
-
-// NEW: Start session cleanup interval (runs every 30 minutes)
-setInterval(cleanupExpiredSessions, 30 * 60 * 1000);
 
 // Function to send message via Gallabox API
 async function sendMessage(to, name, message) {
@@ -534,13 +511,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 async function handleMessage(sessionId, userMessage) {
   try {
     if (!conversations[sessionId]) {
-      conversations[sessionId] = { 
-        history: [],
-        lastActivity: Date.now() // NEW: Track session creation time
-      };
-    } else {
-      // NEW: Update last activity time for existing session
-      conversations[sessionId].lastActivity = Date.now();
+      conversations[sessionId] = { history: [] };
     }
     
     conversations[sessionId].history.push({
@@ -610,15 +581,11 @@ app.post('/webhook', async (req, res) => {
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  // NEW: Run cleanup before showing stats
-  cleanupExpiredSessions();
-  
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.1 - Session Management (1hr timeout)',
+    version: '6.0 - Enhanced Keyword + GPT Matching',
     features: {
-      session_management: '1-hour session timeout with auto-cleanup',
       keyword_matching: 'Exact/90% matches in cat1 column (non-clothing)',
       clothing_detection: 'Automatically detects men/women/kids queries',
       gpt_matching: 'GPT-powered intelligent product matching',
@@ -630,47 +597,16 @@ app.get('/', (req, res) => {
     },
     stats: {
       product_categories_loaded: galleriesData.length,
-      active_conversations: Object.keys(conversations).length,
-      session_timeout: '1 hour',
-      csv_data: 'Permanently loaded (not affected by sessions)'
+      active_conversations: Object.keys(conversations).length
     },
     endpoints: {
       webhook: 'POST /webhook',
       health: 'GET /',
       test_message: 'POST /send-test-message',
       refresh_csv: 'GET /refresh-csv',
-      test_matching: 'GET /test-keyword-matching',
-      session_stats: 'GET /session-stats' // NEW: Added session stats endpoint
+      test_matching: 'GET /test-keyword-matching'
     },
     timestamp: new Date().toISOString()
-  });
-});
-
-// NEW: Session statistics endpoint
-app.get('/session-stats', (req, res) => {
-  cleanupExpiredSessions();
-  
-  const now = Date.now();
-  const sessionStats = Object.keys(conversations).map(sessionId => {
-    const session = conversations[sessionId];
-    const ageMinutes = Math.round((now - session.lastActivity) / 60000);
-    const expiresInMinutes = 60 - ageMinutes;
-    
-    return {
-      sessionId: sessionId.substring(0, 8) + '...', // Partial for privacy
-      messageCount: session.history.length,
-      lastActivity: new Date(session.lastActivity).toISOString(),
-      ageMinutes: ageMinutes,
-      expiresInMinutes: expiresInMinutes > 0 ? expiresInMinutes : 0,
-      status: expiresInMinutes > 0 ? 'active' : 'expired'
-    };
-  });
-  
-  res.json({
-    total_sessions: Object.keys(conversations).length,
-    session_timeout_minutes: 60,
-    csv_categories_loaded: galleriesData.length,
-    sessions: sessionStats
   });
 });
 
@@ -683,8 +619,7 @@ app.get('/refresh-csv', async (req, res) => {
     res.json({ 
       status: 'success', 
       message: 'CSV data refreshed successfully',
-      categories_loaded: galleriesData.length,
-      sessions_remain: Object.keys(conversations).length
+      categories_loaded: galleriesData.length
     });
   } catch (error) {
     res.status(500).json({ 
