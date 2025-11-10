@@ -1,6 +1,3 @@
-I'll modify the code to implement a 1-hour session timeout (3600000 milliseconds) for conversations while keeping the CSV data loaded permanently. Here are the changes:
-
-```javascript
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
