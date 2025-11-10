@@ -78,7 +78,7 @@ async function loadGalleriesData() {
             type2: data.type2 || data.Type2 || data.TYPE2 || '',
             cat_id: data.cat_id || data.cat_id || data.CAT_ID || '',
             cat1: data.cat1 || data.Cat1 || data.CAT1 || '',
-            // NEW: read seller_id robustly (multiple possible header variants)
+            // NEW (from previous step): robust seller_id
             seller_id: data.seller_id || data.SELLER_ID || data.Seller_ID || data.SellerId || data.sellerId || ''
           };
           
@@ -153,11 +153,108 @@ async function sendMessage(to, name, message) {
   }
 }
 
+// ---------- Matching Helpers (ADDED, non-breaking) ----------
+
+// Basic normalization
+function normalizeToken(t) {
+  if (!t) return '';
+  return String(t)
+    .toLowerCase()
+    .replace(/&/g, ' and ')         // keep semantic split but preserve word boundaries
+    .replace(/[^a-z0-9\s]/g, ' ')   // drop punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Very light singularization for common plural forms
+function singularize(word) {
+  if (!word) return '';
+  if (word.endsWith('ies') && word.length > 3) return word.slice(0, -3) + 'y'; // accessories -> accessory
+  if (word.endsWith('ses') && word.length > 3) return word.slice(0, -2);       // dresses -> dress
+  if (word.endsWith('es') && word.length > 3) return word.slice(0, -2);        // watches -> watch
+  if (word.endsWith('s') && word.length > 2) return word.slice(0, -1);         // clocks -> clock
+  return word;
+}
+
+// Compute Levenshtein distance
+function editDistance(a, b) {
+  const s = a || '', t = b || '';
+  const m = s.length, n = t.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,      // deletion
+        dp[i][j - 1] + 1,      // insertion
+        dp[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+// Wrap similarity: uses existing calculateSimilarity + edit distance + normalization
+function smartSimilarity(a, b) {
+  const A = singularize(normalizeToken(a));
+  const B = singularize(normalizeToken(b));
+  if (!A || !B) return 0;
+
+  if (A === B) return 1.0;
+  if (A.includes(B) || B.includes(A)) return 0.95;
+
+  const ed = editDistance(A, B);
+  const maxLen = Math.max(A.length, B.length);
+  const edScore = 1 - (ed / Math.max(1, maxLen)); // 0..1
+
+  // Also compute old char-overlap similarity
+  const charOverlap = calculateSimilarity(A, B);
+
+  // Return the best of both worlds
+  return Math.max(edScore, charOverlap);
+}
+
+// Split a cat1 category into variants (full phrase + '&' parts)
+function expandCategoryVariants(category) {
+  const norm = normalizeToken(category);
+  const variants = new Set();
+
+  // full phrase
+  if (norm) variants.add(norm);
+
+  // split by '&' (after normalization '&' => ' and ', so split by ' and ')
+  const ampParts = norm.split(/\band\b/).map(s => normalizeToken(s));
+  for (const p of ampParts) {
+    if (p && p.length > 1) variants.add(p.trim());
+  }
+
+  // also keep original (non-normalized) for display logic elsewhere if needed
+  return Array.from(variants);
+}
+
+// Stopwords to ignore (common “mistakes”/fillers)
+const STOPWORDS = new Set(['and','the','for','a','an','of','in','on','to','with','from','shop','buy','category','categories']);
+
+// ---------- Existing logic (kept) with enhanced matching ----------
+
 // NEW: Keyword matching function for cat1 column
 function findKeywordMatchesInCat1(userMessage) {
   if (!userMessage || !galleriesData.length) return [];
   
-  const searchTerms = userMessage.toLowerCase().split(/\s+/).filter(term => term.length > 2);
+  // include & splits in user query, handle plurals and typos; ignore trivial words
+  const rawTerms = userMessage
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .split(/\s+/)
+    .filter(term => term.length > 1 && !STOPWORDS.has(term));
+
+  // normalize + singularize user terms
+  const searchTerms = rawTerms
+    .map(t => singularize(normalizeToken(t)))
+    .filter(t => t.length > 1);
+
   console.log(`🔍 Searching for keywords in cat1:`, searchTerms);
   
   const matches = [];
@@ -166,33 +263,35 @@ function findKeywordMatchesInCat1(userMessage) {
   galleriesData.forEach(item => {
     if (!item.cat1) return;
     
-    const cat1Categories = item.cat1.toLowerCase().split(',').map(cat => cat.trim());
-    
+    // Original categories split by comma
+    const cat1Categories = item.cat1.split(',').map(cat => cat.trim()).filter(Boolean);
+
+    // Expand each category into variants considering '&' splits
+    const expanded = [];
+    for (const category of cat1Categories) {
+      const variants = expandCategoryVariants(category); // returns normalized tokens
+      // push both the full original category (normalized) and each &-part variant
+      expanded.push(...variants);
+    }
+
+    // iterate user terms against expanded variants
     for (const searchTerm of searchTerms) {
-      for (const category of cat1Categories) {
-        // Skip if it's a clothing-related category
-        const isClothing = clothingKeywords.some(clothing => category.includes(clothing));
+      for (const variant of expanded) {
+        // Skip if it's a clothing-related category (based on variant tokens)
+        const isClothing = clothingKeywords.some(clothing => variant.includes(clothing));
         if (isClothing) continue;
-        
-        // Check for exact match or high similarity
-        if (category === searchTerm) {
-          // Exact match
+
+        // Exact / fuzzy matching using smartSimilarity
+        const sim = smartSimilarity(variant, searchTerm);
+
+        // thresholds: exact (1.0), strong fuzzy ≥ 0.9, decent fuzzy ≥ 0.82 (to catch “clock/clocks”, small typos)
+        if (sim >= 0.9 || (sim >= 0.82 && Math.abs(variant.length - searchTerm.length) <= 3)) {
           if (!matches.some(m => m.type2 === item.type2)) {
             matches.push({
               ...item,
-              matchType: 'exact',
+              matchType: sim === 1.0 ? 'exact' : 'similar',
               matchedTerm: searchTerm,
-              score: 1.0
-            });
-          }
-        } else if (calculateSimilarity(category, searchTerm) >= 0.9) {
-          // 90%+ similarity match
-          if (!matches.some(m => m.type2 === item.type2)) {
-            matches.push({
-              ...item,
-              matchType: 'similar',
-              matchedTerm: searchTerm,
-              score: calculateSimilarity(category, searchTerm)
+              score: sim
             });
           }
         }
@@ -286,7 +385,7 @@ function generateProductResponseFromMatches(matches, userMessage) {
     
     response += `${index + 1}. ${displayCategories}\n   ${matchInfo}\n   🔗 ${link}\n`;
 
-    // NEW: Append seller link per matched category if seller_id exists
+    // Seller deep link (if present)
     if (match.seller_id && String(match.seller_id).trim().length > 0) {
       const sellerLink = `app.zulu.club/sellerassets/${String(match.seller_id).trim()}`;
       response += `   You can also shop directly from:\n   • Seller: ${sellerLink}\n`;
@@ -348,7 +447,7 @@ async function handleProductIntentWithGPT(userMessage) {
       type2: item.type2,
       cat1: item.cat1,
       cat_id: item.cat_id
-      // NOTE: seller_id intentionally not needed for GPT matching; we attach later from galleriesData
+      // seller_id attached later from galleriesData
     }));
 
     const prompt = `
@@ -415,7 +514,7 @@ async function handleProductIntentWithGPT(userMessage) {
       return generateFallbackProductResponse();
     }
 
-    // Get the actual category data for the matched type2 values (attach seller_id from galleriesData)
+    // Attach full category (including seller_id) by type2
     const matchedCategories = matches
       .map(match => {
         const category = galleriesData.find(item => item.type2 === match.type2);
@@ -443,11 +542,9 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
   
   matchedCategories.forEach((category, index) => {
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
-    // Clean up the category display
     const displayCategories = category.type2.split(',').slice(0, 2).join(', ');
     response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
 
-    // NEW: Append seller link if seller_id exists for this category
     if (category.seller_id && String(category.seller_id).trim().length > 0) {
       const sellerLink = `app.zulu.club/sellerassets/${String(category.seller_id).trim()}`;
       response += `   You can also shop directly from:\n   • Seller: ${sellerLink}\n`;
