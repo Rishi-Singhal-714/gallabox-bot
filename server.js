@@ -28,6 +28,9 @@ const openai = new OpenAI({
 let conversations = {};
 let galleriesData = [];
 
+// NEW: Sellers data store
+let sellersData = []; // { store_name, user_id }
+
 // ZULU CLUB INFORMATION
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
@@ -99,11 +102,59 @@ async function loadGalleriesData() {
   }
 }
 
+// NEW: Load Sellers CSV data
+async function loadSellersData() {
+  try {
+    const sellersUrl = process.env.SELLERS_CSV_URL || 'https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/sellers.csv';
+    console.log('📥 Loading sellers CSV data from:', sellersUrl);
+    const response = await axios.get(sellersUrl, { timeout: 60000 });
+
+    return new Promise((resolve, reject) => {
+      const results = [];
+      if (!response.data || response.data.trim().length === 0) {
+        console.log('❌ Empty Sellers CSV data received');
+        resolve([]);
+        return;
+      }
+
+      const stream = Readable.from(response.data);
+
+      stream
+        .pipe(csv())
+        .on('data', (data) => {
+          const store_name = data.store_name || data.Store_Name || data.store || data.STORE_NAME || '';
+          const user_id = data.user_id || data.User_Id || data.UserID || data.USER_ID || '';
+          if (store_name && user_id) {
+            results.push({ store_name: String(store_name).trim(), user_id: String(user_id).trim() });
+          }
+        })
+        .on('end', () => {
+          console.log(`✅ Loaded ${results.length} sellers from CSV`);
+          resolve(results);
+        })
+        .on('error', (error) => {
+          console.error('❌ Error parsing Sellers CSV:', error);
+          reject(error);
+        });
+    });
+  } catch (error) {
+    console.error('❌ Error loading Sellers CSV data:', error.message);
+    return [];
+  }
+}
+
 // Initialize CSV data on server start
 loadGalleriesData().then(data => {
   galleriesData = data;
 }).catch(error => {
   console.error('Failed to load galleries data:', error);
+});
+
+// NEW: Initialize Sellers CSV on server start
+loadSellersData().then(data => {
+  sellersData = data;
+}).catch(error => {
+  console.error('Failed to load sellers data:', error);
 });
 
 // Function to send message via Gallabox API
@@ -224,6 +275,42 @@ function containsClothingKeywords(userMessage) {
   return clothingTerms.some(term => message.includes(term));
 }
 
+// NEW: Find similar sellers for a given type2 against sellers.store_name
+function findSimilarSellersByType2(type2) {
+  if (!type2 || !sellersData.length) return [];
+  const t = String(type2).toLowerCase().trim();
+
+  const scored = sellersData.map(s => {
+    const name = String(s.store_name || '').toLowerCase().trim();
+    let score = 0;
+    if (!name) return null;
+
+    // prioritize substring and similarity
+    if (name.includes(t) || t.includes(name)) {
+      score = 0.95;
+    } else {
+      score = calculateSimilarity(name, t);
+    }
+    return { ...s, _score: score };
+  }).filter(Boolean);
+
+  const matches = scored
+    .filter(s => s._score >= 0.9)
+    .sort((a, b) => b._score - a._score)
+    .slice(0, 2); // up to 2 sellers per category
+
+  return matches;
+}
+
+// NEW: Build seller links text block for a given type2
+function buildSellerLinksSection(type2) {
+  const sellers = findSimilarSellersByType2(type2);
+  if (!sellers.length) return '';
+
+  const lines = sellers.map(s => `      • Seller: ${s.store_name} — app.zulu.club/sellerassets/${s.user_id}`).join('\n');
+  return `\n   🛍️ You can also shop directly from:\n${lines}\n`;
+}
+
 // Enhanced AI Chat Functionality with Dual Matching Strategy
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -282,7 +369,10 @@ function generateProductResponseFromMatches(matches, userMessage) {
     const displayCategories = match.type2.split(',').slice(0, 2).join(', ');
     const matchInfo = match.matchType === 'exact' ? '✅ Exact match' : '🔍 Similar match';
     
-    response += `${index + 1}. ${displayCategories}\n   ${matchInfo}\n   🔗 ${link}\n`;
+    response += `${index + 1}. ${displayCategories}\n   ${matchInfo}\n   🔗 ${link}`;
+    // NEW: Append seller links (if any) for this type2
+    response += buildSellerLinksSection(match.type2);
+    response += `\n`;
   });
   
   response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
@@ -436,7 +526,10 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
     const link = `app.zulu.club/${category.type2.replace(/ /g, '%20')}`;
     // Clean up the category display
     const displayCategories = category.type2.split(',').slice(0, 2).join(', ');
-    response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
+    response += `${index + 1}. ${displayCategories}\n   🔗 ${link}`;
+    // NEW: Append seller links (if any) for this type2
+    response += buildSellerLinksSection(category.type2);
+    response += `\n`;
   });
   
   response += `\n✨ With Zulu Club, enjoy:\n• 100-minute delivery in Gurgaon\n• Try products at home\n• Easy returns\n• Premium quality\n\nClick any link above to start shopping! 🚀`;
@@ -593,10 +686,13 @@ app.get('/', (req, res) => {
       intelligent_matching: 'Understands misspellings and related terms',
       link_generation: 'Dynamic app.zulu.club link generation',
       ai_chat: 'OpenAI GPT-3.5 powered responses',
-      whatsapp_integration: 'Gallabox API integration'
+      whatsapp_integration: 'Gallabox API integration',
+      // NEW:
+      seller_linking: 'Match type2 to seller store_name and append seller asset links'
     },
     stats: {
       product_categories_loaded: galleriesData.length,
+      sellers_loaded: sellersData.length, // NEW
       active_conversations: Object.keys(conversations).length
     },
     endpoints: {
@@ -604,7 +700,9 @@ app.get('/', (req, res) => {
       health: 'GET /',
       test_message: 'POST /send-test-message',
       refresh_csv: 'GET /refresh-csv',
-      test_matching: 'GET /test-keyword-matching'
+      refresh_sellers: 'GET /refresh-sellers', // NEW
+      test_keyword_matching: 'GET /test-keyword-matching',
+      test_gpt_matching: 'GET /test-gpt-matching'
     },
     timestamp: new Date().toISOString()
   });
@@ -629,6 +727,25 @@ app.get('/refresh-csv', async (req, res) => {
   }
 });
 
+// NEW: Endpoint to refresh Sellers CSV
+app.get('/refresh-sellers', async (req, res) => {
+  try {
+    const newData = await loadSellersData();
+    sellersData = newData;
+
+    res.json({
+      status: 'success',
+      message: 'Sellers CSV data refreshed successfully',
+      sellers_loaded: sellersData.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
 // NEW: Test keyword matching endpoint
 app.get('/test-keyword-matching', async (req, res) => {
   const { query } = req.query;
@@ -647,7 +764,8 @@ app.get('/test-keyword-matching', async (req, res) => {
       is_clothing_query: isClothing,
       keyword_matches: keywordMatches,
       response_preview: response,
-      categories_loaded: galleriesData.length
+      categories_loaded: galleriesData.length,
+      sellers_loaded: sellersData.length // NEW
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -668,7 +786,8 @@ app.get('/test-gpt-matching', async (req, res) => {
     res.json({
       query,
       result: result,
-      categories_loaded: galleriesData.length
+      categories_loaded: galleriesData.length,
+      sellers_loaded: sellersData.length // NEW
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
