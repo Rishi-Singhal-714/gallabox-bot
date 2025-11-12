@@ -82,6 +82,7 @@ async function loadGalleriesData() {
             type2: data.type2 || data.Type2 || data.TYPE2 || '',
             cat_id: data.cat_id || data.cat_id || data.CAT_ID || '',
             cat1: data.cat1 || data.Cat1 || data.CAT1 || '',
+            // galleries CSV seller pointer (may be present)
             seller_id: data.seller_id || data.SELLER_ID || data.Seller_ID || data.SellerId || data.sellerId || ''
           };
           
@@ -123,12 +124,14 @@ async function loadSellersData() {
         .pipe(csv())
         .on('data', (data) => {
           const mapped = {
-            seller_id: data.seller_id || data.SELLER_ID || data.user_id || '',
+            // map both seller_id and user_id columns; prefer explicit user_id when building links
+            seller_id: data.seller_id || data.SELLER_ID || data.id || data.ID || '',
+            user_id: data.user_id || data.USER_ID || data.uid || data.UID || '',
             store_name: data.store_name || data.StoreName || data.store || data.Store || '',
             category_ids: data.category_ids || data.CATEGORY_IDS || data.categories || data.Categories || '',
             raw: data
           };
-          if (mapped.seller_id || mapped.store_name) {
+          if (mapped.seller_id || mapped.store_name || mapped.user_id) {
             mapped.category_ids_array = (mapped.category_ids || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
             results.push(mapped);
           }
@@ -340,12 +343,13 @@ function findKeywordMatchesInCat1(userMessage) {
 }
 
 /* -------------------------
-   Seller matching (three-step)
+   Seller matching (three-step) + category-classifier
 --------------------------*/
 const MAX_GPT_SELLER_CHECK = 20;
 const GPT_THRESHOLD = 0.7;
 const CLOTHING_IGNORE_WORDS = ['men','women','kid','kids','child','children','man','woman','boys','girls','mens','womens'];
 
+// strip clothing words from start of type2
 function stripClothingFromType2(type2) {
   if (!type2) return type2;
   let tokens = type2.split(/\s+/);
@@ -386,6 +390,7 @@ function matchSellersByCategoryIds(userMessage) {
   return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0, 10);
 }
 
+// GPT-based seller likelihood (keeps same behavior)
 async function gptCheckSellerMaySell(userMessage, seller) {
   if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured' };
 
@@ -397,6 +402,7 @@ USER MESSAGE: "${userMessage}"
 SELLER INFORMATION:
 Store name: "${seller.store_name || ''}"
 Seller id: "${seller.seller_id || ''}"
+Seller user_id: "${seller.user_id || ''}"
 Seller categories: "${(seller.category_ids_array || []).join(', ')}"
 Other info (raw CSV row): ${JSON.stringify(seller.raw || {})}
 
@@ -432,49 +438,134 @@ Do not return anything else.
   }
 }
 
-async function findSellersForQuery(userMessage, galleryMatches = []) {
-  // sellers from gallery type2
-  const sellers_by_type2_map = new Map();
+// NEW: classify user query into high-level category (home, fashion, beauty, kids, footwear, accessories, gifting, decor, etc.)
+async function gptClassifyQueryCategory(userMessage) {
+  if (!openai || !process.env.OPENAI_API_KEY) return { category: null, score: 0, reason: 'OpenAI not configured' };
+
+  const prompt = `
+You are a classifier. Given a user's shopping query, identify the best high-level category the user is likely asking about.
+Possible categories: home, fashion, beauty, kids, footwear, accessories, gifting, decor, electronics, other
+
+USER MESSAGE: "${userMessage}"
+
+Return ONLY JSON in this format:
+{ "category": "<one of the categories above or 'other'>", "score": 0.0, "reason": "one-sentence reason" }
+
+Do not return anything else.
+  `;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: "You are a succinct classifier returning only the JSON specified." },
+        { role: "user", content: prompt }
+      ],
+      max_tokens: 80,
+      temperature: 0.0
+    });
+
+    const content = completion.choices[0].message.content.trim();
+    try {
+      const parsed = JSON.parse(content);
+      return {
+        category: (parsed.category || 'other').toLowerCase(),
+        score: Number(parsed.score) || 0,
+        reason: parsed.reason || ''
+      };
+    } catch (err) {
+      console.error('Error parsing GPT category response:', err, 'raw:', content);
+      return { category: null, score: 0, reason: 'parse error' };
+    }
+  } catch (err) {
+    console.error('Error in gptClassifyQueryCategory:', err);
+    return { category: null, score: 0, reason: 'GPT error' };
+  }
+}
+
+// master function to find sellers for a user query (combines three methods) 
+// Accepts optional debugSteps array to push iteration logs (used only from /webhook)
+async function findSellersForQuery(userMessage, galleryMatches = [], debugSteps = null) {
+  if (debugSteps) debugSteps.push(`Start findSellersForQuery (galleryMatches=${galleryMatches.length})`);
+
+  // 0) Use GPT to detect high-level category; if confident, restrict sellers by that category
+  const classification = await gptClassifyQueryCategory(userMessage);
+  if (debugSteps) debugSteps.push(`GPT category classification: ${JSON.stringify(classification)}`);
+
+  let candidatePool = sellersData.slice(); // start with all sellers
+  if (classification && classification.category && classification.score > 0.7 && classification.category !== 'other') {
+    const cat = classification.category.toLowerCase();
+    // filter sellers whose category_ids_array includes the category (or substring)
+    const filtered = sellersData.filter(s => (s.category_ids_array || []).some(c => c.includes(cat) || cat.includes(c)));
+    if (debugSteps) debugSteps.push(`Filtered sellers by category '${cat}': ${filtered.length} match(es)`);
+    if (filtered.length > 0) candidatePool = filtered;
+    // otherwise keep full pool but continue with other matching steps
+  } else {
+    if (debugSteps) debugSteps.push('No confident GPT category filter applied (score <= 0.7 or category other).');
+  }
+
+  // 1) If we already have gallery type2 matches, use those type2 -> store_name mapping as first source
+  const sellers_by_type2 = new Map();
   for (const gm of galleryMatches) {
     const type2 = gm.type2 || '';
     const found = matchSellersByStoreName(type2);
-    found.forEach(s => sellers_by_type2_map.set(s.seller_id || (s.store_name+'#'), s));
+    if (debugSteps) debugSteps.push(`matchSellersByStoreName for "${type2}" found ${found.length}`);
+    found.forEach(s => sellers_by_type2.set(s.seller_id || (s.store_name+'#'), s));
   }
 
-  // category-based
-  const catMatches = matchSellersByCategoryIds(userMessage);
-  const sellers_by_category_map = new Map();
-  catMatches.forEach(s => sellers_by_category_map.set(s.seller_id || (s.store_name+'#'), s));
+  // 2) category_ids-based matches (but applied on candidatePool not full sellersData)
+  const catMatches = [];
+  const terms = userMessage.toLowerCase().replace(/&/g,' ').split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+  for (const seller of candidatePool) {
+    const categories = seller.category_ids_array || [];
+    const common = categories.filter(c => terms.some(t => t.includes(c) || c.includes(t)));
+    if (common.length > 0) catMatches.push({ seller, matches: common.length });
+  }
+  const sellers_by_category_arr = catMatches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0,10);
+  if (debugSteps) debugSteps.push(`matchSellersByCategoryIds (on candidatePool) found ${sellers_by_category_arr.length}`);
 
-  // candidate pool for GPT checks
-  const candidateIds = new Set([...sellers_by_type2_map.keys(), ...sellers_by_category_map.keys()]);
+  // Put category matches into map
+  const sellers_by_category = new Map();
+  sellers_by_category_arr.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
+
+  // 3) GPT-based predictions: run GPT checks on a candidate pool (use union of prior small sets or top N from candidatePool)
+  const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
   if (candidateIds.size === 0) {
-    for (let i = 0; i < Math.min(MAX_GPT_SELLER_CHECK, sellersData.length); i++) candidateList.push(sellersData[i]);
+    // pick top MAX_GPT_SELLER_CHECK from candidatePool (already filtered by category if GPT classified)
+    for (let i = 0; i < Math.min(MAX_GPT_SELLER_CHECK, candidatePool.length); i++) candidateList.push(candidatePool[i]);
+    if (debugSteps) debugSteps.push(`No type2/category candidates found; using top ${candidateList.length} sellers from candidatePool for GPT checks`);
   } else {
     for (const id of candidateIds) {
-      const s = sellersData.find(x => (x.seller_id == id) || ((x.store_name+'#') == id));
+      const s = candidatePool.find(x => (x.seller_id == id) || ((x.store_name+'#') == id));
       if (s) candidateList.push(s);
     }
-    if (candidateList.length < MAX_GPT_SELLER_CHECK) {
-      for (const s of sellersData) {
-        if (candidateList.length >= MAX_GPT_SELLER_CHECK) break;
-        if (!candidateList.includes(s)) candidateList.push(s);
-      }
+    // fill up if not enough
+    for (const s of candidatePool) {
+      if (candidateList.length >= MAX_GPT_SELLER_CHECK) break;
+      if (!candidateList.includes(s)) candidateList.push(s);
     }
+    if (debugSteps) debugSteps.push(`Candidate list for GPT checks prepared: ${candidateList.length} sellers`);
   }
 
   const sellers_by_gpt = [];
   for (let i = 0; i < Math.min(candidateList.length, MAX_GPT_SELLER_CHECK); i++) {
     const seller = candidateList[i];
     const result = await gptCheckSellerMaySell(userMessage, seller);
+    if (debugSteps) debugSteps.push(`GPT check for seller "${seller.store_name || seller.seller_id}" -> score ${result.score}`);
     if (result.score > GPT_THRESHOLD) {
       sellers_by_gpt.push({ seller, score: result.score, reason: result.reason });
     }
   }
+  if (debugSteps) debugSteps.push(`sellers_by_gpt after threshold (${GPT_THRESHOLD}): ${sellers_by_gpt.length}`);
 
-  const sellersType2Arr = Array.from(sellers_by_type2_map.values()).slice(0, 10);
-  const sellersCategoryArr = Array.from(sellers_by_category_map.values()).slice(0, 10);
+  // Convert maps to arrays
+  const sellersType2Arr = Array.from(sellers_by_type2.values()).slice(0, 10);
+  const sellersCategoryArr = Array.from(sellers_by_category.values()).slice(0, 10);
+
+  if (debugSteps) {
+    debugSteps.push(`Final counts -> by_type2: ${sellersType2Arr.length}, by_category: ${sellersCategoryArr.length}, by_gpt: ${sellers_by_gpt.length}`);
+  }
 
   return {
     by_type2: sellersType2Arr,
@@ -500,9 +591,9 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
   const sellersList = [];
   const addSeller = (s) => {
     if (!s) return;
-    const id = s.seller_id || '';
+    const id = s.user_id || s.seller_id || '';
     if (!id) return;
-    if (!sellersList.some(x => x.seller_id === id)) sellersList.push(s);
+    if (!sellersList.some(x => (x.user_id || x.seller_id) === id)) sellersList.push(s);
   };
   (sellersObj.by_type2 || []).forEach(addSeller);
   (sellersObj.by_category || []).forEach(addSeller);
@@ -529,8 +620,8 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
   msg += `\nSellers:\n`;
   if (sellersToShow.length) {
     sellersToShow.forEach((s, i) => {
-      const name = s.store_name || s.seller_id || `Seller ${i+1}`;
-      const id = s.seller_id || '';
+      const name = s.store_name || s.seller_id || s.user_id || `Seller ${i+1}`;
+      const id = s.user_id || s.seller_id || '';
       const link = id ? `app.zulu.club/sellerassets/${id}` : '';
       msg += `${i+1}. ${name}${link ? ` — ${link}` : ''}\n`;
     });
@@ -615,32 +706,37 @@ Only return JSON.
 /* -------------------------
    Main product flow: detect intent, match galleries, find sellers, and respond concisely
 --------------------------*/
-async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
+async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO, debugSteps = null) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
   
   try {
     const intent = await detectIntent(userMessage);
+    if (debugSteps) debugSteps.push(`Intent detected: ${intent}`);
     
     if (intent === 'product' && galleriesData.length > 0) {
       const isClothingQuery = containsClothingKeywords(userMessage);
+      if (debugSteps) debugSteps.push(`containsClothingKeywords: ${isClothingQuery}`);
       
       if (isClothingQuery) {
         // Use GPT to find gallery matches (clothing -> GPT matching) and then sellers
         const matchedCategories = await findGptMatchedCategories(userMessage);
-        const sellers = await findSellersForQuery(userMessage, matchedCategories);
+        if (debugSteps) debugSteps.push(`GPT matched categories (clothing flow): ${matchedCategories.map(m=>m.type2).join(', ')}`);
+        const sellers = await findSellersForQuery(userMessage, matchedCategories, debugSteps);
         return buildConciseResponse(userMessage, matchedCategories, sellers);
       } else {
         // Try keyword matching first
         const keywordMatches = findKeywordMatchesInCat1(userMessage);
+        if (debugSteps) debugSteps.push(`Keyword gallery matches: ${keywordMatches.map(m=>m.type2).join(', ')}`);
         if (keywordMatches.length > 0) {
-          const sellers = await findSellersForQuery(userMessage, keywordMatches);
+          const sellers = await findSellersForQuery(userMessage, keywordMatches, debugSteps);
           return buildConciseResponse(userMessage, keywordMatches, sellers);
         } else {
           // fallback to GPT matching
           const matchedCategories = await findGptMatchedCategories(userMessage);
-          const sellers = await findSellersForQuery(userMessage, matchedCategories);
+          if (debugSteps) debugSteps.push(`GPT matched categories (fallback): ${matchedCategories.map(m=>m.type2).join(', ')}`);
+          const sellers = await findSellersForQuery(userMessage, matchedCategories, debugSteps);
           return buildConciseResponse(userMessage, matchedCategories, sellers);
         }
       }
@@ -651,6 +747,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
+    if (debugSteps) debugSteps.push(`Error in getChatGPTResponse: ${String(error)}`);
     // concise fallback
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
@@ -666,7 +763,6 @@ async function generateCompanyResponseShort(userMessage, conversationHistory, co
 
 /* -------------------------
    Existing functions left intact for other endpoints/tests
-   (generateProductResponseFromMatches, etc.)
 --------------------------*/
 function generateProductResponseFromMatches(matches, userMessage) {
   if (matches.length === 0) return generateFallbackProductResponse();
@@ -677,6 +773,7 @@ function generateProductResponseFromMatches(matches, userMessage) {
     const matchInfo = match.matchType === 'exact' ? '✅ Exact match' : '🔍 Similar match';
     response += `${index + 1}. ${displayCategories}\n   ${matchInfo}\n   🔗 ${link}\n`;
     if (match.seller_id && String(match.seller_id).trim().length > 0) {
+      // NOTE: galleries.csv seller_id used here as a pointer only (legacy) - seller link now primarily from sellers.csv user_id
       const sellerLink = `app.zulu.club/sellerassets/${String(match.seller_id).trim()}`;
       response += `   You can also shop directly from:\n   • Seller: ${sellerLink}\n`;
     }
@@ -750,42 +847,74 @@ async function detectIntent(userMessage) {
 }
 
 /* -------------------------
-   Webhook + endpoints (kept, but messages will now be concise)
+   Webhook + endpoints
+   - webhook now contains iteration/debug steps (logged and returned in response)
+   - outbound WhatsApp message remains concise
 --------------------------*/
-async function handleMessage(sessionId, userMessage) {
+async function handleMessage(sessionId, userMessage, debugSteps = null) {
   try {
     if (!conversations[sessionId]) conversations[sessionId] = { history: [] };
     conversations[sessionId].history.push({ role: "user", content: userMessage });
-    const aiResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history);
+    const aiResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history, ZULU_CLUB_INFO, debugSteps);
     conversations[sessionId].history.push({ role: "assistant", content: aiResponse });
     if (conversations[sessionId].history.length > 10) conversations[sessionId].history = conversations[sessionId].history.slice(-10);
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message:', error);
+    if (debugSteps) debugSteps.push(`Error in handleMessage: ${String(error)}`);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
 
 app.post('/webhook', async (req, res) => {
+  // Create debugSteps array here and only expose/return it in webhook response & logs
+  const debugSteps = [];
   try {
-    console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
+    debugSteps.push('Webhook received');
+    debugSteps.push(`raw body: ${JSON.stringify(req.body).slice(0,1000)}`); // truncated for safety
+
     const webhookData = req.body;
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
-    console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
-    if (userMessage && userPhone) {
-      const sessionId = userPhone;
-      const aiResponse = await handleMessage(sessionId, userMessage);
-      await sendMessage(userPhone, userName, aiResponse);
-      console.log(`✅ AI response sent to ${userPhone}`);
-    } else {
-      console.log('❓ No valid message or phone number found in webhook');
+
+    debugSteps.push(`Extracted message: "${userMessage}" from ${userPhone} (${userName})`);
+
+    if (!userMessage || !userPhone) {
+      debugSteps.push('No userMessage or userPhone found in webhook payload');
+      console.log(debugSteps.join(' | '));
+      return res.status(400).json({ status: 'error', message: 'No user message or phone', debug: debugSteps });
     }
-    res.status(200).json({ status: 'success', message: 'Webhook processed successfully', processed: true });
+
+    // Step 1: run handleMessage with debugSteps to collect internal logs
+    debugSteps.push('Calling handleMessage()');
+    const sessionId = userPhone;
+    const aiResponse = await handleMessage(sessionId, userMessage, debugSteps);
+    debugSteps.push(`AI response (concise): ${aiResponse.replace(/\n/g, ' | ')}`);
+
+    // Step 2: send concise WhatsApp message (no debug content)
+    try {
+      await sendMessage(userPhone, userName, aiResponse);
+      debugSteps.push('sendMessage succeeded');
+    } catch (err) {
+      debugSteps.push(`sendMessage FAILED: ${String(err.message || err)}`);
+      console.error('Error sending message from webhook:', err);
+    }
+
+    // Final: log debug steps and return them in webhook response for debugging
+    debugSteps.push('Webhook processing complete');
+    console.log('Webhook debug steps:\n', debugSteps.join('\n'));
+    return res.status(200).json({
+      status: 'success',
+      processed: true,
+      message_preview: aiResponse.split('\n').slice(0,10).join('\n'),
+      debug: debugSteps
+    });
+
   } catch (error) {
-    console.error('💥 Webhook error:', error.message);
-    res.status(500).json({ status: 'error', message: error.message, processed: false });
+    console.error('💥 Webhook error:', error);
+    debugSteps.push(`Webhook exception: ${String(error)}`);
+    return res.status(500).json({ status: 'error', message: String(error), debug: debugSteps });
   }
 });
 
@@ -793,7 +922,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (5 galleries, 5 sellers)',
+    version: '6.0 - Concise Messages (5 galleries, 5 sellers) + seller category filter + webhook debug',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
@@ -819,7 +948,7 @@ app.get('/test-keyword-matching', async (req, res) => {
   try {
     const isClothing = containsClothingKeywords(query);
     const keywordMatches = findKeywordMatchesInCat1(query);
-    const sellers = await findSellersForQuery(query, keywordMatches);
+    const sellers = await findSellersForQuery(query, keywordMatches, null); // no webhook debug here
     const concise = buildConciseResponse(query, keywordMatches, sellers);
     res.json({ query, is_clothing_query: isClothing, keyword_matches: keywordMatches, sellers, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
   } catch (error) {
