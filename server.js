@@ -745,13 +745,106 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 }
 
-/* -------------------------
-   Short company response (kept short)
---------------------------*/
-async function generateCompanyResponseShort(userMessage, conversationHistory, companyInfo) {
-  // Keep it short for WhatsApp
-  return `Hi! Zulu Club: 100-minute delivery in Gurgaon. Visit zulu.club or ask what you want to shop.`;
+// -------------------------
+// Company response (AI-generated from ZULU_CLUB_INFO)
+// Always returns EXACT format:
+// HEADLINE: <one-line summary>
+//
+// BULLETS:
+// - <bullet 1>
+// - <bullet 2>
+// - <bullet 3>
+//
+// No extra text, no JSON, no explanation.
+// -------------------------
+async function generateCompanyResponseShort(userMessage, conversationHistory, companyInfo = ZULU_CLUB_INFO) {
+  if (!openai || !process.env.OPENAI_API_KEY) {
+    // fallback in the same exact format
+    return `HEADLINE: Zulu Club — quick shopping, delivered fast\n\nBULLETS:\n- 100-minute delivery in Gurgaon\n- Try at home & easy returns\n- Visit zulu.club to explore`;
+  }
+
+  // Build system prompt that includes ZULU_CLUB_INFO and strict format rules
+  const system = `You are a friendly customer assistant for Zulu Club. Use the provided company info to generate a short, helpful reply. MUST FOLLOW THE OUTPUT FORMAT EXACTLY (no extra text, no JSON, no commentary):
+
+HEADLINE: <one-line summary>
+
+BULLETS:
+- <bullet 1>
+- <bullet 2>
+- <bullet 3>
+
+Rules:
+1) BASE your answer on the company info and the user's query.
+2) HEADLINE should be one concise sentence (max ~80 characters) that references Zulu Club or the user's need.
+3) Provide exactly 3 bullets. Each bullet must be short (single line), useful, and focused (examples: delivery promise, try-at-home, where to shop, availability).
+4) Keep total message under ~400 characters if possible (WhatsApp-friendly).
+5) If user asks about location/availability, include availability in one bullet.
+6) If user asks about returns/delivery/ordering, reflect that in bullets.
+7) If the user message indicates a product interest, mention a pointer to `zulu.club` or app links.
+8) Do not invent phone numbers, addresses, or policies not in the company info.
+9) Do not include any extra lines, preambles, or trailing whitespace — return ONLY the formatted reply.`;
+
+  // Compose user prompt that includes company info and the specific user message
+  const userPrompt = `
+Company Info:
+${companyInfo}
+
+User Query:
+"${userMessage}"
+
+Instruction: Using the company info above and the user query, produce a reply that exactly matches the required format.`;
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userPrompt }
+      ],
+      max_tokens: 220,
+      temperature: 0.6
+    });
+
+    const text = completion.choices[0].message.content.trim();
+
+    // Very small safety: if model returns extra text, try to extract the block that starts with HEADLINE:
+    if (!text.startsWith('HEADLINE:')) {
+      // attempt to find the HEADLINE line and following BULLETS block
+      const start = text.indexOf('HEADLINE:');
+      if (start !== -1) {
+        const sliced = text.slice(start).trim();
+        // ensure it contains BULLETS
+        if (sliced.includes('BULLETS:')) {
+          // take first occurrence of BULLETS and up to 3 bullets
+          const lines = sliced.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          // rebuild to ensure exact format
+          let headlineLine = lines.find(l => l.startsWith('HEADLINE:')) || `HEADLINE: Zulu Club — quick shopping`;
+          const bullets = lines.filter(l => l.startsWith('-')).slice(0,3);
+          while (bullets.length < 3) bullets.push('- Visit zulu.club to explore');
+          return `${headlineLine}\n\nBULLETS:\n${bullets.join('\n')}`;
+        }
+      }
+      // fallback: construct safe default answer in required format
+      return `HEADLINE: Zulu Club — quick shopping, delivered fast\n\nBULLETS:\n- 100-minute delivery in Gurgaon\n- Try at home & easy returns\n- Visit zulu.club to explore`;
+    }
+
+    // At this point, text likely follows format — return as-is but ensure exactly 3 bullets.
+    // Normalize lines and ensure exactly 3 bullets
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const headline = lines.find(l => l.startsWith('HEADLINE:')) || 'HEADLINE: Zulu Club — quick shopping';
+    const bulletLines = lines.filter(l => l.startsWith('-')).slice(0,3);
+    // If bullets less than 3, append defaults (but keep them minimal)
+    while (bulletLines.length < 3) {
+      bulletLines.push('- Visit zulu.club to explore');
+    }
+    return `${headline}\n\nBULLETS:\n${bulletLines.join('\n')}`;
+
+  } catch (error) {
+    console.error('Error generating company response:', error);
+    // fallback format
+    return `HEADLINE: Zulu Club — quick shopping, delivered fast\n\nBULLETS:\n- 100-minute delivery in Gurgaon\n- Try at home & easy returns\n- Visit zulu.club to explore`;
+  }
 }
+
 
 /* -------------------------
    Existing functions left intact for other endpoints/tests
