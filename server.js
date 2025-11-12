@@ -475,6 +475,14 @@ Do not return anything else.
   }
 }
 
+// helper: given a galleries.csv seller_id, try to find sellers.csv entry and return user_id or fallback to seller_id
+function getUserIdForSellerId(sellerId) {
+  if (!sellerId) return '';
+  const s = sellersData.find(x => (x.seller_id && String(x.seller_id) === String(sellerId)));
+  if (s && s.user_id && String(s.user_id).trim().length > 0) return String(s.user_id).trim();
+  return String(sellerId).trim();
+}
+
 // master function to find sellers for a user query (combines three methods)
 // Now integrates minimal home-only GPT check
 async function findSellersForQuery(userMessage, galleryMatches = []) {
@@ -735,7 +743,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       }
     }
 
-    // not a product intent -> keep company response (kept short for WhatsApp)
+    // not a product intent -> generate company response (AI-driven, fixed format)
     return await generateCompanyResponseShort(userMessage, conversationHistory, companyInfo);
     
   } catch (error) {
@@ -745,18 +753,16 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 }
 
-// -------------------------
-// Company response (AI-generated from ZULU_CLUB_INFO)
-// Always returns EXACT format:
-// HEADLINE: <one-line summary>
-//
-// BULLETS:
-// - <bullet 1>
-// - <bullet 2>
-// - <bullet 3>
-//
-// No extra text, no JSON, no explanation.
-// -------------------------
+/* -------------------------
+   Company response (AI-generated from ZULU_CLUB_INFO)
+   Always returns EXACT format:
+   HEADLINE: <one-line summary>
+
+   BULLETS:
+   - <bullet 1>
+   - <bullet 2>
+   - <bullet 3>
+   ------------------------- */
 async function generateCompanyResponseShort(userMessage, conversationHistory, companyInfo = ZULU_CLUB_INFO) {
   if (!openai || !process.env.OPENAI_API_KEY) {
     // fallback in the same exact format
@@ -780,7 +786,7 @@ Rules:
 4) Keep total message under ~400 characters if possible (WhatsApp-friendly).
 5) If user asks about location/availability, include availability in one bullet.
 6) If user asks about returns/delivery/ordering, reflect that in bullets.
-7) If the user message indicates a product interest, mention a pointer to `zulu.club` or app links.
+7) If the user message indicates a product interest, mention a pointer to \`zulu.club\` or app links.
 8) Do not invent phone numbers, addresses, or policies not in the company info.
 9) Do not include any extra lines, preambles, or trailing whitespace — return ONLY the formatted reply.`;
 
@@ -845,10 +851,10 @@ Instruction: Using the company info above and the user query, produce a reply th
   }
 }
 
-
 /* -------------------------
    Existing functions left intact for other endpoints/tests
    (generateProductResponseFromMatches, etc.)
+   Note: seller links now prefer sellers.csv user_id when available
 --------------------------*/
 function generateProductResponseFromMatches(matches, userMessage) {
   if (matches.length === 0) return generateFallbackProductResponse();
@@ -859,8 +865,9 @@ function generateProductResponseFromMatches(matches, userMessage) {
     const matchInfo = match.matchType === 'exact' ? '✅ Exact match' : '🔍 Similar match';
     response += `${index + 1}. ${displayCategories}\n   ${matchInfo}\n   🔗 ${link}\n`;
     if (match.seller_id && String(match.seller_id).trim().length > 0) {
-      // NOTE: gallery-level seller_id still used if present, but seller link preferred from sellers.csv user_id
-      const sellerLink = `app.zulu.club/sellerassets/${String(match.seller_id).trim()}`;
+      // Prefer user_id from sellers.csv if present; fallback to galleries.csv seller_id
+      const userId = getUserIdForSellerId(match.seller_id);
+      const sellerLink = `app.zulu.club/sellerassets/${String(userId).trim()}`;
       response += `   You can also shop directly from:\n   • Seller: ${sellerLink}\n`;
     }
   });
@@ -881,7 +888,8 @@ function generateProductResponseWithGPT(matchedCategories, userMessage) {
     const displayCategories = category.type2.split(',').slice(0, 2).join(', ');
     response += `${index + 1}. ${displayCategories}\n   🔗 ${link}\n`;
     if (category.seller_id && String(category.seller_id).trim().length > 0) {
-      const sellerLink = `app.zulu.club/sellerassets/${String(category.seller_id).trim()}`;
+      const userId = getUserIdForSellerId(category.seller_id);
+      const sellerLink = `app.zulu.club/sellerassets/${String(userId).trim()}`;
       response += `   You can also shop directly from:\n   • Seller: ${sellerLink}\n`;
     }
   });
@@ -976,7 +984,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (home-only GPT check)',
+    version: '6.0 - Concise Messages (home-only GPT check + formatted company replies)',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
