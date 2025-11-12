@@ -125,7 +125,7 @@ async function loadSellersData() {
           // Keep seller_id, but read user_id explicitly for link generation
           const mapped = {
             seller_id: data.seller_id || data.SELLER_ID || data.id || data.ID || '',
-            user_id: data.user_id || data.USER_ID || data.userId || data.userID || '', // <-- explicit user_id
+            user_id: data.user_id || data.USER_ID || data.userId || data.userID || '',
             store_name: data.store_name || data.StoreName || data.store || data.Store || '',
             category_ids: data.category_ids || data.CATEGORY_IDS || data.categories || data.Categories || '',
             raw: data
@@ -342,11 +342,11 @@ function findKeywordMatchesInCat1(userMessage) {
 }
 
 /* -------------------------
-   Seller matching (three-step) + category classification
+   Seller matching (three-step) + simplified home-only GPT check
 --------------------------*/
 const MAX_GPT_SELLER_CHECK = 20;
 const GPT_THRESHOLD = 0.7;
-const GPT_CATEGORY_THRESHOLD = 0.6; // if GPT predicts category > 0.6, filter sellers by that category
+const GPT_HOME_THRESHOLD = 0.6; // If GPT thinks userMessage relates to home with score > this, we filter sellers for home
 const CLOTHING_IGNORE_WORDS = ['men','women','kid','kids','child','children','man','woman','boys','girls','mens','womens'];
 
 function stripClothingFromType2(type2) {
@@ -389,54 +389,43 @@ function matchSellersByCategoryIds(userMessage) {
   return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0, 10);
 }
 
-// New: classify query into high-level categories using GPT
-// Returns array: [{ name: 'home', score: 0.78 }, ...] ordered desc
-async function classifyQueryCategory(userMessage) {
-  if (!openai || !process.env.OPENAI_API_KEY) return [];
+// New minimal GPT helper: only decide "is this a home query?" and return score (0..1)
+async function isQueryHome(userMessage) {
+  if (!openai || !process.env.OPENAI_API_KEY) return { isHome: false, score: 0 };
   const prompt = `
-You are a classifier that maps user search queries to one or more broad product categories.
-Possible categories (examples): home, fashion, beauty, kids, footwear, accessories, decor, electronics, gifts, jewellery, beauty.
+You are a classifier that decides whether a user search query is about HOME / HOME DECOR items (vases, lamps, clocks, showpieces, cushions, etc.) or NOT.
 
 USER QUERY: "${userMessage}"
 
-Task:
-1) Return a JSON array named "categories" with up to 3 category objects.
-2) Each category object must have "name" (one-word, lower-case category) and "score" (0.0 - 1.0 confidence).
-3) Order categories by descending score.
+Answer ONLY with JSON:
+{ "is_home_score": 0.0 }
 
-Example output (ONLY JSON):
-{
-  "categories": [
-    {"name": "home", "score": 0.92},
-    {"name": "decor", "score": 0.34}
-  ]
-}
+Where is_home_score is a number 0.0 - 1.0 representing how strongly this query is home/home-decor related.
 
-Do not return any explanatory text. Only JSON.
+Do not include any text, only the JSON.
   `;
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
-        { role: "system", content: "You are a concise category classifier that returns only JSON." },
+        { role: "system", content: "You are a concise classifier that returns only JSON with is_home_score." },
         { role: "user", content: prompt }
       ],
-      max_tokens: 200,
+      max_tokens: 50,
       temperature: 0.0
     });
-
     const raw = completion.choices[0].message.content.trim();
     try {
       const parsed = JSON.parse(raw);
-      const cats = Array.isArray(parsed.categories) ? parsed.categories.map(c => ({ name: String(c.name).toLowerCase(), score: Number(c.score) || 0 })).sort((a,b) => b.score - a.score) : [];
-      return cats;
+      const score = Number(parsed.is_home_score) || 0;
+      return { isHome: score >= GPT_HOME_THRESHOLD, score };
     } catch (e) {
-      console.error('Error parsing classifyQueryCategory JSON:', e, 'raw:', raw);
-      return [];
+      console.error('Error parsing isQueryHome JSON:', e, 'raw:', raw);
+      return { isHome: false, score: 0 };
     }
-  } catch (error) {
-    console.error('GPT error in classifyQueryCategory:', error);
-    return [];
+  } catch (err) {
+    console.error('GPT error in isQueryHome:', err);
+    return { isHome: false, score: 0 };
   }
 }
 
@@ -487,12 +476,11 @@ Do not return anything else.
 }
 
 // master function to find sellers for a user query (combines three methods)
-// Now integrates category filtering via classifyQueryCategory
+// Now integrates minimal home-only GPT check
 async function findSellersForQuery(userMessage, galleryMatches = []) {
-  // 0) classify user query category via GPT
-  const predictedCategories = await classifyQueryCategory(userMessage); // [{name,score}, ...]
-  const topCategory = (predictedCategories && predictedCategories.length) ? predictedCategories[0] : null;
-  const applyCategoryFilter = topCategory && (topCategory.score >= GPT_CATEGORY_THRESHOLD);
+  // 0) minimal GPT: is this a home query?
+  const homeCheck = await isQueryHome(userMessage);
+  const applyHomeFilter = homeCheck.isHome; // boolean
 
   // 1) If we already have gallery type2 matches, use those type2 -> store_name mapping as first source
   const sellers_by_type2 = new Map();
@@ -507,21 +495,21 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
   const sellers_by_category = new Map();
   catMatches.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
 
-  // If GPT predicted a category and we should apply it, filter sellers_by_category and sellers_by_type2
-  if (applyCategoryFilter) {
-    const catName = topCategory.name;
-    // filter function
-    const keepIfHasCategory = (s) => {
+  // If home filter should be applied, remove sellers that don't have home-related categories
+  if (applyHomeFilter) {
+    const homeSyns = ['home','decor','home decor','home-decor','home_decor','furniture','homeaccessories','home-accessories','home_accessories','decoratives','showpiece','showpieces','lamp','lamps','vase','vases','clock','clocks','cushion','cushions'];
+    const keepIfHome = (s) => {
       const arr = s.category_ids_array || [];
-      // exact match or contains
-      return arr.some(c => c.toLowerCase().includes(catName) || catName.includes(c));
+      return arr.some(c => {
+        const cc = c.toLowerCase();
+        return homeSyns.some(h => cc.includes(h) || h.includes(cc));
+      });
     };
-    // filter maps
     for (const [k, s] of Array.from(sellers_by_type2.entries())) {
-      if (!keepIfHasCategory(s)) sellers_by_type2.delete(k);
+      if (!keepIfHome(s)) sellers_by_type2.delete(k);
     }
     for (const [k, s] of Array.from(sellers_by_category.entries())) {
-      if (!keepIfHasCategory(s)) sellers_by_category.delete(k);
+      if (!keepIfHome(s)) sellers_by_category.delete(k);
     }
   }
 
@@ -529,11 +517,11 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
   const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
   if (candidateIds.size === 0) {
-    // If category filter applied, prefer sellers that have that category
-    if (applyCategoryFilter) {
+    // If home filter applied, prefer sellers that have home category first
+    if (applyHomeFilter) {
       for (const s of sellersData) {
         const arr = s.category_ids_array || [];
-        if (arr.some(c => c.includes(topCategory.name) || topCategory.name.includes(c))) {
+        if (arr.some(c => c.includes('home') || c.includes('decor') || c.includes('furnit') || c.includes('vase') || c.includes('lamp') || c.includes('clock'))) {
           candidateList.push(s);
           if (candidateList.length >= MAX_GPT_SELLER_CHECK) break;
         }
@@ -559,10 +547,10 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
   const sellers_by_gpt = [];
   for (let i = 0; i < Math.min(candidateList.length, MAX_GPT_SELLER_CHECK); i++) {
     const seller = candidateList[i];
-    // If category filter applied, skip sellers that don't have that category
-    if (applyCategoryFilter) {
+    // If home filter applied, skip sellers that don't have that home keyword
+    if (applyHomeFilter) {
       const arr = seller.category_ids_array || [];
-      if (!arr.some(c => c.includes(topCategory.name) || topCategory.name.includes(c))) {
+      if (!arr.some(c => c.includes('home') || c.includes('decor') || c.includes('vase') || c.includes('lamp') || c.includes('clock') || c.includes('furnit'))) {
         continue;
       }
     }
@@ -579,7 +567,7 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
     by_type2: sellersType2Arr,
     by_category: sellersCategoryArr,
     by_gpt: sellers_by_gpt,
-    predictedCategories // include for debugging/useful display
+    homeCheck // include for debugging if needed { isHome, score }
   };
 }
 
@@ -895,7 +883,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (category-filtered sellers)',
+    version: '6.0 - Concise Messages (home-only GPT check)',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
@@ -923,7 +911,7 @@ app.get('/test-keyword-matching', async (req, res) => {
     const keywordMatches = findKeywordMatchesInCat1(query);
     const sellers = await findSellersForQuery(query, keywordMatches);
     const concise = buildConciseResponse(query, keywordMatches, sellers);
-    res.json({ query, is_clothing_query: isClothing, keyword_matches: keywordMatches, sellers, predictedCategories: sellers.predictedCategories || [], concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
+    res.json({ query, is_clothing_query: isClothing, keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
