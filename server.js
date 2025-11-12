@@ -123,7 +123,7 @@ async function loadSellersData() {
         .pipe(csv())
         .on('data', (data) => {
           const mapped = {
-            seller_id: data.seller_id || data.SELLER_ID || data.id || data.ID || '',
+            seller_id: data.seller_id || data.SELLER_ID || data.user_id || '',
             store_name: data.store_name || data.StoreName || data.store || data.Store || '',
             category_ids: data.category_ids || data.CATEGORY_IDS || data.categories || data.Categories || '',
             raw: data
