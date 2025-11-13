@@ -711,7 +711,7 @@ Only return JSON.
 
 /* -------------------------
    Company Response Generator
-   (INSERTED: your conversational company response)
+   (conversational company response)
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
@@ -767,8 +767,30 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 }
 
 /* -------------------------
+   Seller onboarding helper (NEW)
+   - If user asks about joining / onboarding / become a seller, return this concise seller message.
+--------------------------*/
+function isSellerOnboardQuery(userMessage) {
+  if (!userMessage) return false;
+  const m = userMessage.toLowerCase();
+  const triggers = [
+    'sell on', 'sell with', 'become a seller', 'become seller', 'be a seller', 'how to join', 'how to onboard',
+    'onboard', 'onboarding', 'register as seller', 'register as a seller', 'join as seller', 'become a merchant',
+    'how to sell', 'partner with', 'partner with zulu', 'seller signup', 'seller sign up', 'how to become a seller',
+    'how to register', 'apply as seller', 'apply to sell', 'sell on zulu', 'seller onboarding'
+  ];
+  return triggers.some(t => m.includes(t));
+}
+
+function sellerOnboardMessage() {
+  // Keep short and WhatsApp-friendly
+  const link = 'https://app.zulu.club/brand';
+  return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers`;
+}
+
+/* -------------------------
    Main product flow: detect intent, match galleries, find sellers, and respond concisely
-   (getChatGPTResponse now calls generateCompanyResponse for company intents)
+   (getChatGPTResponse now handles seller-onboard queries specially)
 --------------------------*/
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -776,6 +798,11 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
   
   try {
+    // If user explicitly asks about seller onboarding, return the onboarding message immediately
+    if (isSellerOnboardQuery(userMessage)) {
+      return sellerOnboardMessage();
+    }
+
     const intent = await detectIntent(userMessage);
     
     if (intent === 'product' && galleriesData.length > 0) {
@@ -944,7 +971,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (home-only GPT check + conversational company replies)',
+    version: '6.0 - Concise Messages (home-only GPT check + conversational company replies + seller onboarding link)',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
