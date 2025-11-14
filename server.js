@@ -1,4 +1,4 @@
-// server.js (full file - updated generateCompanyResponse to return short formatted company info JSON)
+// server.js (full file - auto-format company JSON to human text before sending)
 
 const express = require('express');
 const axios = require('axios');
@@ -712,17 +712,7 @@ Only return JSON.
 
 /* -------------------------
    Company Response Generator
-   -> UPDATED: returns a short JSON object (string) with a strict format
-   Fields:
-   {
-     "title": "Zulu Club — short title",
-     "message": "short conversational line (<= 200 chars)",
-     "highlights": ["100-minute delivery", "Try-at-home", "Easy returns"],
-     "availability": "Gurgaon; Pop-ups: AIPL Joy Street & AIPL Central",
-     "website": "zulu.club",
-     "contact_hint": "For seller onboarding use https://app.zulu.club/brand" // optional hint
-   }
-   The function asks the model to return ONLY the JSON object — no extra text.
+   -> returns the strict JSON string (unchanged)
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   // fallback if OpenAI not configured
@@ -849,7 +839,55 @@ function sellerOnboardMessage() {
 }
 
 /* -------------------------
+   Helper: detect JSON and format company JSON to human text
+--------------------------*/
+function isJsonString(str) {
+  if (typeof str !== 'string') return false;
+  str = str.trim();
+  if (!str.startsWith('{') && !str.startsWith('[')) return false;
+  try {
+    JSON.parse(str);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function formatCompanyJsonToText(jsonStr) {
+  try {
+    const obj = JSON.parse(jsonStr);
+    // Only format if expected keys exist
+    const keys = ['title', 'message', 'highlights', 'availability', 'website', 'contact_hint'];
+    const hasAll = keys.every(k => Object.prototype.hasOwnProperty.call(obj, k));
+    if (!hasAll) {
+      // If not exact schema, fallback to a safe string
+      return typeof jsonStr === 'string' ? jsonStr : JSON.stringify(obj);
+    }
+
+    // Build a readable text
+    let lines = [];
+    if (obj.title) lines.push(obj.title);
+    if (obj.message) lines.push(obj.message); // one-liner
+    if (Array.isArray(obj.highlights) && obj.highlights.length) {
+      lines.push('\nHighlights:');
+      obj.highlights.slice(0, 4).forEach(h => lines.push(`• ${h}`));
+    }
+    if (obj.availability) lines.push(`\nAvailability: ${obj.availability}`);
+    if (obj.website) lines.push(`Website: ${obj.website}`);
+    if (obj.contact_hint) lines.push(`${obj.contact_hint}`);
+
+    // Join with new lines, and trim extra whitespace
+    return lines.join('\n').replace(/\n{2,}/g, '\n\n').trim();
+  } catch (e) {
+    console.error('Error formatting company JSON to text:', e);
+    return jsonStr;
+  }
+}
+
+/* -------------------------
    Main product flow: detect intent, match galleries, find sellers, and respond concisely
+   Now: getChatGPTResponse still returns either plain text (product flows, seller onboarding)
+   or a JSON string for company replies — handleMessage will convert JSON -> text before sending.
 --------------------------*/
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -887,12 +925,61 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       }
     }
 
-    // not a product intent -> use the conversational company response (now returns JSON string)
+    // not a product intent -> use the conversational company response (returns JSON string)
     return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
     
   } catch (error) {
     console.error('❌ ChatGPT API error:', error);
     // concise fallback
+    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
+  }
+}
+
+/* -------------------------
+   handleMessage():
+   - calls getChatGPTResponse()
+   - if the response is a company JSON string, convert to human text
+   - returns the final text to be sent by sendMessage
+--------------------------*/
+async function handleMessage(sessionId, userMessage) {
+  try {
+    if (!conversations[sessionId]) conversations[sessionId] = { history: [] };
+    conversations[sessionId].history.push({ role: "user", content: userMessage });
+
+    const aiRawResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history);
+
+    // store raw assistant response in convo history
+    conversations[sessionId].history.push({ role: "assistant", content: aiRawResponse });
+
+    // Keep last 10 turns
+    if (conversations[sessionId].history.length > 10) {
+      conversations[sessionId].history = conversations[sessionId].history.slice(-10);
+    }
+
+    // If the assistant returned a JSON string for company replies, format to readable text
+    if (typeof aiRawResponse === 'string' && isJsonString(aiRawResponse)) {
+      // try to parse and check if it matches the company schema
+      try {
+        const parsed = JSON.parse(aiRawResponse);
+        const expectedKeys = ['title', 'message', 'highlights', 'availability', 'website', 'contact_hint'];
+        const isCompanyJson = expectedKeys.every(k => Object.prototype.hasOwnProperty.call(parsed, k));
+        if (isCompanyJson) {
+          const formatted = formatCompanyJsonToText(aiRawResponse);
+          return formatted;
+        } else {
+          // Not the company schema — return raw string
+          return aiRawResponse;
+        }
+      } catch (e) {
+        // parsing failed, return raw string
+        return aiRawResponse;
+      }
+    }
+
+    // otherwise return as-is (product text, seller onboarding text, or error fallback)
+    return aiRawResponse;
+  } catch (error) {
+    console.error('❌ Error handling message:', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
@@ -985,22 +1072,8 @@ async function detectIntent(userMessage) {
 }
 
 /* -------------------------
-   Webhook + endpoints (kept, but messages will now be concise)
+   Webhook + endpoints (kept)
 --------------------------*/
-async function handleMessage(sessionId, userMessage) {
-  try {
-    if (!conversations[sessionId]) conversations[sessionId] = { history: [] };
-    conversations[sessionId].history.push({ role: "user", content: userMessage });
-    const aiResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history);
-    conversations[sessionId].history.push({ role: "assistant", content: aiResponse });
-    if (conversations[sessionId].history.length > 10) conversations[sessionId].history = conversations[sessionId].history.slice(-10);
-    return aiResponse;
-  } catch (error) {
-    console.error('❌ Error handling message:', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
-  }
-}
-
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
@@ -1011,8 +1084,9 @@ app.post('/webhook', async (req, res) => {
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
     if (userMessage && userPhone) {
       const sessionId = userPhone;
-      const aiResponse = await handleMessage(sessionId, userMessage);
-      await sendMessage(userPhone, userName, aiResponse);
+      const finalTextToSend = await handleMessage(sessionId, userMessage);
+      // send human-friendly text (not raw JSON)
+      await sendMessage(userPhone, userName, finalTextToSend);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
       console.log('❓ No valid message or phone number found in webhook');
@@ -1028,7 +1102,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (company responses formatted JSON)',
+    version: '6.0 - Concise Messages (company JSON auto-formatted to text)',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
