@@ -724,15 +724,14 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     ${companyInfo}
 
     IMPORTANT RESPONSE GUIDELINES:
-    1. **Only Hi responses will be under 50 characters** for WhatsApp compatibility
-    2. **Keep responses conversational** and helpful
-    3. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
-    4. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-    5. **Use emojis** to make it engaging but professional
-    6. **Keep responses under 200 characters** for WhatsApp compatibility
-    7. **Be enthusiastic and helpful** - we're excited about our products!
-    8. **Direct users to our website** zulu.club for more information and shopping
-    9. **Focus on our service experience** rather than specific categories
+    1. **Keep responses conversational** and helpful
+    2. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
+    3. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+    4. **Use emojis** to make it engaging but professional
+    5. **Keep responses under 200 characters** for WhatsApp compatibility
+    6. **Be enthusiastic and helpful** - we're excited about our products!
+    7. **Direct users to our website** zulu.club for more information and shopping
+    8. **Focus on our service experience** rather than specific categories
 
     Remember: Be a helpful guide to Zulu Club's overall shopping experience and service.
     `
@@ -760,8 +759,8 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   const completion = await openai.chat.completions.create({
     model: "gpt-3.5-turbo",
     messages: messages,
-    max_tokens: 350,
-    temperature: 0.7
+    max_tokens: 300,
+    temperature: 0.6
   });
   
   return completion.choices[0].message.content.trim();
