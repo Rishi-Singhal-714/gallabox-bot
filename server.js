@@ -730,36 +730,119 @@ ${companyInfo}
 /* -------------------------
    Main: GPT-driven intent + flow
 --------------------------*/
+// GPT-only intent detection (drop-in replacement for detectIntent)
+// Uses GPT-4 by default (set process.env.GPT_MODEL to override).
+// Returns 'product' or 'company'.
 async function detectIntent(userMessage) {
-  // GPT-only intent classification: ask model (gpt-4 by default) to return "company" or "product"
   try {
-    if (!userMessage || typeof userMessage !== 'string') return 'company';
+    if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
+      return 'company';
+    }
 
-    const prompt = `
-Decide whether the user's message is about the COMPANY (pop-ups, locations, delivery, returns, onboarding, how to join, contact, policies, careers) or about PRODUCTS (searching, browsing, categories, availability, prices, or product requests).
+    const model = process.env.GPT_MODEL || 'gpt-4';
+    const examples = [
+      // COMPANY (explicit)
+      { q: "What is Zulu Club?", intent: "company" },
+      { q: "Which categories do you offer?", intent: "company" },
+      { q: "Where are your pop-ups located?", intent: "company" },
+      { q: "How do I become a seller?", intent: "company" },
+      { q: "Do you deliver in Gurgaon?", intent: "company" },
+      { q: "What is your return policy?", intent: "company" },
+      { q: "Who are you?", intent: "company" },
+      { q: "Contact support", intent: "company" },
+      { q: "Tell me about Zulu Club", intent: "company" },
 
-User Message: "${userMessage}"
+      // PRODUCT (explicit)
+      { q: "Show me red dresses", intent: "product" },
+      { q: "Do you have vases or showpieces?", intent: "product" },
+      { q: "I want a black t-shirt", intent: "product" },
+      { q: "kids toys available", intent: "product" },
+      { q: "do you have lamps for living room?", intent: "product" },
+      { q: "Looking for women's sandals", intent: "product" },
 
-Respond with ONLY one word: "company" or "product".
-    `;
+      // AMBIGUOUS / BORDERLINE — labelled to teach proper handling
+      { q: "what categories do you sell", intent: "company" },               // company-level question
+      { q: "categories in home decor", intent: "product" },                  // user asking about products in a category
+      { q: "Do you have home decor like clocks?", intent: "product" },       // product intent
+      { q: "Where can I find your pop-up schedule and categories?", intent: "company" },
+      { q: "I need watches and belts", intent: "product" },
+      { q: "Tell me about try-at-home and returns", intent: "company" }
+    ];
 
-    const completion = await openai.chat.completions.create({
-      model: GPT_MODEL,
-      messages: [
-        { role: "system", content: "You are an intent classifier. Answer only 'company' or 'product'." },
-        { role: "user", content: prompt }
-      ],
-      max_tokens: 6,
-      temperature: 0.0
+    // Build messages: system instructions + few-shot pairs
+    const messages = [
+      {
+        role: "system",
+        content:
+`You are a strict intent classifier for Zulu Club. Classify the user's message into exactly one of two intents: "company" or "product".
+
+- "company" = user asks about the company, services, logistics, pop-ups, onboarding/selling, policies, contact, or general info (e.g., "What is Zulu Club?", "How to become a seller", "Where are your pop-ups?").
+- "product" = user explicitly asks to browse, find, or buy items or asks about availability of items or categories as items (e.g., "Do you have vases?", "Show me red dresses", "I want lamps for living room").
+
+Return output as only valid JSON, nothing else, in this exact format:
+
+{ "intent": "company" | "product", "confidence": 0.00 }
+
+Where confidence is a number between 0.00 and 1.00 representing how sure you are. Be concise and deterministic.
+`
+      }
+    ];
+
+    // Add few-shot examples
+    for (const ex of examples) {
+      messages.push({ role: "user", content: ex.q });
+      messages.push({ role: "assistant", content: JSON.stringify({ intent: ex.intent, confidence: 0.95 }) });
+    }
+
+    // Add the actual user query and instruction to respond only with JSON
+    messages.push({
+      role: "user",
+      content: `Classify this message and return ONLY JSON:\n\n"${userMessage}"`
     });
 
-    const intent = completion.choices[0].message.content.trim().toLowerCase();
-    return intent === 'product' ? 'product' : 'company';
-  } catch (error) {
-    console.error('Error in detectIntent:', error);
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      max_tokens: 140,   // allow room for reasoned confidence
+      temperature: 0.0,  // deterministic
+      top_p: 1.0
+    });
+
+    const raw = completion.choices[0].message.content.trim();
+
+    // Extract JSON object from model output robustly
+    const firstBrace = raw.indexOf('{');
+    const lastBrace = raw.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1) {
+      console.warn('detectIntent: no JSON found in model response:', raw);
+      return 'company';
+    }
+    const jsonText = raw.slice(firstBrace, lastBrace + 1);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (parseErr) {
+      console.error('detectIntent: JSON parse error:', parseErr, 'raw:', jsonText);
+      return 'company';
+    }
+
+    const intent = String(parsed.intent || '').toLowerCase();
+    const confidence = Number(parsed.confidence || 0);
+
+    // Safety: normalize intent
+    if (intent === 'product') return 'product';
+    if (intent === 'company') return 'company';
+
+    // fallback: use confidence threshold
+    return confidence >= 0.5 ? 'product' : 'company';
+
+  } catch (err) {
+    console.error('detectIntent error:', err);
     return 'company';
   }
 }
+
 
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
