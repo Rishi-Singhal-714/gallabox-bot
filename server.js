@@ -1,5 +1,3 @@
-// server.js (full file - auto-format company JSON to human text before sending)
-
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
@@ -57,6 +55,7 @@ Explore & shop on zulu.club
 
 /* -------------------------
    CSV loaders: galleries + sellers
+   (sellers.csv assumed at the URL — change if needed)
 --------------------------*/
 async function loadGalleriesData() {
   try {
@@ -712,113 +711,66 @@ Only return JSON.
 
 /* -------------------------
    Company Response Generator
-   -> returns the strict JSON string (unchanged)
+   (conversational company response)
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
-  // fallback if OpenAI not configured
-  if (!openai || !process.env.OPENAI_API_KEY) {
-    const fallback = {
-      title: "Zulu Club",
-      message: "Zulu Club is a lifestyle shopping service — 100-minute delivery, try-at-home & easy returns. Visit zulu.club",
-      highlights: ["100-minute delivery", "Try-at-home", "Easy returns"],
-      availability: "Gurgaon; Pop-ups at AIPL Joy Street & AIPL Central",
-      website: "zulu.club",
-      contact_hint: "Seller onboarding: https://app.zulu.club/brand"
-    };
-    return JSON.stringify(fallback);
-  }
-
-  // Build a minimal system and user prompt requesting strict JSON output
-  const systemMsg = {
+  const messages = [];
+  
+  const systemMessage = {
     role: "system",
-    content: `You are a concise assistant that returns ONLY a single JSON object (no extra text, no code fences).
-Return a short company-info JSON about Zulu Club for WhatsApp usage (max message length ~200 characters). Use the exact schema described in the user message.`
-  };
+    content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
+    
+    ZULU CLUB INFORMATION:
+    ${companyInfo}
 
-  const userPrompt = {
-    role: "user",
-    content: `
-Schema (must return exactly this JSON keys; you may shorten values but keep structure):
+    IMPORTANT RESPONSE GUIDELINES:
+    1. **Keep responses conversational** and helpful
+    2. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
+    3. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+    4. **Use emojis** to make it engaging but professional
+    5. **Keep responses under 200 characters** for WhatsApp compatibility
+    6. **Be enthusiastic and helpful** - we're excited about our products!
+    7. **Direct users to our website** app.zulu.club for more information and shopping
+    8. **Focus on our service experience** rather than specific categories
+    9. **Keep responses in format** for WhatsApp compatibility
 
-{
-  "title": "<short title>",
-  "message": "<one short conversational sentence, <=200 chars>",
-  "highlights": ["<short benefit 1>", "<short benefit 2>", "..."],
-  "availability": "<city & pop-up info>",
-  "website": "<domain>",
-  "contact_hint": "<optional short hint or seller link>"
-}
 
-Company info (use for content):
-${companyInfo}
-
-User asked: "${userMessage}"
-
-Constraints:
-- Keep "message" short and WhatsApp-friendly (<=200 chars).
-- "highlights" should be 2-4 short bullets.
-- Do NOT include any other keys.
-- Return ONLY valid JSON.
+    Remember: Be a helpful guide to Zulu Club's overall shopping experience and service.
     `
   };
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [systemMsg, userPrompt],
-      max_tokens: 200,
-      temperature: 0.5
-    });
-
-    const raw = completion.choices[0].message.content.trim();
-    // Try to parse - if parsing fails, fallback to a safe compact object
-    try {
-      const parsed = JSON.parse(raw);
-      // Ensure required keys exist; if missing, fall back
-      const requiredKeys = ["title", "message", "highlights", "availability", "website", "contact_hint"];
-      const hasKey = requiredKeys.every(k => Object.prototype.hasOwnProperty.call(parsed, k));
-      if (!hasKey) {
-        // create a compact fallback while preserving the parsed content where possible
-        const fallback = {
-          title: parsed.title || "Zulu Club",
-          message: parsed.message || "Zulu Club — lifestyle shopping with 100-minute delivery, try-at-home & easy returns. Visit zulu.club",
-          highlights: parsed.highlights || ["100-minute delivery", "Try-at-home", "Easy returns"],
-          availability: parsed.availability || "Gurgaon; Pop-ups at AIPL Joy Street & AIPL Central",
-          website: parsed.website || "zulu.club",
-          contact_hint: parsed.contact_hint || "Seller onboarding: https://app.zulu.club/brand"
-        };
-        return JSON.stringify(fallback);
+  
+  messages.push(systemMessage);
+  
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recentHistory = conversationHistory.slice(-6);
+    recentHistory.forEach(msg => {
+      if (msg.role && msg.content) {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        });
       }
-      // return the valid JSON string from model (ensure compact)
-      return JSON.stringify(parsed);
-    } catch (e) {
-      console.error('Error parsing company JSON from model:', e, 'raw:', raw);
-      const fallback = {
-        title: "Zulu Club",
-        message: "Zulu Club is a lifestyle shopping service — 100-minute delivery, try-at-home & easy returns. Visit zulu.club",
-        highlights: ["100-minute delivery", "Try-at-home", "Easy returns"],
-        availability: "Gurgaon; Pop-ups at AIPL Joy Street & AIPL Central",
-        website: "zulu.club",
-        contact_hint: "Seller onboarding: https://app.zulu.club/brand"
-      };
-      return JSON.stringify(fallback);
-    }
-  } catch (err) {
-    console.error('GPT error in generateCompanyResponse:', err);
-    const fallback = {
-      title: "Zulu Club",
-      message: "Zulu Club is a lifestyle shopping service — 100-minute delivery, try-at-home & easy returns. Visit zulu.club",
-      highlights: ["100-minute delivery", "Try-at-home", "Easy returns"],
-      availability: "Gurgaon; Pop-ups at AIPL Joy Street & AIPL Central",
-      website: "zulu.club",
-      contact_hint: "Seller onboarding: https://app.zulu.club/brand"
-    };
-    return JSON.stringify(fallback);
+    });
   }
+  
+  messages.push({
+    role: "user",
+    content: userMessage
+  });
+  
+  const completion = await openai.chat.completions.create({
+    model: "gpt-3.5-turbo",
+    messages: messages,
+    max_tokens: 350,
+    temperature: 0.7
+  });
+  
+  return completion.choices[0].message.content.trim();
 }
 
 /* -------------------------
    Seller onboarding helper (NEW)
+   - If user asks about joining / onboarding / become a seller, return this concise seller message.
 --------------------------*/
 function isSellerOnboardQuery(userMessage) {
   if (!userMessage) return false;
@@ -839,55 +791,8 @@ function sellerOnboardMessage() {
 }
 
 /* -------------------------
-   Helper: detect JSON and format company JSON to human text
---------------------------*/
-function isJsonString(str) {
-  if (typeof str !== 'string') return false;
-  str = str.trim();
-  if (!str.startsWith('{') && !str.startsWith('[')) return false;
-  try {
-    JSON.parse(str);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function formatCompanyJsonToText(jsonStr) {
-  try {
-    const obj = JSON.parse(jsonStr);
-    // Only format if expected keys exist
-    const keys = ['title', 'message', 'highlights', 'availability', 'website', 'contact_hint'];
-    const hasAll = keys.every(k => Object.prototype.hasOwnProperty.call(obj, k));
-    if (!hasAll) {
-      // If not exact schema, fallback to a safe string
-      return typeof jsonStr === 'string' ? jsonStr : JSON.stringify(obj);
-    }
-
-    // Build a readable text
-    let lines = [];
-    if (obj.title) lines.push(obj.title);
-    if (obj.message) lines.push(obj.message); // one-liner
-    if (Array.isArray(obj.highlights) && obj.highlights.length) {
-      lines.push('\nHighlights:');
-      obj.highlights.slice(0, 4).forEach(h => lines.push(`• ${h}`));
-    }
-    if (obj.availability) lines.push(`\nAvailability: ${obj.availability}`);
-    if (obj.website) lines.push(`Website: ${obj.website}`);
-    if (obj.contact_hint) lines.push(`${obj.contact_hint}`);
-
-    // Join with new lines, and trim extra whitespace
-    return lines.join('\n').replace(/\n{2,}/g, '\n\n').trim();
-  } catch (e) {
-    console.error('Error formatting company JSON to text:', e);
-    return jsonStr;
-  }
-}
-
-/* -------------------------
    Main product flow: detect intent, match galleries, find sellers, and respond concisely
-   Now: getChatGPTResponse still returns either plain text (product flows, seller onboarding)
-   or a JSON string for company replies — handleMessage will convert JSON -> text before sending.
+   (getChatGPTResponse now handles seller-onboard queries specially)
 --------------------------*/
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -925,7 +830,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       }
     }
 
-    // not a product intent -> use the conversational company response (returns JSON string)
+    // not a product intent -> use the conversational company response you provided
     return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
     
   } catch (error) {
@@ -936,56 +841,9 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
 }
 
 /* -------------------------
-   handleMessage():
-   - calls getChatGPTResponse()
-   - if the response is a company JSON string, convert to human text
-   - returns the final text to be sent by sendMessage
---------------------------*/
-async function handleMessage(sessionId, userMessage) {
-  try {
-    if (!conversations[sessionId]) conversations[sessionId] = { history: [] };
-    conversations[sessionId].history.push({ role: "user", content: userMessage });
-
-    const aiRawResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history);
-
-    // store raw assistant response in convo history
-    conversations[sessionId].history.push({ role: "assistant", content: aiRawResponse });
-
-    // Keep last 10 turns
-    if (conversations[sessionId].history.length > 10) {
-      conversations[sessionId].history = conversations[sessionId].history.slice(-10);
-    }
-
-    // If the assistant returned a JSON string for company replies, format to readable text
-    if (typeof aiRawResponse === 'string' && isJsonString(aiRawResponse)) {
-      // try to parse and check if it matches the company schema
-      try {
-        const parsed = JSON.parse(aiRawResponse);
-        const expectedKeys = ['title', 'message', 'highlights', 'availability', 'website', 'contact_hint'];
-        const isCompanyJson = expectedKeys.every(k => Object.prototype.hasOwnProperty.call(parsed, k));
-        if (isCompanyJson) {
-          const formatted = formatCompanyJsonToText(aiRawResponse);
-          return formatted;
-        } else {
-          // Not the company schema — return raw string
-          return aiRawResponse;
-        }
-      } catch (e) {
-        // parsing failed, return raw string
-        return aiRawResponse;
-      }
-    }
-
-    // otherwise return as-is (product text, seller onboarding text, or error fallback)
-    return aiRawResponse;
-  } catch (error) {
-    console.error('❌ Error handling message:', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
-  }
-}
-
-/* -------------------------
    Existing functions left intact for other endpoints/tests
+   (generateProductResponseFromMatches, etc.)
+   Note: seller links now prefer sellers.csv user_id when available
 --------------------------*/
 function generateProductResponseFromMatches(matches, userMessage) {
   if (matches.length === 0) return generateFallbackProductResponse();
@@ -1072,8 +930,22 @@ async function detectIntent(userMessage) {
 }
 
 /* -------------------------
-   Webhook + endpoints (kept)
+   Webhook + endpoints (kept, but messages will now be concise)
 --------------------------*/
+async function handleMessage(sessionId, userMessage) {
+  try {
+    if (!conversations[sessionId]) conversations[sessionId] = { history: [] };
+    conversations[sessionId].history.push({ role: "user", content: userMessage });
+    const aiResponse = await getChatGPTResponse(userMessage, conversations[sessionId].history);
+    conversations[sessionId].history.push({ role: "assistant", content: aiResponse });
+    if (conversations[sessionId].history.length > 10) conversations[sessionId].history = conversations[sessionId].history.slice(-10);
+    return aiResponse;
+  } catch (error) {
+    console.error('❌ Error handling message:', error);
+    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
+  }
+}
+
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
@@ -1084,9 +956,8 @@ app.post('/webhook', async (req, res) => {
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
     if (userMessage && userPhone) {
       const sessionId = userPhone;
-      const finalTextToSend = await handleMessage(sessionId, userMessage);
-      // send human-friendly text (not raw JSON)
-      await sendMessage(userPhone, userName, finalTextToSend);
+      const aiResponse = await handleMessage(sessionId, userMessage);
+      await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
       console.log('❓ No valid message or phone number found in webhook');
@@ -1102,7 +973,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - Concise Messages (company JSON auto-formatted to text)',
+    version: '6.0 - Concise Messages (home-only GPT check + conversational company replies + seller onboarding link)',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
