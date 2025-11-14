@@ -725,17 +725,41 @@ Only return JSON.
       matches = [];
     }
 
-    const matchedCategories = matches
-      .map(match => galleriesData.find(item => item.type2 === match.type2))
-      .filter(Boolean)
-      .slice(0,5);
+    // map to actual category objects and attach relevance_score; if no score, estimate via smartSimilarity
+    const mapped = matches.map(m => {
+      const item = galleriesData.find(x => x.type2 === m.type2);
+      if (!item) return null;
+      const score = (typeof m.relevance_score === 'number') ? Number(m.relevance_score) : null;
+      return { item, score, reason: m.reason || '' };
+    }).filter(Boolean);
 
-    return matchedCategories;
+    // if GPT returned nothing or low scores, fallback: run local matching and merge top local matches
+    if (mapped.length === 0 || mapped.every(m => (m.score || 0) < 0.4)) {
+      // fallback to local keyword search on the whole CSV: pick up to 5 best local matches
+      const localMatches = [];
+      for (const g of galleriesData) {
+        const variants = expandCategoryVariants(g.cat1 || g.type2 || '');
+        let best = 0;
+        for (const v of variants) {
+          const sim = smartSimilarity(v, userMessage); // userMessage normalized inside smartSimilarity
+          if (sim > best) best = sim;
+        }
+        if (best > 0.5) localMatches.push({ item: g, score: Number(best.toFixed(3)) });
+      }
+      const sortedLocal = localMatches.sort((a,b)=>b.score-a.score).slice(0,5);
+      return sortedLocal.map(x => x.item);
+    }
+
+    // sort by score descending and return up to 5 items
+    const final = mapped.sort((a,b) => (b.score || 0) - (a.score || 0)).slice(0,5).map(x => x.item);
+    return final;
+
   } catch (error) {
     console.error('Error in findGptMatchedCategories:', error);
     return [];
   }
 }
+
 
 /* -------------------------
    Company Response Generator (GPT-based; instructs model to include onboarding link if user asks)
@@ -1017,6 +1041,16 @@ app.get('/test-keyword-matching', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+app.get('/debug-match', async (req, res) => {
+  const q = req.query.query || req.query.q;
+  if (!q) return res.status(400).json({ error: 'Missing query parameter `query`' });
+
+  const keywordMatches = findKeywordMatchesInCat1(q);
+  const gptMatches = await findGptMatchedCategories(q);
+  const sellers = await findSellersForQuery(q, keywordMatches);
+
+  res.json({ query: q, keywordMatches, gptMatches: gptMatches.map(g=>({type2:g.type2, cat1:g.cat1, cat_id:g.cat_id})), sellers, galleriesCount: galleriesData.length, sellersCount: sellersData.length, homeCheck: (await isQueryHome(q)) });
 });
 
 app.get('/test-gpt-matching', async (req, res) => {
