@@ -385,7 +385,7 @@ function findKeywordMatchesInCat1(userMessage) {
     if (best && best.score >= 0.75) { // more permissive threshold
       matches.push({
         ...item,
-        matchType: best.score >= 0. nine ? 'exact' : (best.score >= 0.85 ? 'strong' : 'similar'),
+        matchType: best.score >= 0.9 ? 'exact' : (best.score >= 0.85 ? 'strong' : 'similar'),
         matchedTerm: best.term,
         matchedVariant: best.variant,
         score: best.score
@@ -396,6 +396,7 @@ function findKeywordMatchesInCat1(userMessage) {
   // sort by score & return top 5
   return matches.sort((a, b) => b.score - a.score).slice(0, 5);
 }
+
 
 /* -------------------------
    Seller matching (three-step) + simplified home-only GPT check
