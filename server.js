@@ -718,32 +718,28 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   
   const systemMessage = {
     role: "system",
-    content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service.
-
+    content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
+    
     ZULU CLUB INFORMATION:
     ${companyInfo}
 
     IMPORTANT RESPONSE GUIDELINES:
-    1. Keep responses conversational and helpful
-    2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
-    3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-    4. Use emojis to make it engaging but professional
-    5. Keep responses under 200 characters for WhatsApp compatibility
-    6. Be enthusiastic and helpful
-    7. Direct users to app.zulu.club for more details
-    8. Focus on service experience, not specific categories
+    1. **Only Hi responses will be under 50 characters** for WhatsApp compatibility
+    2. **Keep responses conversational** and helpful
+    3. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
+    4. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+    5. **Use emojis** to make it engaging but professional
+    6. **Keep responses under 200 characters** for WhatsApp compatibility
+    7. **Be enthusiastic and helpful** - we're excited about our products!
+    8. **Direct users to our website** zulu.club for more information and shopping
+    9. **Focus on our service experience** rather than specific categories
 
-    Always respond with ONLY this JSON format:
-    {
-      "message": "<short helpful reply>",
-      "website": "app.zulu.club",
-      "availability": "Gurgaon, pop-ups at AIPL Joy Street & AIPL Central"
-    }
+    Remember: Be a helpful guide to Zulu Club's overall shopping experience and service.
     `
   };
-
+  
   messages.push(systemMessage);
-
+  
   if (conversationHistory && conversationHistory.length > 0) {
     const recentHistory = conversationHistory.slice(-6);
     recentHistory.forEach(msg => {
@@ -755,31 +751,20 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
       }
     });
   }
-
+  
   messages.push({
     role: "user",
     content: userMessage
   });
-
+  
   const completion = await openai.chat.completions.create({
     model: "gpt-3.5-turbo",
     messages: messages,
-    max_tokens: 200,
+    max_tokens: 350,
     temperature: 0.7
   });
-
-  let raw = completion.choices[0].message.content.trim();
-
-  // Ensure valid JSON output
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    return {
-      message: raw,
-      website: "app.zulu.club",
-      availability: "Gurgaon, pop-ups at AIPL Joy Street & AIPL Central"
-    };
-  }
+  
+  return completion.choices[0].message.content.trim();
 }
 
 /* -------------------------
