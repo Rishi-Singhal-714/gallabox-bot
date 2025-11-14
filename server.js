@@ -250,27 +250,65 @@ function editDistance(a, b) {
   return dp[m][n];
 }
 
+// Improved token-based overlap similarity (0..1)
 function calculateSimilarity(str1, str2) {
-  const longer = str1.length > str2.length ? str1 : str2;
-  const shorter = str1.length > str2.length ? str2 : str1;
-  if (longer.length === 0) return 1.0;
-  if (longer.includes(shorter)) return 0.95;
-  const commonChars = [...shorter].filter(char => longer.includes(char)).length;
-  return commonChars / longer.length;
+  if (!str1 || !str2) return 0;
+  const a = str1.toLowerCase().trim();
+  const b = str2.toLowerCase().trim();
+  if (a === b) return 1.0;
+  // fast containment boost
+  if (a.includes(b) || b.includes(a)) {
+    // length ratio: if one is much shorter, give a bit lower boost
+    const ratio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    return 0.85 + 0.15 * ratio; // 0.85..1.0
+  }
+
+  // build trigrams (or bigrams when short)
+  function ngrams(s, n = 3) {
+    const pad = `_${s}_`;
+    const grams = [];
+    for (let i = 0; i <= pad.length - n; i++) grams.push(pad.slice(i, i + n));
+    return grams;
+  }
+  const n = Math.min(3, Math.max(2, Math.floor(Math.min(a.length, b.length) / 3) || 2));
+  const gA = ngrams(a, n);
+  const gB = ngrams(b, n);
+  const setB = new Set(gB);
+  const common = gA.filter(x => setB.has(x)).length;
+  const denom = gA.length + gB.length;
+  if (denom === 0) return 0;
+  return (2 * common) / denom; // Dice coefficient (0..1)
 }
 
+// Better smartSimilarity combining edit-distance and token similarity
 function smartSimilarity(a, b) {
-  const A = singularize(normalizeToken(a));
-  const B = singularize(normalizeToken(b));
+  const A = singularize(normalizeToken(a || ''));
+  const B = singularize(normalizeToken(b || ''));
   if (!A || !B) return 0;
+
   if (A === B) return 1.0;
-  if (A.includes(B) || B.includes(A)) return 0.95;
+  // if substring -> strong score
+  if (A.includes(B) || B.includes(A)) {
+    // slightly boost shorter substring matches
+    const ratio = Math.min(A.length, B.length) / Math.max(A.length, B.length);
+    return 0.9 + 0.1 * ratio; // 0.9..1.0
+  }
+
+  // Edit distance normalized
   const ed = editDistance(A, B);
-  const maxLen = Math.max(A.length, B.length);
-  const edScore = 1 - (ed / Math.max(1, maxLen));
-  const charOverlap = calculateSimilarity(A, B);
-  return Math.max(edScore, charOverlap);
+  const maxLen = Math.max(A.length, B.length, 1);
+  const edScore = 1 - (ed / maxLen); // 0..1 (higher = more similar)
+
+  // ngram overlap
+  const ngScore = calculateSimilarity(A, B); // 0..1
+
+  // combine with weights — favor overlap for short tokens, edScore for longer tokens
+  const lenFactor = Math.min(1, Math.max(A.length, B.length) / 8); // 0..1
+  const combined = (0.6 * edScore * lenFactor) + (0.4 * ngScore * (1 - lenFactor)) + (0.2 * Math.max(edScore, ngScore) * (1 - lenFactor));
+  // clamp 0..1
+  return Math.max(0, Math.min(1, combined));
 }
+
 
 function expandCategoryVariants(category) {
   const norm = normalizeToken(category);
@@ -313,31 +351,49 @@ function findKeywordMatchesInCat1(userMessage) {
   galleriesData.forEach(item => {
     if (!item.cat1) return;
     const cat1Categories = item.cat1.split(',').map(cat => cat.trim()).filter(Boolean);
-    const expanded = [];
+    // expand variants once
+    const expandedVariants = [];
     for (const category of cat1Categories) {
-      const variants = expandCategoryVariants(category);
-      expanded.push(...variants);
+      const variants = expandCategoryVariants(category); // normalized pieces
+      // include original normalized full phrase too
+      const fullNorm = normalizeToken(category);
+      if (fullNorm) variants.push(fullNorm);
+      for (const v of variants) {
+        if (v && v.length > 0) expandedVariants.push(v);
+      }
     }
 
+    // compute best score across all search terms and variants
+    let best = null; // {score, term, variant}
     for (const searchTerm of searchTerms) {
-      for (const variant of expanded) {
+      for (const variant of expandedVariants) {
+        // skip clothing categories (you had earlier)
         const isClothing = clothingKeywords.some(clothing => variant.includes(clothing));
         if (isClothing) continue;
+
         const sim = smartSimilarity(variant, searchTerm);
-        if (sim >= 0.9 || (sim >= 0.82 && Math.abs(variant.length - searchTerm.length) <= 3)) {
-          if (!matches.some(m => m.type2 === item.type2)) {
-            matches.push({
-              ...item,
-              matchType: sim === 1.0 ? 'exact' : 'similar',
-              matchedTerm: searchTerm,
-              score: sim
-            });
-          }
+        // normalize: boost short exact-ish matches (e.g., "clock" vs "clocks")
+        const lenPenalty = Math.min(1, Math.max(1, Math.abs(variant.length - searchTerm.length)) / Math.max(variant.length, 1));
+        const adjusted = sim * (1 - 0.15 * lenPenalty); // small penalty for length mismatch
+
+        if (!best || adjusted > best.score) {
+          best = { score: Number(adjusted.toFixed(3)), term: searchTerm, variant };
         }
       }
     }
+
+    if (best && best.score >= 0.75) { // more permissive threshold
+      matches.push({
+        ...item,
+        matchType: best.score >= 0. nine ? 'exact' : (best.score >= 0.85 ? 'strong' : 'similar'),
+        matchedTerm: best.term,
+        matchedVariant: best.variant,
+        score: best.score
+      });
+    }
   });
 
+  // sort by score & return top 5
   return matches.sort((a, b) => b.score - a.score).slice(0, 5);
 }
 
