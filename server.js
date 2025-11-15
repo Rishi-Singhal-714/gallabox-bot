@@ -640,27 +640,42 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
    - intent: one of 'company','product','seller','investors'
    - matches: array of { type2, reason, score } when intent === 'product'
 --------------------------*/
+/* -------------------------
+   GPT-only classifier + category matcher (single call)
+   No deterministic phrase checks — GPT decides intent completely.
+   Returns: { intent, confidence, reason, matches }
+--------------------------*/
 async function classifyAndMatchWithGPT(userMessage) {
-  if (!userMessage || userMessage.trim().length === 0) {
-    return { intent: 'company', confidence: 0.0, reason: 'empty message', matches: [] };
+  const text = (userMessage || '').trim();
+  if (!text) {
+    return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
   }
+
   if (!openai || !process.env.OPENAI_API_KEY) {
     return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
   }
 
   // Prepare compact categories list for GPT
   const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
-  const prompt = `
-You are an assistant for Zulu Club (a lifestyle shopping service). Given the USER MESSAGE below:
 
+  const prompt = `
+You are an assistant for Zulu Club (a lifestyle shopping service).
+
+Task:
 1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
+   - "company": general questions, greetings, store info, pop-ups, support, availability.
+   - "product": the user is asking to browse or buy items, asking what we have, searching for products/categories.
+   - "seller": queries about selling on the platform, onboarding merchants.
+   - "investors": questions about business model, revenue, funding, pitch, investment.
+
 2) If the intent is "product", pick up to 5 best-matching categories from the AVAILABLE CATEGORIES list provided (match using the "type2" field). For each match return a short reason and a relevance score between 0.0 and 1.0.
-3) Return ONLY valid JSON in this exact format:
+
+3) Return ONLY valid JSON in this exact format (no extra text):
 
 {
   "intent": "product",
   "confidence": 0.0,
-  "reason": "short explanation of intent",
+  "reason": "short explanation for the chosen intent",
   "matches": [
     { "type2": "exact-type2-from-csv", "reason": "why it matches", "score": 0.85 }
   ]
@@ -687,7 +702,7 @@ USER MESSAGE:
       temperature: 0.15
     });
 
-    const raw = completion.choices[0].message.content.trim();
+    const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
     try {
       const parsed = JSON.parse(raw);
       const intent = (parsed.intent && ['company','product','seller','investors'].includes(parsed.intent)) ? parsed.intent : 'company';
@@ -697,14 +712,15 @@ USER MESSAGE:
       return { intent, confidence, reason, matches };
     } catch (e) {
       console.error('Error parsing classifyAndMatchWithGPT JSON:', e, 'raw:', raw);
-      // fallback: try to get basic intent via simpler prompt (best-effort)
-      return { intent: 'company', confidence: 0.0, reason: 'parse error', matches: [] };
+      // best-effort fallback: return company intent so user sees company response rather than wrong product/seller
+      return { intent: 'company', confidence: 0.0, reason: 'parse error from GPT', matches: [] };
     }
   } catch (err) {
     console.error('Error calling OpenAI classifyAndMatchWithGPT:', err);
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [] };
   }
 }
+
 
 /* -------------------------
    Company Response Generator (kept)
