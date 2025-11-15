@@ -635,6 +635,77 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
 }
 
 /* -------------------------
+   findGptMatchedCategories (ADDED / REPLACED)
+   This is the function you asked to add (keeps the same behavior you provided).
+--------------------------*/
+async function findGptMatchedCategories(userMessage) {
+  try {
+    const csvDataForGPT = galleriesData.map(item => ({
+      type2: item.type2,
+      cat1: item.cat1,
+      cat_id: item.cat_id
+    }));
+
+    const prompt = `
+USER MESSAGE: "${userMessage}"
+
+AVAILABLE PRODUCT CATEGORIES (from CSV):
+${JSON.stringify(csvDataForGPT, null, 2)}
+
+TASK:
+1. Understand what product the user is looking for (even if misspelled or incomplete like "tshir" for "t-shirt")
+2. Find the BEST matching categories from the CSV data
+3. Return the top 5 most relevant matches in JSON format
+
+RESPONSE FORMAT:
+{
+  "matches": [
+    { "type2": "exact-type2-value-from-csv", "reason": "brief explanation", "relevance_score": 0.9 }
+  ]
+}
+
+Only return JSON.
+    `;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: `You are a product matching expert for Zulu Club. Return valid JSON.`
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 800,
+      temperature: 0.3,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    let matches = [];
+    try {
+      matches = JSON.parse(responseText).matches || [];
+    } catch (e) {
+      console.error('Error parsing GPT product matches JSON:', e, 'raw:', responseText);
+      matches = [];
+    }
+
+    const matchedCategories = matches
+      .map(match => galleriesData.find(item => item.type2 === match.type2))
+      .filter(Boolean)
+      .slice(0,5);
+
+    return matchedCategories;
+  } catch (error) {
+    console.error('Error in findGptMatchedCategories:', error);
+    return [];
+  }
+}
+
+/* -------------------------
    GPT-first classifier + category matcher (single call)
    Returns: { intent, confidence, reason, matches }
    - intent: one of 'company','product','seller','investors'
