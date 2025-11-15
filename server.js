@@ -1,4 +1,6 @@
 // server.js - GPT-first intent + category matcher (AI is the boss)
+// Gender detection now uses category data (cat_id / cat1) as the source of truth.
+
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
@@ -85,7 +87,7 @@ async function loadGalleriesData() {
         .on('data', (data) => {
           const mappedData = {
             type2: data.type2 || data.Type2 || data.TYPE2 || '',
-            cat_id: data.cat_id || data.cat_id || data.CAT_ID || '',
+            cat_id: data.cat_id || data.CAT_ID || '',
             cat1: data.cat1 || data.Cat1 || data.CAT1 || '',
             seller_id: data.seller_id || data.SELLER_ID || data.Seller_ID || data.SellerId || data.sellerId || ''
           };
@@ -219,7 +221,7 @@ async function sendMessage(to, name, message) {
 }
 
 /* -------------------------
-   Matching helpers (kept + gender-aware)
+   Matching helpers (kept + gender-from-cat_id)
 --------------------------*/
 function normalizeToken(t) {
   if (!t) return '';
@@ -291,39 +293,18 @@ function expandCategoryVariants(category) {
 const STOPWORDS = new Set(['and','the','for','a','an','of','in','on','to','with','from','shop','buy','category','categories']);
 
 function containsClothingKeywords(userMessage) {
-  const clothingTerms = ['men', 'women', 'kids', 'child', 'children', 'man', 'woman', 'boy', 'girl'];
+  const clothingTerms = ['men', 'women', 'kids', 'kid', 'child', 'children', 'man', 'woman', 'boy', 'girl'];
   const message = (userMessage || '').toLowerCase();
   return clothingTerms.some(term => message.includes(term));
 }
 
-// New helper: detect gender mention in query (returns 'men'|'women'|'kids'|null)
-function detectGenderFromQuery(userMessage) {
-  if (!userMessage) return null;
-  const m = userMessage.toLowerCase();
-  // check for explicit mentions; prefer exact token matches
-  const mapping = [
-    { key: 'kids', variants: ['kid', 'kids', 'children', 'child', 'boys', 'girls'] },
-    { key: 'women', variants: ['women', 'woman', 'ladies', 'lady', "women's", "ladies'"] },
-    { key: 'men', variants: ['men', 'man', "men's", "men s"] }
-  ];
-
-  for (const item of mapping) {
-    for (const v of item.variants) {
-      const re = new RegExp(`\\b${v}\\b`, 'i');
-      if (re.test(m)) return item.key;
-    }
-  }
-  return null;
-}
-
 /* -------------------------
-   Gallery keyword matching (kept + gender-aware)
+   Gallery keyword matching (kept)
+   NOTE: This function remains focused on the whole query (no first-pass gendering).
 --------------------------*/
 function findKeywordMatchesInCat1(userMessage) {
   if (!userMessage || !galleriesData.length) return [];
-
-  const detectedGender = detectGenderFromQuery(userMessage); // 'men'|'women'|'kids'|null
-
+  
   const rawTerms = userMessage
     .toLowerCase()
     .replace(/&/g, ' and ')
@@ -336,7 +317,7 @@ function findKeywordMatchesInCat1(userMessage) {
 
   const matches = [];
   const clothingKeywords = ['clothing', 'apparel', 'wear', 'shirt', 'pant', 'dress', 'top', 'bottom', 'jacket', 'sweater'];
-
+  
   galleriesData.forEach(item => {
     if (!item.cat1) return;
     const cat1Categories = item.cat1.split(',').map(cat => cat.trim()).filter(Boolean);
@@ -346,23 +327,8 @@ function findKeywordMatchesInCat1(userMessage) {
       expanded.push(...variants);
     }
 
-    // Gender context on category: detect if category explicitly mentions men/women/kids
-    const categoryGenders = new Set();
-    for (const v of expanded) {
-      if (/\bmen\b|\bman\b|men's|\bmens\b/.test(v)) categoryGenders.add('men');
-      if (/\bwomen\b|\bwoman\b|women's|\bwomens\b|ladies\b/.test(v)) categoryGenders.add('women');
-      if (/\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(v)) categoryGenders.add('kids');
-    }
-
-    // If query has a gender and category explicitly conflicts, skip this category
-    if (detectedGender && categoryGenders.size > 0 && !categoryGenders.has(detectedGender)) {
-      // category explicit gender exists but doesn't match query -> skip
-      return;
-    }
-
     for (const searchTerm of searchTerms) {
       for (const variant of expanded) {
-        // avoid treating clothing words as non clothing if query is about non-clothing (original logic)
         const isClothing = clothingKeywords.some(clothing => variant.includes(clothing));
         if (isClothing) continue;
         const sim = smartSimilarity(variant, searchTerm);
@@ -379,12 +345,12 @@ function findKeywordMatchesInCat1(userMessage) {
       }
     }
   });
-
+  
   return matches.sort((a, b) => b.score - a.score).slice(0, 5);
 }
 
 /* -------------------------
-   Seller matching (kept, but gender-aware)
+   Seller matching (kept but uses explicit gender from categories)
 --------------------------*/
 const MAX_GPT_SELLER_CHECK = 20;
 const GPT_THRESHOLD = 0.7;
@@ -400,9 +366,9 @@ function stripClothingFromType2(type2) {
   return tokens.join(' ').trim();
 }
 
-function matchSellersByStoreName(type2Value, userMessage = '') {
+// matchSellersByStoreName now accepts detectedGender (derived from categories' cat_id or cat1)
+function matchSellersByStoreName(type2Value, detectedGender = null) {
   if (!type2Value || !sellersData.length) return [];
-  const detectedGender = detectGenderFromQuery(userMessage);
   const stripped = stripClothingFromType2(type2Value);
   const norm = normalizeToken(stripped);
   if (!norm) return [];
@@ -411,30 +377,29 @@ function matchSellersByStoreName(type2Value, userMessage = '') {
   sellersData.forEach(seller => {
     const store = seller.store_name || '';
     const sim = smartSimilarity(store, norm);
+    if (sim < 0.82) return;
 
-    // Gender-aware: get seller gender signals from category_ids_array
-    const sellerGenders = new Set();
-    (seller.category_ids_array || []).forEach(c => {
-      if (/\bmen\b|\bman\b|men's|\bmens\b/.test(c)) sellerGenders.add('men');
-      if (/\bwomen\b|\bwoman\b|women's|\bwomens\b|ladies\b/.test(c)) sellerGenders.add('women');
-      if (/\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c)) sellerGenders.add('kids');
-    });
-
-    // If query gender exists and seller explicitly has gender but doesn't match -> skip
-    if (detectedGender && sellerGenders.size > 0 && !sellerGenders.has(detectedGender)) {
-      return;
+    // If detectedGender present and seller has explicit gender categories, require match
+    if (detectedGender) {
+      const sellerGenders = new Set();
+      (seller.category_ids_array || []).forEach(c => {
+        if (/\bmen\b|\bman\b|\bmens\b/.test(c)) sellerGenders.add('men');
+        if (/\bwomen\b|\bwoman\b|\bwomens\b|ladies/.test(c)) sellerGenders.add('women');
+        if (/\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c)) sellerGenders.add('kids');
+      });
+      if (sellerGenders.size > 0 && !sellerGenders.has(detectedGender)) {
+        return; // skip seller: explicit gender doesn't match derived gender
+      }
     }
 
-    if (sim >= 0.82) {
-      matches.push({ seller, score: sim });
-    }
+    matches.push({ seller, score: sim });
   });
   return matches.sort((a,b) => b.score - a.score).map(m => ({ ...m.seller, score: m.score })).slice(0, 10);
 }
 
-function matchSellersByCategoryIds(userMessage) {
+// matchSellersByCategoryIds accepts detectedGender
+function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   if (!userMessage || !sellersData.length) return [];
-  const detectedGender = detectGenderFromQuery(userMessage);
   const terms = userMessage.toLowerCase().replace(/&/g,' ').split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
   const matches = [];
   sellersData.forEach(seller => {
@@ -442,7 +407,7 @@ function matchSellersByCategoryIds(userMessage) {
 
     // If detectedGender and seller has explicit gender tags that don't match, skip
     if (detectedGender) {
-      const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b/.test(c));
+      const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
       if (sellerHasGender) {
         const sellerGenderMatch = categories.some(c => {
           if (detectedGender === 'men') return /\bmen\b|\bman\b|\bmens\b/.test(c);
@@ -450,7 +415,7 @@ function matchSellersByCategoryIds(userMessage) {
           if (detectedGender === 'kids') return /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c);
           return false;
         });
-        if (!sellerGenderMatch) return; // seller explicit gender doesn't match query
+        if (!sellerGenderMatch) return; // seller explicit gender doesn't match derived gender
       }
     }
 
@@ -556,24 +521,54 @@ function getUserIdForSellerId(sellerId) {
   return String(sellerId).trim();
 }
 
+/* -------------------------
+   Utility: infer gender from matched categories (cat_id / cat1)
+   - If any matched category's cat_id or cat1 contains 'men'/'women'/'kid' -> return it.
+   - Returns 'men'|'women'|'kids'|null
+--------------------------*/
+function inferGenderFromCategories(matchedCategories = []) {
+  if (!Array.isArray(matchedCategories) || matchedCategories.length === 0) return null;
+  const genderScores = { men: 0, women: 0, kids: 0 };
+  for (const cat of matchedCategories) {
+    const fields = [];
+    if (cat.cat_id) fields.push(String(cat.cat_id).toLowerCase());
+    if (cat.cat1) fields.push(String(cat.cat1).toLowerCase());
+    const combined = fields.join(' ');
+    if (/\bmen\b|\bman\b|\bmens\b/.test(combined)) genderScores.men += 1;
+    if (/\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(combined)) genderScores.women += 1;
+    if (/\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(combined)) genderScores.kids += 1;
+  }
+  // pick highest if clearly dominant
+  const max = Math.max(genderScores.men, genderScores.women, genderScores.kids);
+  if (max === 0) return null;
+  const winners = Object.keys(genderScores).filter(k => genderScores[k] === max);
+  if (winners.length === 1) return winners[0];
+  // tie => null (don't force)
+  return null;
+}
+
 // master function to find sellers for a user query (combines three methods)
-// Now integrates minimal home-only GPT check + gender-aware filtering
-async function findSellersForQuery(userMessage, galleryMatches = []) {
+// Now integrates minimal home-only GPT check + gender-from-categories awareness
+async function findSellersForQuery(userMessage, galleryMatches = [], detectedGender = null) {
   // 0) minimal GPT: is this a home query?
   const homeCheck = await isQueryHome(userMessage);
   const applyHomeFilter = homeCheck.isHome; // boolean
-  const detectedGender = detectGenderFromQuery(userMessage); // 'men'|'women'|'kids'|null
+
+  // If detectedGender wasn't provided, try to infer from galleryMatches
+  if (!detectedGender) {
+    detectedGender = inferGenderFromCategories(galleryMatches);
+  }
 
   // 1) If we already have gallery type2 matches, use those type2 -> store_name mapping as first source
   const sellers_by_type2 = new Map();
   for (const gm of galleryMatches) {
     const type2 = gm.type2 || '';
-    const found = matchSellersByStoreName(type2, userMessage);
+    const found = matchSellersByStoreName(type2, detectedGender);
     found.forEach(s => sellers_by_type2.set(s.seller_id || (s.store_name+'#'), s));
   }
 
   // 2) category_ids-based matches (based on raw userMessage)
-  const catMatches = matchSellersByCategoryIds(userMessage);
+  const catMatches = matchSellersByCategoryIds(userMessage, detectedGender);
   const sellers_by_category = new Map();
   catMatches.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
 
@@ -595,26 +590,6 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
     }
   }
 
-  // If gender detected, filter sellers_by_type2 and sellers_by_category to match gender (if seller has explicit genders)
-  if (detectedGender) {
-    const keepIfGenderMatches = (s) => {
-      const arr = s.category_ids_array || [];
-      const sellerHasGender = arr.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
-      if (!sellerHasGender) return true; // neutral seller allowed
-      // check match
-      if (detectedGender === 'men') return arr.some(c => /\bmen\b|\bman\b|\bmens\b/.test(c));
-      if (detectedGender === 'women') return arr.some(c => /\bwomen\b|\bwoman\b|\bwomens\b|ladies/.test(c));
-      if (detectedGender === 'kids') return arr.some(c => /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
-      return true;
-    };
-    for (const [k, s] of Array.from(sellers_by_type2.entries())) {
-      if (!keepIfGenderMatches(s)) sellers_by_type2.delete(k);
-    }
-    for (const [k, s] of Array.from(sellers_by_category.entries())) {
-      if (!keepIfGenderMatches(s)) sellers_by_category.delete(k);
-    }
-  }
-
   // 3) GPT-based predictions: run GPT checks on a candidate pool
   const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
@@ -629,10 +604,10 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
         }
       }
     }
-    // fill remaining from top sellers
+    // fill remaining from top sellers (apply gender filter if detectedGender is explicit)
     for (let i = 0; i < Math.min(MAX_GPT_SELLER_CHECK, sellersData.length) && candidateList.length < MAX_GPT_SELLER_CHECK; i++) {
       const s = sellersData[i];
-      // apply gender filtering for candidates too (if gender present)
+      if (!s) continue;
       if (detectedGender) {
         const categories = s.category_ids_array || [];
         const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
@@ -654,7 +629,6 @@ async function findSellersForQuery(userMessage, galleryMatches = []) {
       for (const s of sellersData) {
         if (candidateList.length >= MAX_GPT_SELLER_CHECK) break;
         if (!candidateList.includes(s)) {
-          // gender filter on fallback fill too
           if (detectedGender) {
             const categories = s.category_ids_array || [];
             const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
@@ -1039,8 +1013,11 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
         }
       }
 
-      // find sellers using matchedCategories
-      const sellers = await findSellersForQuery(userMessage, matchedCategories);
+      // IMPORTANT: infer gender from matched categories' cat_id / cat1 (your source of truth)
+      const detectedGender = inferGenderFromCategories(matchedCategories); // 'men'|'women'|'kids'|null
+
+      // find sellers using matchedCategories and detectedGender
+      const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
@@ -1142,7 +1119,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - gender-aware',
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - category-driven gender',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
@@ -1168,9 +1145,10 @@ app.get('/test-keyword-matching', async (req, res) => {
   try {
     const isClothing = containsClothingKeywords(query);
     const keywordMatches = findKeywordMatchesInCat1(query);
-    const sellers = await findSellersForQuery(query, keywordMatches);
+    const detectedGender = inferGenderFromCategories(keywordMatches);
+    const sellers = await findSellersForQuery(query, keywordMatches, detectedGender);
     const concise = buildConciseResponse(query, keywordMatches, sellers);
-    res.json({ query, is_clothing_query: isClothing, detected_gender: detectGenderFromQuery(query), keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
+    res.json({ query, is_clothing_query: isClothing, detected_gender: detectedGender, keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1181,7 +1159,8 @@ app.get('/test-gpt-matching', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Missing query parameter' });
   try {
     const matched = await findGptMatchedCategories(query);
-    res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectGenderFromQuery(query) });
+    const detectedGender = inferGenderFromCategories(matched);
+    res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
