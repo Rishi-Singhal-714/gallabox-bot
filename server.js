@@ -894,8 +894,8 @@ async function detectIntent(userMessage) {
   try {
     const prompt = `
     Analyze the following user message and determine if the intent is:
-    - "company": Asking about Zulu Club as a company, services, delivery, returns, general information
-    - "product": Asking about specific products, categories, items, shopping, browsing, what's available
+    - "company": Asking about Zulu Club as a company, categories, pop-ups, malls, founder, team, investors, services, delivery, returns, general information
+    - "product": Asking about specific products, categories of item, toys, items, shopping, browsing, what's available
 
     User Message: "${userMessage}"
 
