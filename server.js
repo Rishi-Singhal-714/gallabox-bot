@@ -164,7 +164,7 @@ Now live in Gurgaon
 Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 
 Explore & shop on: zulu.club
-Get the Zulu Club app: Android — https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer  |  iOS — https://apps.apple.com/in/app/zulu-club/id6739531325
+Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
 
 // INVESTORS paragraph placeholder (edit as required)
