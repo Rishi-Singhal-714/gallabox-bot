@@ -630,30 +630,31 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
 }
 
 /* -------------------------
-   findGptMatchedCategories (MODIFIED to accept conversationHistory)
+   Modified findGptMatchedCategories: send full chat history as messages[]
+   So GPT has direct access to previous user & assistant messages, not only embedded text.
 --------------------------*/
 async function findGptMatchedCategories(userMessage, conversationHistory = []) {
   try {
-    // Include up to last N messages in the prompt so GPT can combine earlier 'tshirt' with 'men'
-    const MAX_HISTORY_TO_INCLUDE = 30;
-    const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => ({ role: h.role, content: h.content }));
-    const contextStr = historyToInclude.length ? historyToInclude.map((m, i) => `${i+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n') : '(none)';
+    // Build messages array: first a system instruction, then the session history, then the task prompt as user
+    const systemContent = "You are a product matching expert for Zulu Club. Use the conversation history to understand what the user wants, and return only JSON with top matches.";
+    const messagesForGPT = [{ role: 'system', content: systemContent }];
 
+    // Append recent conversation history (already stored as {role, content})
+    // Convert stored roles to OpenAI roles: 'user' or 'assistant'
+    const historyToInclude = Array.isArray(conversationHistory) ? conversationHistory.slice(-30) : [];
+    for (const h of historyToInclude) {
+      // ensure role is 'user' or 'assistant'
+      const role = (h.role === 'assistant') ? 'assistant' : 'user';
+      messagesForGPT.push({ role, content: h.content });
+    }
+
+    // Add final user instruction describing the available categories
     const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
+    const userPrompt = `
+Using the conversation above and the user's latest message, return the top 5 matching categories from the following AVAILABLE PRODUCT CATEGORIES (use the "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
 
-    const prompt = `
-Conversation context (most recent first):
-${contextStr}
-
-USER LATEST MESSAGE: "${userMessage}"
-
-AVAILABLE PRODUCT CATEGORIES (from CSV):
+AVAILABLE PRODUCT CATEGORIES:
 ${JSON.stringify(csvDataForGPT, null, 2)}
-
-TASK:
-1. Use the conversation context and latest message to understand the product the user wants (handle misspellings).
-2. Return the top 5 most relevant categories from AVAILABLE PRODUCT CATEGORIES.
-3. Provide brief reason and relevance score (0.0-1.0).
 
 RESPONSE FORMAT (JSON only):
 {
@@ -662,13 +663,13 @@ RESPONSE FORMAT (JSON only):
   ]
 }
     `;
+    messagesForGPT.push({ role: 'user', content: userPrompt });
+
+    console.log(`🧾 findGptMatchedCategories -> sending ${messagesForGPT.length} messages to OpenAI (session history included).`);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are a product matching expert for Zulu Club. Return valid JSON." },
-        { role: "user", content: prompt }
-      ],
+      messages: messagesForGPT,
       max_tokens: 800,
       temperature: 0.25
     });
@@ -695,35 +696,34 @@ RESPONSE FORMAT (JSON only):
 }
 
 /* -------------------------
-   classifyAndMatchWithGPT (MODIFIED to accept conversationHistory)
+   Modified classifyAndMatchWithGPT: send full chat history as messages[]
+   This ensures GPT sees the entire session as a chat and can resolve followups.
 --------------------------*/
 async function classifyAndMatchWithGPT(userMessage, conversationHistory = []) {
   const text = (userMessage || '').trim();
   if (!text) return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
   if (!openai || !process.env.OPENAI_API_KEY) return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
 
-  const MAX_HISTORY_TO_INCLUDE = 20;
-  const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => ({ role: h.role, content: h.content }));
-  const convoContext = historyToInclude.length ? historyToInclude.map((m, idx) => `${idx+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n') : '(none)';
+  const systemContent = "You are a JSON-only classifier & category matcher for Zulu Club. Use the conversation history to decide intent, and return only the required JSON object.";
 
+  // Build messages array for chat-based context (recommended)
+  const messagesForGPT = [{ role: 'system', content: systemContent }];
+
+  // include recent conversation history entries as chat messages
+  const historyToInclude = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+  for (const h of historyToInclude) {
+    const role = (h.role === 'assistant') ? 'assistant' : 'user';
+    messagesForGPT.push({ role, content: h.content });
+  }
+
+  // final user prompt instructing the classifier
   const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
+  const finalPrompt = `
+You are given the conversation above (most recent messages included). Now look at the latest user message and:
 
-  const prompt = `
-You are an assistant for Zulu Club.
-
-You are given a short conversation context and the user's latest message.
-Use the conversation context to determine intent and product category matches.
-
-Conversation context (most recent first):
-${convoContext}
-
-Latest user message:
-"${userMessage}"
-
-Task:
 1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
 2) If the intent is "product", pick up to 5 best-matching categories from AVAILABLE CATEGORIES (use "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
-3) Return ONLY valid JSON in this exact format:
+3) Return ONLY valid JSON in this exact format (no extra text):
 
 {
   "intent": "product",
@@ -739,14 +739,14 @@ If intent is not "product", return "matches": [].
 AVAILABLE CATEGORIES:
 ${JSON.stringify(csvDataForGPT, null, 2)}
   `;
+  messagesForGPT.push({ role: 'user', content: finalPrompt });
+
+  console.log(`🧾 classifyAndMatchWithGPT -> sending ${messagesForGPT.length} messages to OpenAI (session history included).`);
 
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are a JSON-only classifier & category matcher. Return only the requested JSON." },
-        { role: "user", content: prompt }
-      ],
+      messages: messagesForGPT,
       max_tokens: 800,
       temperature: 0.12
     });
@@ -830,9 +830,7 @@ function sellerOnboardMessage() {
 function isGreetingMessage(msg) {
   if (!msg) return false;
   const m = msg.toLowerCase().trim();
-  // simple greeting patterns (short)
   const greetings = ['hi','hello','hey','good morning','good afternoon','good evening','hola','namaste'];
-  // exact match or startsWith (to catch "hi there", "hello, I")
   for (const g of greetings) {
     if (m === g) return true;
     if (m.startsWith(g + ' ') || m.startsWith(g + ',')) return true;
@@ -927,14 +925,29 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
 
 /* -------------------------
    Webhook + endpoints
+   - IMPORTANT: explicit logging and session-history handling here
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
+    // 1) Save incoming user message to session (this ensures history is persistent)
     appendToSessionHistory(sessionId, 'user', userMessage);
+
+    // 2) Get the full session history and log it (for debugging)
     const fullHistory = getFullSessionHistory(sessionId);
+    console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
+    console.log('🔁 Session history (most recent last):');
+    fullHistory.forEach((h, idx) => {
+      console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
+    });
+
+    // 3) Call main response flow — pass fullHistory so GPT sees everything as chat messages
     const aiResponse = await getChatGPTResponse(userMessage, fullHistory);
+
+    // 4) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
     conversations[sessionId].lastActive = nowMs();
+
+    // 5) Return the response
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message:', error);
@@ -950,15 +963,24 @@ app.post('/webhook', async (req, res) => {
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
+
     if (userMessage && userPhone) {
       const sessionId = userPhone;
+
+      // Step-by-step debug: show that we will store the message first
+      console.log(`➡️ Storing incoming message into session ${sessionId}.`);
+      // handleMessage will append user, call GPT with full session, append assistant, and return reply
       const aiResponse = await handleMessage(sessionId, userMessage);
+
+      console.log(`➡️ Sending AI response to ${sessionId}. Response length: ${aiResponse.length}`);
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
+
+      res.status(200).json({ status: 'success', message: 'Webhook processed successfully', processed: true });
     } else {
       console.log('❓ No valid message or phone number found in webhook');
+      res.status(200).json({ status: 'ignored', message: 'No valid message or phone in webhook' });
     }
-    res.status(200).json({ status: 'success', message: 'Webhook processed successfully', processed: true });
   } catch (error) {
     console.error('💥 Webhook error:', error.message);
     res.status(500).json({ status: 'error', message: error.message, processed: false });
@@ -969,7 +991,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Server is running on Vercel',
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context (improved) + download links + greeting routing',
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session-history-as-chat + explicit webhook steps',
     stats: { product_categories_loaded: galleriesData.length, sellers_loaded: sellersData.length, active_sessions: Object.keys(conversations).length },
     timestamp: new Date().toISOString()
   });
@@ -995,7 +1017,9 @@ app.get('/test-keyword-matching', async (req, res) => {
 app.get('/test-gpt-matching', async (req, res) => {
   const { query } = req.query; if (!query) return res.status(400).json({ error: 'Missing query parameter' });
   try {
-    const matched = await findGptMatchedCategories(query);
+    // For debugging: run findGptMatchedCategories using a synthetic conversation history
+    const dummyHistory = [{ role: 'user', content: 'I want a tshirt' }];
+    const matched = await findGptMatchedCategories(query, dummyHistory);
     const detectedGender = inferGenderFromCategories(matched);
     res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
   } catch (error) { res.status(500).json({ error: error.message }); }
