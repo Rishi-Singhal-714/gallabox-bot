@@ -1164,10 +1164,10 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 
   // Links block to always append (for non-greetings)
   const LINKS_BLOCK = [
-    "*Android:*",
-    "https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer",
     "*iOS:*",
     "https://apps.apple.com/in/app/zulu-club/id6739531325"
+    "*Android:*",
+    "https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer",
   ].join("\n");
 
   try {
