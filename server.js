@@ -28,7 +28,6 @@ const openai = new OpenAI({
 });
 
 // Store conversations and CSV data
-// conversations: { [sessionId]: { history: [{role, content, ts}], lastActive: ms } }
 let conversations = {};
 let galleriesData = [];
 let sellersData = []; // sellers CSV data
@@ -772,7 +771,6 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
 
 /* -------------------------
    findGptMatchedCategories (kept - returns categories)
-   NOTE: we DO NOT filter session history here; this function is unchanged
 --------------------------*/
 async function findGptMatchedCategories(userMessage) {
   try {
@@ -842,10 +840,11 @@ Only return JSON.
 }
 
 /* -------------------------
-   classifyAndMatchWithGPT (kept)
-   NOTE: unchanged: returns intent & matches
+   classifyAndMatchWithGPT (MODIFIED)
+   - Now accepts conversationHistory (array of {role, content, ts})
+   - Includes recent history in the prompt so GPT uses prior messages when classifying / matching
 --------------------------*/
-async function classifyAndMatchWithGPT(userMessage) {
+async function classifyAndMatchWithGPT(userMessage, conversationHistory = []) {
   const text = (userMessage || '').trim();
   if (!text) {
     return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
@@ -855,11 +854,31 @@ async function classifyAndMatchWithGPT(userMessage) {
     return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
   }
 
+  // Limit how many prior messages we include to control tokens.
+  // We'll include up to the last 20 messages (you can adjust).
+  const MAX_HISTORY_TO_INCLUDE = 20;
+  const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => {
+    // show role and content only
+    return { role: h.role, content: h.content };
+  });
+
   // Prepare compact categories list for GPT
   const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
 
+  // Build a short conversation context string
+  const convoContext = historyToInclude.map((m, idx) => `${idx+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n');
+
   const prompt = `
 You are an assistant for Zulu Club (a lifestyle shopping service).
+
+You are given a short conversation context (most recent messages) and the user's latest message.
+Use the conversation context to determine intent and product category matches.
+
+Conversation context (most recent first):
+${convoContext || '(none)'}
+
+Latest user message:
+"${userMessage}"
 
 Task:
 1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
@@ -886,9 +905,7 @@ If intent is not "product", return "matches": [].
 AVAILABLE CATEGORIES:
 ${JSON.stringify(csvDataForGPT, null, 2)}
 
-USER MESSAGE:
-"""${String(userMessage).replace(/"/g, '\\"')}
-"""
+Be concise and return only the requested JSON.
   `;
 
   try {
@@ -899,7 +916,7 @@ USER MESSAGE:
         { role: "user", content: prompt }
       ],
       max_tokens: 800,
-      temperature: 0.15
+      temperature: 0.12
     });
 
     const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
@@ -1020,8 +1037,8 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       return sellerOnboardMessage();
     }
 
-    // 1) single GPT call to classify + match categories
-    const classification = await classifyAndMatchWithGPT(userMessage);
+    // >>> Pass conversationHistory into classifier so it uses previous messages
+    const classification = await classifyAndMatchWithGPT(userMessage, conversationHistory);
     const intent = classification.intent || 'company';
 
     // Debug logs (comment out in production if noisy)
@@ -1133,7 +1150,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history 1-hour TTL',
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
