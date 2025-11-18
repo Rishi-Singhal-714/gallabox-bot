@@ -33,7 +33,7 @@ let galleriesData = [];
 let sellersData = []; // sellers CSV data
 
 /* -------------------------
-   DOWNLOAD LINKS (added)
+   DOWNLOAD LINKS
 --------------------------*/
 const DOWNLOAD_LINKS = `\n\nDownload the Zulu Club app:\n• App Store: https://apps.apple.com/in/app/zulu-club/id6739531325\n• Google Play: https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer`;
 
@@ -94,7 +94,6 @@ app.get('/session/:id', (req, res) => {
 
 /* -------------------------
    ZULU CLUB INFORMATION
-   (kept)
 --------------------------*/
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
@@ -117,11 +116,9 @@ And the best part? No waiting days for delivery. With Zulu Club, your selection 
 Now live in Gurgaon
 Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
+${DOWNLOAD_LINKS}
 `;
 
-/* -------------------------
-   INVESTORS paragraph
---------------------------*/
 const INVESTORS_PARAGRAPH = `
 Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
 `;
@@ -387,6 +384,9 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0,10);
 }
 
+/* -------------------------
+   isQueryHome (kept)
+--------------------------*/
 async function isQueryHome(userMessage) {
   if (!openai || !process.env.OPENAI_API_KEY) return { isHome: false, score: 0 };
   const prompt = `
@@ -418,6 +418,9 @@ Answer ONLY with JSON:
   }
 }
 
+/* -------------------------
+   gptCheckSellerMaySell (kept)
+--------------------------*/
 async function gptCheckSellerMaySell(userMessage, seller) {
   if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured' };
   const prompt = `
@@ -455,6 +458,9 @@ Question: Based on the above, how likely (0.0 - 1.0) is it that this seller sell
   }
 }
 
+/* -------------------------
+   helpers
+--------------------------*/
 function getUserIdForSellerId(sellerId) {
   if (!sellerId) return '';
   const s = sellersData.find(x => (x.seller_id && String(x.seller_id) === String(sellerId)));
@@ -581,15 +587,13 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
 }
 
 /* -------------------------
-   Small/concise response builder (modified header + download links)
-   signature: buildConciseResponse(userMessage, galleryMatches, sellersObj, contextHeader)
-   contextHeader: optional string to show previous+current messages
+   Small/concise response builder (kept) + append download links
 --------------------------*/
 function urlEncodeType2(t) {
   if (!t) return '';
   return encodeURIComponent(t.trim().replace(/\s+/g, ' ')).replace(/%20/g, '%20');
 }
-function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}, contextHeader = null) {
+function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}) {
   const galleries = (galleryMatches && galleryMatches.length) ? galleryMatches.slice(0,5) : galleriesData.slice(0,5);
   const sellersList = [];
   const addSeller = (s) => {
@@ -602,11 +606,7 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {},
   (sellersObj.by_category || []).forEach(addSeller);
   (sellersObj.by_gpt || []).forEach(item => addSeller(item.seller));
   const sellersToShow = sellersList.slice(0,5);
-
-  const header = contextHeader ? `Based on your interest in "${contextHeader}":\n` : `Based on your interest in "${userMessage}":\n`;
-
-  let msg = header;
-
+  let msg = `Based on your interest in "${userMessage}":\n`;
   if (galleries.length) {
     msg += `\nGalleries:\n`;
     galleries.slice(0,5).forEach((g, i) => {
@@ -614,10 +614,7 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {},
       const link = `app.zulu.club/${urlEncodeType2(t)}`;
       msg += `${i+1}. ${t} — ${link}\n`;
     });
-  } else {
-    msg += `\nGalleries:\nNone\n`;
-  }
-
+  } else msg += `\nGalleries:\nNone\n`;
   msg += `\nSellers:\n`;
   if (sellersToShow.length) {
     sellersToShow.forEach((s, i) => {
@@ -626,13 +623,9 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {},
       const link = id ? `app.zulu.club/sellerassets/${id}` : '';
       msg += `${i+1}. ${name}${link ? ` — ${link}` : ''}\n`;
     });
-  } else {
-    msg += `None\n`;
-  }
-
+  } else msg += `None\n`;
   // append download links
   msg += DOWNLOAD_LINKS;
-
   return msg.trim();
 }
 
@@ -777,7 +770,7 @@ ${JSON.stringify(csvDataForGPT, null, 2)}
 }
 
 /* -------------------------
-   Company Response Generator (kept but appends download links)
+   Company Response Generator (kept, append download links)
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
@@ -832,14 +825,19 @@ function sellerOnboardMessage() {
 }
 
 /* -------------------------
-   Greeting helper - short greetings are treated as company intent
+   Greeting detector -> route greetings to company intent
 --------------------------*/
-function isGreeting(userMessage) {
-  if (!userMessage) return false;
-  const m = userMessage.trim().toLowerCase();
-  // simple greetings
-  const greetings = ['hi','hello','hey','hey there','good morning','good evening','good afternoon','hiya','hii','hiii'];
-  return greetings.some(g => m === g || m.startsWith(g + ' ') || m.includes(g));
+function isGreetingMessage(msg) {
+  if (!msg) return false;
+  const m = msg.toLowerCase().trim();
+  // simple greeting patterns (short)
+  const greetings = ['hi','hello','hey','good morning','good afternoon','good evening','hola','namaste'];
+  // exact match or startsWith (to catch "hi there", "hello, I")
+  for (const g of greetings) {
+    if (m === g) return true;
+    if (m.startsWith(g + ' ') || m.startsWith(g + ',')) return true;
+  }
+  return false;
 }
 
 /* -------------------------
@@ -848,7 +846,6 @@ function isGreeting(userMessage) {
 function recentHistoryContainsProductSignal(conversationHistory = []) {
   if (!Array.isArray(conversationHistory) || conversationHistory.length === 0) return null;
   const productKeywords = ['tshirt','t-shirt','shirt','tee','jeans','pant','pants','trouser','kurta','lehenga','top','dress','saree','innerwear','jacket','sweater','shorts','tshir','t shrt'];
-  // look back up to last 10 user messages
   const recentUserMsgs = conversationHistory.slice(-10).filter(m => m.role === 'user').map(m => (m.content || '').toLowerCase());
   for (const msg of recentUserMsgs) {
     for (const pk of productKeywords) {
@@ -860,10 +857,9 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
 
 /* -------------------------
    Main product flow:
-   - Pass full conversationHistory into classifier & matcher.
-   - If classifier says product -> use its matches
-   - If classifier doesn't say product but recent history contains product keywords -> force product flow
-   - When producing product response, if there's a previous user message, header will show "previous + new"
+   - classifier + conversationHistory
+   - greetings are handled as company intent
+   - history-based product forcing remains
 --------------------------*/
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -871,15 +867,14 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 
   try {
-    // Quick onboarding check
-    if (isSellerOnboardQuery(userMessage)) return sellerOnboardMessage();
-
-    // Greeting -> company intent (explicit)
-    if (isGreeting(userMessage)) {
+    // greetings -> company flow
+    if (isGreetingMessage(userMessage)) {
       return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
     }
 
-    // 1) classifier receives conversationHistory (so it can use previous messages)
+    if (isSellerOnboardQuery(userMessage)) return sellerOnboardMessage();
+
+    // classifier receives conversationHistory (so it can use previous messages)
     const classification = await classifyAndMatchWithGPT(userMessage, conversationHistory);
     let intent = classification.intent || 'company';
     console.log('🧠 GPT classification:', { intent: classification.intent, confidence: classification.confidence, reason: classification.reason });
@@ -897,20 +892,6 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
     if (intent === 'investors') return `${INVESTORS_PARAGRAPH.trim()}${DOWNLOAD_LINKS}`;
 
     if (intent === 'product' && galleriesData.length > 0) {
-      // Determine a previous user message (if any) to show combined header
-      let prevUserMsg = null;
-      if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-        // find the last user message before the most recent (the current user message is already appended in session)
-        const userMsgs = conversationHistory.filter(m => m.role === 'user');
-        if (userMsgs.length >= 2) {
-          // last is current; take the one before it
-          prevUserMsg = userMsgs[userMsgs.length - 2].content;
-        } else if (userMsgs.length === 1) {
-          // only one user message so far (current), no previous
-          prevUserMsg = null;
-        }
-      }
-
       // If classifier returned matches use them; otherwise run findGptMatchedCategories using conversationHistory
       let matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
@@ -923,7 +904,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
         matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
       }
 
-      // As a last fallback, use keyword matching on the latest message
+      // As a last fallback, use keyword matching
       if (matchedCategories.length === 0) {
         const keywordMatches = findKeywordMatchesInCat1(userMessage);
         if (keywordMatches.length > 0) matchedCategories = keywordMatches;
@@ -932,10 +913,7 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
       // infer gender from matched categories
       const detectedGender = inferGenderFromCategories(matchedCategories);
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
-
-      // Build a context header: if there's a previous user message, show "prev + current"
-      const contextHeader = prevUserMsg ? `${prevUserMsg} + ${userMessage}` : null;
-      return buildConciseResponse(userMessage, matchedCategories, sellers, contextHeader);
+      return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
     // default: company response (pass conversation history so it can use recent context)
@@ -960,7 +938,7 @@ async function handleMessage(sessionId, userMessage) {
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message:', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
+    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None${DOWNLOAD_LINKS}`;
   }
 }
 
@@ -991,7 +969,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Server is running on Vercel',
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context (improved)',
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context (improved) + download links + greeting routing',
     stats: { product_categories_loaded: galleriesData.length, sellers_loaded: sellersData.length, active_sessions: Object.keys(conversations).length },
     timestamp: new Date().toISOString()
   });
