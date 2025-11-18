@@ -39,7 +39,11 @@ let sellersData = []; // sellers CSV data
 // -------------------------
 // Google Sheets config (ADDED)
 // -------------------------
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
+// Name of the sheet/tab to store agent tickets — default to the tab you added (Sheet2)
+// Override in production with env var AGENT_TICKETS_SHEET
+const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Sheet2';
+
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
 
 if (!GOOGLE_SHEET_ID) {
@@ -324,6 +328,92 @@ async function sendMessage(to, name, message) {
     throw error;
   }
 }
+/* -------------------------
+   Agent ticket helpers
+   - Creates a ticket id and appends a row to your AGENT_TICKETS_SHEET
+   - Headers: mobile_number, last_5th_message, 4th_message, 3rd_message, 2nd_message, 1st_message, ticket_id, ts
+--------------------------*/
+
+function generateTicketId() {
+  const now = Date.now();
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `TKT-${now}-${rand}`;
+}
+
+async function ensureAgentTicketsHeader(sheets) {
+  try {
+    const sheetName = AGENT_TICKETS_SHEET;
+    // read first row of that sheet
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `${sheetName}!1:1`
+    }).catch(() => null);
+
+    const existing = (resp && resp.data && resp.data.values && resp.data.values[0]) || [];
+    const required = ['mobile_number', 'last_5th_message', '4th_message', '3rd_message', '2nd_message', '1st_message', 'ticket_id', 'ts'];
+    // If header not present or doesn't match, write header row
+    if (existing.length === 0 || required.some((h, i) => String(existing[i] || '').trim().toLowerCase() !== h)) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: `${sheetName}!1:1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [required] }
+      });
+    }
+    return sheetName;
+  } catch (e) {
+    console.error('ensureAgentTicketsHeader error', e);
+    return AGENT_TICKETS_SHEET;
+  }
+}
+
+async function createAgentTicket(mobileNumber, conversationHistory = []) {
+  const sheets = await getSheets();
+  if (!sheets) {
+    console.warn('Google Sheets not configured — cannot write agent ticket');
+    return generateTicketId();
+  }
+  try {
+    const sheetName = await ensureAgentTicketsHeader(sheets);
+
+    // Extract last 5 user messages (oldest -> newest)
+    const userMsgs = (Array.isArray(conversationHistory) ? conversationHistory : [])
+      .filter(m => m.role === 'user')
+      .map(m => (m.content || ''));
+
+    const lastFive = userMsgs.slice(-5);
+    const pad = Array(Math.max(0, 5 - lastFive.length)).fill('');
+    const arranged = [...pad, ...lastFive]; // length 5: oldest -> newest
+
+    const ticketId = generateTicketId();
+    const ts = new Date().toISOString();
+
+    const row = [
+      mobileNumber || '',
+      arranged[0] || '', // last_5th_message (older)
+      arranged[1] || '', // 4th_message
+      arranged[2] || '', // 3rd_message
+      arranged[3] || '', // 2nd_message
+      arranged[4] || '', // 1st_message (most recent)
+      ticketId,
+      ts
+    ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] }
+    });
+
+    return ticketId;
+  } catch (e) {
+    console.error('createAgentTicket error', e);
+    return generateTicketId();
+  }
+}
+
 
 /* -------------------------
    Matching helpers (kept + gender-from-cat_id)
@@ -933,11 +1023,12 @@ async function classifyAndMatchWithGPT(userMessage) {
 You are an assistant for Zulu Club (a lifestyle shopping service).
 
 Task:
-1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
+1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors", "agent".
    - "company": general questions, greetings, store info, pop-ups, support, availability.
    - "product": the user is asking to browse or buy items, asking what we have, searching for products/categories.
    - "seller": queries about selling on the platform, onboarding merchants.
    - "investors": questions about business model, revenue, funding, pitch, investment.
+   - "agent": the user explicitly asks to connect to a human/agent/representative, or asks for a person to contact them (e.g., "connect me to agent", "I want a human", "talk to a person", "connect to representative").
 
 2) If the intent is "product", pick up to 5 best-matching categories from the AVAILABLE CATEGORIES list provided (match using the "type2" field). For each match return a short reason and a relevance score between 0.0 and 1.0.
 
@@ -1243,6 +1334,34 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
     // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
     // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
+    // handle agent intent (connect to human)
+    if (intent === 'agent') {
+      session.lastDetectedIntent = 'agent';
+      session.lastDetectedIntentTs = nowMs();
+
+      // full session history to capture last 5 user messages
+      const fullHistory = getFullSessionHistory(sessionId);
+
+      // create ticket (best-effort)
+      let ticketId = '';
+      try {
+        ticketId = await createAgentTicket(sessionId, fullHistory);
+      } catch (e) {
+        console.error('Error creating agent ticket:', e);
+        ticketId = generateTicketId();
+      }
+
+      // Log the ticket creation in the session-specific sheet column as well
+      try {
+        await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
+      } catch (e) {
+        console.error('Failed to log agent ticket into column:', e);
+      }
+
+      // reply to user
+      const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
+      return reply;
+    }
 
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
     if (intent === 'seller') {
