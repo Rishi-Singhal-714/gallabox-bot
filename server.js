@@ -2658,15 +2658,14 @@ USER MESSAGE:
 
     const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
     try {
-    const parsed = JSON.parse(raw);
-    // allow agent in the accepted intents list so "agent" returned by GPT is preserved
-    const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent'];
-    const intent = (parsed.intent && allowedIntents.includes(parsed.intent)) ? parsed.intent : 'company';
-    const confidence = Number(parsed.confidence) || 0.0;
-    const reason = parsed.reason || '';
-    const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
-    const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
-    return { intent, confidence, reason, matches, reasoning };
+      const parsed = JSON.parse(raw);
+      const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent'];
+      const intent = (parsed.intent && allowedIntents.includes(parsed.intent)) ? parsed.intent : 'company';
+      const confidence = Number(parsed.confidence) || 0.0;
+      const reason = parsed.reason || '';
+      const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
+      const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
+      return { intent, confidence, reason, matches, reasoning };
     } catch (e) {
       console.error('Error parsing classifyAndMatchWithGPT JSON:', e, 'raw:', raw);
       return { intent: 'company', confidence: 0.0, reason: 'parse error from GPT', matches: [], reasoning: raw.slice(0, 300) };
