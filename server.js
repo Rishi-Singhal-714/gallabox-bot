@@ -1,11 +1,12 @@
 // server.js - GPT-first intent + category matcher (AI is the boss)
-// Gender detection now uses category data (cat_id / cat1) as the source of truth.
+// Added: Google Sheets logging — phone_session columns and per-session message append.
 
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
+const { google } = require('googleapis');
 
 const app = express();
 
@@ -27,8 +28,142 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Store conversations and CSV data
-let conversations = {};
+// Google Sheets config (new)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || ''; // required for sheet logging
+const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || ''; // required for sheet logging
+
+if (!GOOGLE_SHEET_ID) console.warn('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
+if (!SA_JSON_B64) console.warn('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
+
+// Google auth helper
+function getJwtClient() {
+  if (!SA_JSON_B64) return null;
+  try {
+    const keyJson = JSON.parse(Buffer.from(SA_JSON_B64, 'base64').toString('utf8'));
+    const jwt = new google.auth.JWT(
+      keyJson.client_email,
+      null,
+      keyJson.private_key,
+      ['https://www.googleapis.com/auth/spreadsheets'],
+      null
+    );
+    return jwt;
+  } catch (e) {
+    console.error('❌ Error parsing service account JSON base64', e);
+    return null;
+  }
+}
+
+// Sheets API wrapper helpers
+async function sheetsClient() {
+  const jwt = getJwtClient();
+  if (!jwt) throw new Error('Google service account not configured');
+  await jwt.authorize();
+  return google.sheets({ version: 'v4', auth: jwt });
+}
+
+async function readHeaderRow() {
+  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return [];
+  const sheets = await sheetsClient();
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: '1:1' });
+  const headers = (res.data.values && res.data.values[0]) || [];
+  return headers;
+}
+
+// convert 1-based column number to letter (1 -> A)
+function columnLetter(n) {
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+// find column index (0-based) for exact header name, or -1
+async function findHeaderIndex(headerName) {
+  const headers = await readHeaderRow();
+  return headers.findIndex(h => String(h).trim() === headerName);
+}
+
+// write a header into a specific column (1-based col number)
+async function writeHeaderAtColumn(colNum, headerName) {
+  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return;
+  const sheets = await sheetsClient();
+  const colLetter = columnLetter(colNum);
+  const range = `${colLetter}1`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[headerName]] }
+  });
+  return;
+}
+
+// read a column (from row 2 down) to determine next empty row index for that column
+async function readColumnValues(colNum) {
+  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return [];
+  const sheets = await sheetsClient();
+  const colLetter = columnLetter(colNum);
+  const range = `${colLetter}2:${colLetter}`;
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range,
+      majorDimension: 'COLUMNS'
+    });
+    const colValues = (res.data.values && res.data.values[0]) || [];
+    return colValues;
+  } catch (e) {
+    // if empty range, API may return an error — treat as empty
+    return [];
+  }
+}
+
+// write a single cell
+async function writeCell(colNum, rowNum, value) {
+  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return;
+  const sheets = await sheetsClient();
+  const range = `${columnLetter(colNum)}${rowNum}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[value]] }
+  });
+}
+
+// Append message under given headerName (create header if needed). Returns created column/row.
+async function appendMessageUnderSessionColumn(headerName, phone, message) {
+  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
+
+  // 1) read headers
+  const headers = await readHeaderRow();
+  let colIndex = headers.findIndex(h => String(h).trim() === headerName);
+
+  // If header not found, create it in next available column
+  if (colIndex === -1) {
+    colIndex = headers.length; // 0-based
+    const colNum = colIndex + 1; // 1-based
+    await writeHeaderAtColumn(colNum, headerName);
+  }
+
+  const colNum = colIndex + 1;
+  const colValues = await readColumnValues(colNum);
+  const nextRow = 2 + colValues.length; // row number to write
+  const timestamp = new Date().toISOString();
+  const valueToWrite = `${timestamp} | ${message}`;
+
+  await writeCell(colNum, nextRow, valueToWrite);
+  return { column: columnLetter(colNum), row: nextRow, header: headerName };
+}
+
+/* -------------------------
+   Store conversations and CSV data
+--------------------------*/
+let conversations = {}; // will now include .sheetHeader for active session column
 let galleriesData = [];
 let sellersData = []; // sellers CSV data
 
@@ -48,7 +183,7 @@ function nowMs() { return Date.now(); }
 
 function createOrTouchSession(sessionId) {
   if (!conversations[sessionId]) {
-    conversations[sessionId] = { history: [], lastActive: nowMs() };
+    conversations[sessionId] = { history: [], lastActive: nowMs(), sheetHeader: null };
   } else {
     conversations[sessionId].lastActive = nowMs();
   }
@@ -89,7 +224,7 @@ app.get('/session/:id', (req, res) => {
   const id = req.params.id;
   const s = conversations[id];
   if (!s) return res.status(404).json({ error: 'No session found' });
-  res.json({ sessionId: id, lastActive: s.lastActive, historyLen: s.history.length, history: s.history });
+  res.json({ sessionId: id, lastActive: s.lastActive, historyLen: s.history.length, sheetHeader: s.sheetHeader, history: s.history });
 });
 
 /* -------------------------
@@ -125,7 +260,6 @@ Thanks for your interest in investing in Zulu Club. Please share your pitch deck
 
 /* -------------------------
    CSV loaders: galleries + sellers
-   (unchanged)
 --------------------------*/
 async function loadGalleriesData() {
   try {
@@ -201,7 +335,7 @@ async function loadSellersData() {
 })();
 
 /* -------------------------
-   sendMessage (unchanged)
+   sendMessage
 --------------------------*/
 async function sendMessage(to, name, message) {
   try {
@@ -491,7 +625,7 @@ function inferGenderFromCategories(matchedCategories = []) {
 }
 
 /* -------------------------
-   findSellersForQuery (kept)
+   findSellersForQuery
 --------------------------*/
 async function findSellersForQuery(userMessage, galleryMatches = [], detectedGender = null) {
   const homeCheck = await isQueryHome(userMessage);
@@ -924,13 +1058,96 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
 }
 
 /* -------------------------
-   Webhook + endpoints
-   - IMPORTANT: explicit logging and session-history handling here
+   GOOGLE SHEET SESSION ALLOCATION & LOGGING
+   - For each sessionId we keep conversations[sessionId].sheetHeader = "<phone>_sN"
+   - When a new session is created for a phone we allocate the next available session column.
 --------------------------*/
-async function handleMessage(sessionId, userMessage) {
+async function allocateSessionColumnForPhone(sessionId, phone) {
+  // If session already has sheetHeader and it's valid, reuse it
+  createOrTouchSession(sessionId);
+  if (conversations[sessionId].sheetHeader) {
+    // ensure header still exists in sheet (best-effort)
+    try {
+      const headers = await readHeaderRow();
+      if (headers.find(h => String(h).trim() === conversations[sessionId].sheetHeader)) {
+        return conversations[sessionId].sheetHeader;
+      } else {
+        // header missing — reset
+        conversations[sessionId].sheetHeader = null;
+      }
+    } catch (e) {
+      console.error('Error checking existing sheet header', e);
+    }
+  }
+
+  // Find existing highest session index for this phone
+  const headers = await readHeaderRow();
+  let highest = 0;
+  headers.forEach(h => {
+    if (!h) return;
+    const val = String(h).trim();
+    if (val.startsWith(phone + '_s')) {
+      const parts = val.split('_s');
+      if (parts.length === 2) {
+        const n = parseInt(parts[1], 10);
+        if (!isNaN(n) && n > highest) highest = n;
+      }
+    }
+  });
+
+  // start new session index = highest + 1
+  const newIndex = highest + 1 || 1;
+  const headerName = `${phone}_s${newIndex}`;
+
+  // write header into next available column
+  const headersLen = headers.length;
+  const colNum = headersLen + 1; // append at end
+  await writeHeaderAtColumn(colNum, headerName);
+
+  // store in session meta
+  conversations[sessionId].sheetHeader = headerName;
+  conversations[sessionId].sheetHeaderAllocatedAt = nowMs();
+  return headerName;
+}
+
+// writes a message (user/assistant) into the session's sheet column
+async function logMessageToSheetForSession(sessionId, phone, role, message) {
+  try {
+    if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
+
+    // allocate header for session if not exists
+    const headerName = conversations[sessionId] && conversations[sessionId].sheetHeader
+      ? conversations[sessionId].sheetHeader
+      : await allocateSessionColumnForPhone(sessionId, phone);
+
+    // prefix role to message to make it clear
+    const loggedText = `[${role.toUpperCase()}] ${message}`;
+
+    const result = await appendMessageUnderSessionColumn(headerName, phone, loggedText);
+    return result;
+  } catch (e) {
+    console.error('❌ Error logging message to Google Sheet:', e);
+    return null;
+  }
+}
+
+/* -------------------------
+   Webhook + endpoints
+   - Replaced handleMessage to log to sheet for each user+assistant message
+--------------------------*/
+async function handleMessage(sessionId, userMessage, userPhone) {
   try {
     // 1) Save incoming user message to session (this ensures history is persistent)
     appendToSessionHistory(sessionId, 'user', userMessage);
+
+    // 1.b) allocate sheet column and log user message (async)
+    try {
+      await allocateSessionColumnForPhone(sessionId, userPhone);
+      // log user
+      await logMessageToSheetForSession(sessionId, userPhone, 'user', userMessage);
+    } catch (e) {
+      console.error('❌ sheet logging (user) failed:', e);
+    }
 
     // 2) Get the full session history and log it (for debugging)
     const fullHistory = getFullSessionHistory(sessionId);
@@ -946,6 +1163,13 @@ async function handleMessage(sessionId, userMessage) {
     // 4) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
     conversations[sessionId].lastActive = nowMs();
+
+    // 4.b) log assistant message to sheet
+    try {
+      await logMessageToSheetForSession(sessionId, userPhone, 'assistant', aiResponse);
+    } catch (e) {
+      console.error('❌ sheet logging (assistant) failed:', e);
+    }
 
     // 5) Return the response
     return aiResponse;
@@ -969,8 +1193,8 @@ app.post('/webhook', async (req, res) => {
 
       // Step-by-step debug: show that we will store the message first
       console.log(`➡️ Storing incoming message into session ${sessionId}.`);
-      // handleMessage will append user, call GPT with full session, append assistant, and return reply
-      const aiResponse = await handleMessage(sessionId, userMessage);
+      // handleMessage will append user, call GPT with full session, append assistant, log both to sheet, and return reply
+      const aiResponse = await handleMessage(sessionId, userMessage, userPhone);
 
       console.log(`➡️ Sending AI response to ${sessionId}. Response length: ${aiResponse.length}`);
       await sendMessage(userPhone, userName, aiResponse);
@@ -991,7 +1215,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Server is running on Vercel',
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session-history-as-chat + explicit webhook steps',
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session-history-as-chat + sheets logging',
     stats: { product_categories_loaded: galleriesData.length, sellers_loaded: sellersData.length, active_sessions: Object.keys(conversations).length },
     timestamp: new Date().toISOString()
   });
