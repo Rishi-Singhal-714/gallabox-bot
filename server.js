@@ -36,10 +36,35 @@ const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
 const SESSION_CLEANUP_MS = 1000 * 60 * 5; // cleanup every 5 minutes
 const MAX_HISTORY_MESSAGES = 50; // max messages to keep per session
 
-// ZULU CLUB INFORMATION (kept)
-const ZULU_CLUB_INFO = We're building a new way to shop and discover lifestyle products online. Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep. Browse and shop high-quality lifestyle products across categories you love: - Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more - Men's Fashion — shirts, tees, jackets, athleisure & more - Kids — clothing, toys, learning kits & accessories - Footwear — sneakers, heels, flats, sandals & kids shoes - Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories - Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials - Fashion Accessories — bags, jewelry, watches, sunglasses & belts - Lifestyle Gifting — curated gift sets & décor-based gifting And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free. Now live in Gurgaon Experience us at our pop-ups: AIPL Joy Street & AIPL Central Explore & shop on zulu.club ; 
-// INVESTORS paragraph placeholder (edit as required) 
-const INVESTORS_PARAGRAPH = Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.) ;
+// ZULU CLUB INFORMATION
+const ZULU_CLUB_INFO = `
+We're building a new way to shop and discover lifestyle products online.
+
+Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
+
+Browse and shop high-quality lifestyle products across categories you love:
+
+- Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more
+- Men's Fashion — shirts, tees, jackets, athleisure & more
+- Kids — clothing, toys, learning kits & accessories
+- Footwear — sneakers, heels, flats, sandals & kids shoes
+- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories
+- Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
+- Fashion Accessories — bags, jewelry, watches, sunglasses & belts
+- Lifestyle Gifting — curated gift sets & décor-based gifting
+
+And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
+
+Now live in Gurgaon
+Experience us at our pop-ups: AIPL Joy Street & AIPL Central
+Explore & shop on zulu.club
+`;
+
+// INVESTORS paragraph placeholder (edit as required)
+const INVESTORS_PARAGRAPH = `
+Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
+`;
+
 /* -------------------------
    CSV loaders
 --------------------------*/
