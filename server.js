@@ -1119,37 +1119,48 @@ function sellerOnboardMessage() {
    Session/history helpers (ADDED)
    - createOrTouchSession, appendToSessionHistory, getFullSessionHistory, purgeExpiredSessions
 --------------------------*/
-const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
+const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour (unchanged)
 const SESSION_CLEANUP_MS = 1000 * 60 * 5; // cleanup every 5 minutes
-const MAX_HISTORY_MESSAGES = 500; // safety cap - adjust as needed
+const MAX_HISTORY_MESSAGES = 2000; // keep more messages for 1 hour (adjustable)
 
+// helper for timestamps
 function nowMs() { return Date.now(); }
 
+// create/touch session; initialize lastDetectedIntent fields
 function createOrTouchSession(sessionId) {
   if (!conversations[sessionId]) {
-    conversations[sessionId] = { history: [], lastActive: nowMs() };
+    conversations[sessionId] = {
+      history: [],              // full chat history: { role, content, ts }
+      lastActive: nowMs(),
+      lastDetectedIntent: null, // 'product' | 'company' | 'seller' | 'investors' | null
+      lastDetectedIntentTs: 0
+    };
   } else {
     conversations[sessionId].lastActive = nowMs();
   }
   return conversations[sessionId];
 }
 
+// append message to session history and keep it (no cleanup under 1 hour)
 function appendToSessionHistory(sessionId, role, content) {
   createOrTouchSession(sessionId);
   const entry = { role, content, ts: nowMs() };
   conversations[sessionId].history.push(entry);
+  // cap history length - keep enough messages for 1 hour
   if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
     conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
   }
   conversations[sessionId].lastActive = nowMs();
 }
 
+// return full session history (copy)
 function getFullSessionHistory(sessionId) {
   const s = conversations[sessionId];
   if (!s || !s.history) return [];
   return s.history.slice();
 }
 
+// purge expired sessions older than TTL
 function purgeExpiredSessions() {
   const cutoff = nowMs() - SESSION_TTL_MS;
   const before = Object.keys(conversations).length;
@@ -1192,110 +1203,164 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
    - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
    - history will not influence initial intent detection
 --------------------------*/
-async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
+async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
 
   try {
-    // Quick explicit onboarding check (still useful for very specific phrases)
+    // ensure session exists
+    createOrTouchSession(sessionId);
+    const session = conversations[sessionId];
+
+    // 0) quick onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
+      // update session history / lastDetectedIntent
+      session.lastDetectedIntent = 'seller';
+      session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    // 1) single GPT call to classify + match categories (classifier uses only the single message)
+    // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
-    const intent = classification.intent || 'company';
+    let intent = classification.intent || 'company';
+    let confidence = classification.confidence || 0;
 
-    // Debug logs (comment out in production if noisy)
-    console.log('🧠 GPT classification:', { intent: classification.intent, confidence: classification.confidence, reason: classification.reason });
+    console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
 
-    // 2) Intent handling
+    // 2) If classifier returned 'product' -> set session.lastDetectedIntent = 'product'
+    if (intent === 'product') {
+      session.lastDetectedIntent = 'product';
+      session.lastDetectedIntentTs = nowMs();
+    }
+
+    // 3) FOLLOW-UP override rule:
+    // If classifier DID NOT return product, but session previously had a 'product' intent within TTL,
+    // AND the new user message looks like a short/clarifying follow-up (we treat short messages as potential qualifiers),
+    // then override intent to 'product' so we run matchers using the full session history.
+    const lastProductWithinTTL = (session.lastDetectedIntent === 'product') && (nowMs() - session.lastDetectedIntentTs <= SESSION_TTL_MS);
+    const isShortOrQualifier = (msg) => {
+      if (!msg) return false;
+      const trimmed = String(msg).trim();
+      // treat single-word replies or short phrases as qualifiers (e.g., "men", "blue", "size m", "ok", "no, men")
+      if (trimmed.split(/\s+/).length <= 3) return true;
+      // also treat very short messages as qualifiers
+      if (trimmed.length <= 12) return true;
+      return false;
+    };
+
+    if (intent !== 'product' && lastProductWithinTTL && isShortOrQualifier(userMessage)) {
+      console.log('ℹ️ Overriding non-product classifier result to product because session had recent product intent and current message looks like a qualifier.');
+      intent = 'product';
+      // keep previous lastDetectedIntentTs (do not reset) — we still consider it the same product conversation
+    }
+
+    // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
     if (intent === 'seller') {
-      // If GPT says 'seller', give onboarding message
+      session.lastDetectedIntent = 'seller';
+      session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
     if (intent === 'investors') {
-      // Return investors paragraph (editable)
+      session.lastDetectedIntent = 'investors';
+      session.lastDetectedIntentTs = nowMs();
       return INVESTORS_PARAGRAPH.trim();
     }
 
     if (intent === 'product' && galleriesData.length > 0) {
-      // Map GPT returned matches (type2 strings) to actual gallery objects
+      // mark session product timestamp if not already set
+      if (session.lastDetectedIntent !== 'product') {
+        session.lastDetectedIntent = 'product';
+        session.lastDetectedIntentTs = nowMs();
+      }
+
+      // 4a) Try to use classifier-provided matches first (if any)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
       if (matchedType2s.length > 0) {
-        matchedCategories = matchedType2s.map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim())).filter(Boolean).slice(0,5);
+        matchedCategories = matchedType2s
+          .map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim()))
+          .filter(Boolean)
+          .slice(0,5);
       }
 
-      // If classifier didn't return matches, or we want better accuracy, call findGptMatchedCategories WITH history now
+      // 4b) If classifier didn't provide good matches, or we want refinement, call findGptMatchedCategories WITH full session history
       if (matchedCategories.length === 0) {
-        // now pass conversationHistory so matcher can use prior messages (this is the only place history influences matching)
-        matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
+        const fullHistory = getFullSessionHistory(sessionId);
+        matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+      } else {
+        // even if we have matches from classifier, we still allow a re-run using history if the message is a short qualifier
+        // e.g., user said "i need a tshirt" (classifier returned matches), then user says "men" (classifier won't return product matches),
+        // the override above will cause intent='product' and we will call findGptMatchedCategories with full history to refine.
+        const fullHistory = getFullSessionHistory(sessionId);
+        // decide heuristically whether to refine: if current message is short/qualifier, refine
+        if (isShortOrQualifier(userMessage)) {
+          const refined = await findGptMatchedCategories(userMessage, fullHistory);
+          if (refined && refined.length > 0) matchedCategories = refined;
+        }
       }
 
-      // If still empty, try keyword local fallback
+      // 4c) fallback local keyword matching if still empty
       if (matchedCategories.length === 0) {
-        // clothing queries prefer GPT matching
         if (containsClothingKeywords(userMessage)) {
-          matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
+          const fullHistory = getFullSessionHistory(sessionId);
+          matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
         } else {
           const keywordMatches = findKeywordMatchesInCat1(userMessage);
           if (keywordMatches.length > 0) {
             matchedCategories = keywordMatches;
           } else {
-            matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
+            const fullHistory = getFullSessionHistory(sessionId);
+            matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
           }
         }
       }
 
-      // IMPORTANT: infer gender from matched categories' cat_id / cat1 (your source of truth)
-      const detectedGender = inferGenderFromCategories(matchedCategories); // 'men'|'women'|'kids'|null
+      // 4d) Determine gender from matched categories (cat_id / cat1)
+      const detectedGender = inferGenderFromCategories(matchedCategories);
 
-      // find sellers using matchedCategories and detectedGender
+      // 4e) Run seller matching using matchedCategories and detectedGender (this uses GPT-checks internally)
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
-      // include sheets/home debug if needed (handled in handleMessage)
+
+      // Return concise response (unchanged format)
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // default: company conversational response (we pass history so assistant can use it)
-    return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
+    // Default: company response — still pass full session history so assistant can use it for conversational answers
+    return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
-    console.error('❌ getChatGPTResponse error:', error);
+    console.error('❌ getChatGPTResponse error (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
 
 /* -------------------------
-   handleMessage (UPDATED to use session history + sheets logging)
-   - history saved immediately
-   - classifier runs only on single message
-   - after intent known, matching functions may use history
+   Updated handleMessage to call session-aware getChatGPTResponse
+   - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
-    // 1) Save incoming user message to session (this ensures history is persistent)
+    // 1) Save incoming user message to session
     appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort; doesn't block
+    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
       await appendUnderColumn(sessionId, `USER: ${userMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
 
-    // 3) Get the full session history to pass to matchers (not to classifier)
+    // 3) Debug print compact history
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
-    // compact debug print
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    // 4) Call main response flow — pass fullHistory (classifier itself will NOT use history; only matchers later will)
-    const aiResponse = await getChatGPTResponse(userMessage, fullHistory);
+    // 4) Get response using session-aware function (this will set/override session.lastDetectedIntent as needed)
+    const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
     // 5) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
@@ -1307,13 +1372,13 @@ async function handleMessage(sessionId, userMessage) {
       console.error('sheet log assistant failed', e);
     }
 
-    // update lastActive
+    // 7) update lastActive (appendToSessionHistory already did this)
     if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
 
-    // 7) Return the response
+    // 8) return the assistant reply
     return aiResponse;
   } catch (error) {
-    console.error('❌ Error handling message:', error);
+    console.error('❌ Error handling message (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
