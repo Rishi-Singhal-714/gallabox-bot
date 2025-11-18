@@ -804,75 +804,124 @@ RESPONSE FORMAT (JSON only):
 }
 
 /* -------------------------
-   Intent-classifier: NOW single-message only (changed)
-   Returns { intent, confidence, reason, matches }
+   Robust classifyAndMatchWithGPT (replacement)
+   - single-message classifier
+   - few-shot examples
+   - retry with stricter prompt when parse fails or confidence is 0
 --------------------------*/
 async function classifyAndMatchWithGPT(userMessage) {
   const text = (userMessage || '').trim();
   if (!text) return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
   if (!openai || !process.env.OPENAI_API_KEY) return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
 
-  const systemContent = "You are a JSON-only classifier & category matcher for Zulu Club. Decide intent from the single user message. Return only JSON.";
-
-  // Build messages array with only the single user message (no session history)
-  const messagesForGPT = [
-    { role: 'system', content: systemContent }
+  // Few-shot examples to teach the model the difference between intents.
+  // Examples are short and varied; they avoid trivial keyword-matching and show intent by intent.
+  const examples = [
+    { msg: "Hi, who are you and what do you do?", intent: "company", reason: "general greeting / ask about the company" },
+    { msg: "Tell me about Zulu Club and how it works.", intent: "company", reason: "asking for company info" },
+    { msg: "I want to invest in your startup — who should I contact and what's your runway?", intent: "investors", reason: "explicit investor interest and funding questions" },
+    { msg: "We are VCs evaluating new retail investments; request pitch deck and cap table.", intent: "investors", reason: "professional investor inquiry" },
+    { msg: "How do I list my products and join as a seller?", intent: "seller", reason: "onboarding as seller" },
+    { msg: "Show me dresses for women", intent: "product", reason: "product search" },
+    { msg: "Do you have lamps and home decor items?", intent: "product", reason: "product search (home decor)" }
   ];
 
-  const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
-  const finalPrompt = `
-You are given a single user message. Look at the message and:
+  // Helper to build the prompt with examples
+  function buildPromptWithExamples(message) {
+    const lines = [];
+    lines.push("You are a concise JSON-only classifier. From the single USER MESSAGE, choose exactly one intent from: \"company\", \"product\", \"seller\", \"investors\".");
+    lines.push("Return ONLY valid JSON, with these keys: intent, confidence (0.0-1.0), reason (short). If intent is product include matches: [] or the matched type2 entries.");
+    lines.push("");
+    lines.push("Examples (USER_MESSAGE -> intent, reason):");
+    for (const ex of examples) {
+      lines.push(`USER_MESSAGE: """${ex.msg.replace(/"/g, '\\"')}""" -> intent: "${ex.intent}", reason: "${ex.reason}"`);
+    }
+    lines.push("");
+    lines.push(`Now classify this message. Be careful: DO NOT rely on simple word presence; use intent meaning. Return JSON only.`);
+    lines.push(`USER_MESSAGE: """${message.replace(/"/g, '\\"')}"""`);
+    return lines.join('\n');
+  }
 
-1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
-2) If the intent is "product", pick up to 5 best-matching categories from AVAILABLE CATEGORIES (use "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
-3) Return ONLY valid JSON in this exact format (no extra text):
-
-{
-  "intent": "product",
-  "confidence": 0.0,
-  "reason": "short explanation",
-  "matches": [
-    { "type2": "exact-type2-from-csv", "reason": "why it matches", "score": 0.85 }
-  ]
-}
-
-If intent is not "product", return "matches": [].
-
-AVAILABLE CATEGORIES:
-${JSON.stringify(csvDataForGPT, null, 2)}
-
-USER MESSAGE:
-"${text}"
-  `;
-  messagesForGPT.push({ role: 'user', content: finalPrompt });
-
-  console.log(`🧾 classifyAndMatchWithGPT -> sending single-message classification to OpenAI.`);
-
+  // First attempt: moderate temperature, few-shot examples, explicit JSON-only instruction
+  const prompt1 = buildPromptWithExamples(text);
   try {
-    const completion = await openai.chat.completions.create({
+    const resp1 = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: messagesForGPT,
-      max_tokens: 800,
-      temperature: 0.12
+      messages: [
+        { role: 'system', content: 'You are a strict JSON classifier. Output only JSON.' },
+        { role: 'user', content: prompt1 }
+      ],
+      max_tokens: 300,
+      temperature: 0.0
     });
 
-    const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
+    const raw1 = (resp1.choices && resp1.choices[0] && resp1.choices[0].message && resp1.choices[0].message.content) ? resp1.choices[0].message.content.trim() : '';
+    console.log('classifyAndMatchWithGPT: raw1 ->', raw1);
+
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw1);
+      // ensure intent is valid
       const intent = (parsed.intent && ['company','product','seller','investors'].includes(parsed.intent)) ? parsed.intent : 'company';
-      const confidence = Number(parsed.confidence) || 0.0;
+      const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
       const reason = parsed.reason || '';
       const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
       return { intent, confidence, reason, matches };
     } catch (e) {
-      console.error('Error parsing classifyAndMatchWithGPT JSON:', e, 'raw:', raw);
-      return { intent: 'company', confidence: 0.0, reason: 'parse error from GPT', matches: [] };
+      console.warn('classifyAndMatchWithGPT: parse error on first response:', e);
+      // fallthrough to retry
     }
   } catch (err) {
-    console.error('Error calling OpenAI classifyAndMatchWithGPT:', err);
-    return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [] };
+    console.error('classifyAndMatchWithGPT: first GPT call error:', err);
+    // fallthrough to retry
   }
+
+  // Second attempt: stricter, minimal JSON-only prompt with explicit examples mapping to INVESTORS vs COMPANY
+  const prompt2 = `
+You MUST return valid JSON only, nothing else. The JSON MUST be:
+{ "intent": "<one of company|product|seller|investors>", "confidence": 0.0, "reason": "short explanation", "matches": [] }
+
+Here are clarifying examples:
+- "I want to see your pitch deck and discuss terms" -> investors
+- "Who are you? What's Zulu Club?" -> company
+- "I'd like to sell on your platform" -> seller
+- "Show me men's t-shirts" -> product
+
+Classify this single USER MESSAGE now:
+USER_MESSAGE: """${text.replace(/"/g, '\\"')}"""
+  `;
+  try {
+    const resp2 = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: 'system', content: 'You are a strict JSON-only classifier. Return exactly the JSON structure requested.' },
+        { role: 'user', content: prompt2 }
+      ],
+      max_tokens: 200,
+      temperature: 0.0
+    });
+
+    const raw2 = (resp2.choices && resp2.choices[0] && resp2.choices[0].message && resp2.choices[0].message.content) ? resp2.choices[0].message.content.trim() : '';
+    console.log('classifyAndMatchWithGPT: raw2 ->', raw2);
+
+    try {
+      const parsed2 = JSON.parse(raw2);
+      const intent = (parsed2.intent && ['company','product','seller','investors'].includes(parsed2.intent)) ? parsed2.intent : 'company';
+      const confidence = Math.max(0, Math.min(1, Number(parsed2.confidence) || 0));
+      const reason = parsed2.reason || '';
+      const matches = Array.isArray(parsed2.matches) ? parsed2.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
+      return { intent, confidence, reason, matches };
+    } catch (e2) {
+      console.warn('classifyAndMatchWithGPT: parse error on second response:', e2);
+    }
+  } catch (err2) {
+    console.error('classifyAndMatchWithGPT: second GPT call error:', err2);
+  }
+
+  // Final fallback: return company with very low confidence but include raw debug note
+  console.error('classifyAndMatchWithGPT: both attempts failed to produce valid JSON. Defaulting to company intent with 0 confidence. Consider inspecting logs.');
+  return { intent: 'company', confidence: 0.0, reason: 'failed to parse GPT responses or GPT returned low confidence', matches: [] };
 }
+
 
 /* -------------------------
    Company Response Generator (kept, append download links)
