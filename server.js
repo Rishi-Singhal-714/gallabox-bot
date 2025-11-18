@@ -1122,7 +1122,7 @@ function isGreeting(text) {
 // -------------------------
 // Company Response Generator (removed app-links append logic)
 // -------------------------
-asasync function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
+async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
 
   const systemMessage = {
