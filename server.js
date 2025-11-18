@@ -1097,9 +1097,6 @@ return { intent, confidence, reason, matches, reasoning };
 --------------------------*/
 
 // -------------------------
-// App links (ADD)
-const APP_LINK_ANDROID = 'https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer';
-const APP_LINK_IOS = 'https://apps.apple.com/in/app/zulu-club/id6739531325';
 
 // Simple greeting detector - returns true if the message looks like a greeting
 function isGreeting(text) {
