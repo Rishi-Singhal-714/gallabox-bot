@@ -1138,7 +1138,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
     4. Use emojis to make it engaging but professional
     5. Keep responses under 200 characters for WhatsApp compatibility
-    6. Be enthusiastic and helpful
+    6. Be enthusiastic and helpful 
     7. Direct users to our website zulu.club for more information and shopping
     `
   };
@@ -1164,8 +1164,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 
   // Links block to always append (for non-greetings)
   const LINKS_BLOCK = [
-    "*Website:*",
-    "https://zulu.club",
     "*Android:*",
     "https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer",
     "*iOS:*",
