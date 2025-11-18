@@ -1194,7 +1194,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     // fallback message (append links if not a greeting)
     let fallback = `Hi! We're Zulu Club — shop at zulu.club or visit our pop-ups in Gurgaon.`;
     if (!isGreeting(userMessage)) {
-      fallback = `${fallback}\n\nGet the Zulu Club app: Android: ${APP_LINK_ANDROID} | iOS: ${APP_LINK_IOS}`;
+      fallback = `${fallback}\n\nGet the Zulu Club app: Android: \n${APP_LINK_ANDROID}\n iOS: \n${APP_LINK_IOS}`;
     }
     return fallback;
   }
