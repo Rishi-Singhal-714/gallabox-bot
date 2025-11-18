@@ -1241,26 +1241,8 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // 3) FOLLOW-UP override rule:
-    // If classifier DID NOT return product, but session previously had a 'product' intent within TTL,
-    // AND the new user message looks like a short/clarifying follow-up (we treat short messages as potential qualifiers),
-    // then override intent to 'product' so we run matchers using the full session history.
-    const lastProductWithinTTL = (session.lastDetectedIntent === 'product') && (nowMs() - session.lastDetectedIntentTs <= SESSION_TTL_MS);
-    const isShortOrQualifier = (msg) => {
-      if (!msg) return false;
-      const trimmed = String(msg).trim();
-      // treat single-word replies or short phrases as qualifiers (e.g., "men", "blue", "size m", "ok", "no, men")
-      if (trimmed.split(/\s+/).length <= 3) return true;
-      // also treat very short messages as qualifiers
-      if (trimmed.length <= 12) return true;
-      return false;
-    };
-
-    if (intent !== 'product' && lastProductWithinTTL && isShortOrQualifier(userMessage)) {
-      console.log('ℹ️ Overriding non-product classifier result to product because session had recent product intent and current message looks like a qualifier.');
-      intent = 'product';
-      // keep previous lastDetectedIntentTs (do not reset) — we still consider it the same product conversation
-    }
+    // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
+    // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
 
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
     if (intent === 'seller') {
@@ -1299,9 +1281,16 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       } else {
         // even if we have matches from classifier, we still allow a re-run using history if the message is a short qualifier
         // e.g., user said "i need a tshirt" (classifier returned matches), then user says "men" (classifier won't return product matches),
-        // the override above will cause intent='product' and we will call findGptMatchedCategories with full history to refine.
+        // we will call findGptMatchedCategories with full history to refine.
         const fullHistory = getFullSessionHistory(sessionId);
         // decide heuristically whether to refine: if current message is short/qualifier, refine
+        const isShortOrQualifier = (msg) => {
+          if (!msg) return false;
+          const trimmed = String(msg).trim();
+          if (trimmed.split(/\s+/).length <= 3) return true;
+          if (trimmed.length <= 12) return true;
+          return false;
+        };
         if (isShortOrQualifier(userMessage)) {
           const refined = await findGptMatchedCategories(userMessage, fullHistory);
           if (refined && refined.length > 0) matchedCategories = refined;
@@ -1342,7 +1331,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
    - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
