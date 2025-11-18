@@ -34,12 +34,6 @@ let sellersData = []; // sellers CSV data
 
 /* -------------------------
    SESSION / BACK-HISTORY LOGIC
-   - Sessions created per phone number (sessionId)
-   - All messages appended to session.history (user + assistant)
-   - Session kept alive on each message (lastActive updated)
-   - Session removed ONLY after SESSION_TTL_MS of inactivity
-   - We pass the ENTIRE session.history to GPT calls while session exists
-   - To avoid runaway memory we cap messages with MAX_HISTORY_MESSAGES
 --------------------------*/
 const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
 const SESSION_CLEANUP_MS = 1000 * 60 * 5; // cleanup every 5 minutes
@@ -60,9 +54,7 @@ function appendToSessionHistory(sessionId, role, content) {
   createOrTouchSession(sessionId);
   const entry = { role, content, ts: nowMs() };
   conversations[sessionId].history.push(entry);
-  // safety cap only (we DO NOT trim older messages automatically)
   if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
-    // keep the latest MAX_HISTORY_MESSAGES entries
     conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
   }
   conversations[sessionId].lastActive = nowMs();
@@ -71,7 +63,6 @@ function appendToSessionHistory(sessionId, role, content) {
 function getFullSessionHistory(sessionId) {
   const s = conversations[sessionId];
   if (!s || !s.history) return [];
-  // Return a shallow copy to avoid accidental mutation
   return s.history.slice();
 }
 
@@ -88,7 +79,7 @@ function purgeExpiredSessions() {
 }
 setInterval(purgeExpiredSessions, SESSION_CLEANUP_MS);
 
-// Optional debug endpoint: view session (remove or protect in production)
+// Optional debug endpoint
 app.get('/session/:id', (req, res) => {
   const id = req.params.id;
   const s = conversations[id];
@@ -122,7 +113,6 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on zulu.club
 `;
 
-// INVESTORS paragraph placeholder (edit as required)
 const INVESTORS_PARAGRAPH = `
 Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
 `;
@@ -134,21 +124,15 @@ Thanks for your interest in investing in Zulu Club. Please share your pitch deck
 async function loadGalleriesData() {
   try {
     console.log('📥 Loading galleries CSV data...');
-    const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv', {
-      timeout: 60000 
-    });
-    
+    const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv', { timeout: 60000 });
     return new Promise((resolve, reject) => {
       const results = [];
-      
       if (!response.data || response.data.trim().length === 0) {
         console.log('❌ Empty CSV data received');
         resolve([]);
         return;
       }
-      
       const stream = Readable.from(response.data);
-      
       stream
         .pipe(csv())
         .on('data', (data) => {
@@ -158,19 +142,10 @@ async function loadGalleriesData() {
             cat1: data.cat1 || data.Cat1 || data.CAT1 || '',
             seller_id: data.seller_id || data.SELLER_ID || data.Seller_ID || data.SellerId || data.sellerId || ''
           };
-          
-          if (mappedData.type2 && mappedData.cat1) {
-            results.push(mappedData);
-          }
+          if (mappedData.type2 && mappedData.cat1) results.push(mappedData);
         })
-        .on('end', () => {
-          console.log(`✅ Loaded ${results.length} product categories from CSV`);
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error('❌ Error parsing CSV:', error);
-          reject(error);
-        });
+        .on('end', () => { console.log(`✅ Loaded ${results.length} product categories from CSV`); resolve(results); })
+        .on('error', (error) => { console.error('❌ Error parsing CSV:', error); reject(error); });
     });
   } catch (error) {
     console.error('❌ Error loading CSV data:', error.message);
@@ -181,10 +156,7 @@ async function loadGalleriesData() {
 async function loadSellersData() {
   try {
     console.log('📥 Loading sellers CSV data...');
-    const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/sellers.csv', {
-      timeout: 60000
-    });
-
+    const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/sellers.csv', { timeout: 60000 });
     return new Promise((resolve, reject) => {
       const results = [];
       if (!response.data || response.data.trim().length === 0) {
@@ -196,7 +168,6 @@ async function loadSellersData() {
       stream
         .pipe(csv())
         .on('data', (data) => {
-          // Keep seller_id, but read user_id explicitly for link generation
           const mapped = {
             seller_id: data.seller_id || data.SELLER_ID || data.id || data.ID || '',
             user_id: data.user_id || data.USER_ID || data.userId || data.userID || '',
@@ -209,14 +180,8 @@ async function loadSellersData() {
             results.push(mapped);
           }
         })
-        .on('end', () => {
-          console.log(`✅ Loaded ${results.length} sellers from CSV`);
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error('❌ Error parsing sellers CSV:', error);
-          reject(error);
-        });
+        .on('end', () => { console.log(`✅ Loaded ${results.length} sellers from CSV`); resolve(results); })
+        .on('error', (error) => { console.error('❌ Error parsing sellers CSV:', error); reject(error); });
     });
   } catch (error) {
     console.error('❌ Error loading sellers CSV:', error.message);
@@ -224,20 +189,9 @@ async function loadSellersData() {
   }
 }
 
-// initialize both CSVs
 (async () => {
-  try {
-    galleriesData = await loadGalleriesData();
-  } catch (e) {
-    console.error('Failed loading galleries:', e);
-    galleriesData = [];
-  }
-  try {
-    sellersData = await loadSellersData();
-  } catch (e) {
-    console.error('Failed loading sellers:', e);
-    sellersData = [];
-  }
+  try { galleriesData = await loadGalleriesData(); } catch (e) { console.error('Failed loading galleries:', e); galleriesData = []; }
+  try { sellersData = await loadSellersData(); } catch (e) { console.error('Failed loading sellers:', e); sellersData = []; }
 })();
 
 /* -------------------------
@@ -246,61 +200,31 @@ async function loadSellersData() {
 async function sendMessage(to, name, message) {
   try {
     console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
-    
     const payload = {
       channelId: gallaboxConfig.channelId,
       channelType: "whatsapp",
-      recipient: {
-        name: name,
-        phone: to
-      },
-      whatsapp: {
-        type: "text",
-        text: {
-          body: message
-        }
-      }
+      recipient: { name: name, phone: to },
+      whatsapp: { type: "text", text: { body: message } }
     };
-    
-    const response = await axios.post(
-      `${gallaboxConfig.baseUrl}/messages/whatsapp`,
-      payload,
-      {
-        headers: {
-          'apiKey': gallaboxConfig.apiKey,
-          'apiSecret': gallaboxConfig.apiSecret,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      }
-    );
-    
+    const response = await axios.post(`${gallaboxConfig.baseUrl}/messages/whatsapp`, payload, {
+      headers: { 'apiKey': gallaboxConfig.apiKey, 'apiSecret': gallaboxConfig.apiSecret, 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
     console.log('✅ Message sent successfully');
     return response.data;
   } catch (error) {
-    console.error('❌ Error sending message:', {
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message
-    });
+    console.error('❌ Error sending message:', { status: error.response?.status, data: error.response?.data, message: error.message });
     throw error;
   }
 }
 
 /* -------------------------
-   Matching helpers (kept + gender-from-cat_id)
-   (unchanged)
+   Matching helpers (kept)
 --------------------------*/
 function normalizeToken(t) {
   if (!t) return '';
-  return String(t)
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return String(t).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
-
 function singularize(word) {
   if (!word) return '';
   if (word.endsWith('ies') && word.length > 3) return word.slice(0, -3) + 'y';
@@ -309,7 +233,6 @@ function singularize(word) {
   if (word.endsWith('s') && word.length > 2) return word.slice(0, -1);
   return word;
 }
-
 function editDistance(a, b) {
   const s = a || '', t = b || '';
   const m = s.length, n = t.length;
@@ -324,7 +247,6 @@ function editDistance(a, b) {
   }
   return dp[m][n];
 }
-
 function calculateSimilarity(str1, str2) {
   const longer = str1.length > str2.length ? str1 : str2;
   const shorter = str1.length > str2.length ? str2 : str1;
@@ -333,7 +255,6 @@ function calculateSimilarity(str1, str2) {
   const commonChars = [...shorter].filter(char => longer.includes(char)).length;
   return commonChars / longer.length;
 }
-
 function smartSimilarity(a, b) {
   const A = singularize(normalizeToken(a));
   const B = singularize(normalizeToken(b));
@@ -346,22 +267,17 @@ function smartSimilarity(a, b) {
   const charOverlap = calculateSimilarity(A, B);
   return Math.max(edScore, charOverlap);
 }
-
 function expandCategoryVariants(category) {
   const norm = normalizeToken(category);
   const variants = new Set();
   if (norm) variants.add(norm);
   const ampParts = norm.split(/\band\b/).map(s => normalizeToken(s));
-  for (const p of ampParts) {
-    if (p && p.length > 1) variants.add(p.trim());
-  }
+  for (const p of ampParts) { if (p && p.length > 1) variants.add(p.trim()); }
   return Array.from(variants);
 }
-
 const STOPWORDS = new Set(['and','the','for','a','an','of','in','on','to','with','from','shop','buy','category','categories']);
-
 function containsClothingKeywords(userMessage) {
-  const clothingTerms = ['men', 'women', 'kids', 'kid', 'child', 'children', 'man', 'woman', 'boy', 'girl'];
+  const clothingTerms = ['men','women','kids','kid','child','children','man','woman','boy','girl'];
   const message = (userMessage || '').toLowerCase();
   return clothingTerms.some(term => message.includes(term));
 }
@@ -371,20 +287,10 @@ function containsClothingKeywords(userMessage) {
 --------------------------*/
 function findKeywordMatchesInCat1(userMessage) {
   if (!userMessage || !galleriesData.length) return [];
-  
-  const rawTerms = userMessage
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .split(/\s+/)
-    .filter(term => term.length > 1 && !STOPWORDS.has(term));
-
-  const searchTerms = rawTerms
-    .map(t => singularize(normalizeToken(t)))
-    .filter(t => t.length > 1);
-
+  const rawTerms = userMessage.toLowerCase().replace(/&/g, ' and ').split(/\s+/).filter(term => term.length > 1 && !STOPWORDS.has(term));
+  const searchTerms = rawTerms.map(t => singularize(normalizeToken(t))).filter(t => t.length > 1);
   const matches = [];
-  const clothingKeywords = ['clothing', 'apparel', 'wear', 'shirt', 'pant', 'dress', 'top', 'bottom', 'jacket', 'sweater'];
-  
+  const clothingKeywords = ['clothing','apparel','wear','shirt','pant','dress','top','bottom','jacket','sweater'];
   galleriesData.forEach(item => {
     if (!item.cat1) return;
     const cat1Categories = item.cat1.split(',').map(cat => cat.trim()).filter(Boolean);
@@ -393,7 +299,6 @@ function findKeywordMatchesInCat1(userMessage) {
       const variants = expandCategoryVariants(category);
       expanded.push(...variants);
     }
-
     for (const searchTerm of searchTerms) {
       for (const variant of expanded) {
         const isClothing = clothingKeywords.some(clothing => variant.includes(clothing));
@@ -401,19 +306,13 @@ function findKeywordMatchesInCat1(userMessage) {
         const sim = smartSimilarity(variant, searchTerm);
         if (sim >= 0.9 || (sim >= 0.82 && Math.abs(variant.length - searchTerm.length) <= 3)) {
           if (!matches.some(m => m.type2 === item.type2)) {
-            matches.push({
-              ...item,
-              matchType: sim === 1.0 ? 'exact' : 'similar',
-              matchedTerm: searchTerm,
-              score: sim
-            });
+            matches.push({ ...item, matchType: sim === 1.0 ? 'exact' : 'similar', matchedTerm: searchTerm, score: sim });
           }
         }
       }
     }
   });
-  
-  return matches.sort((a, b) => b.score - a.score).slice(0, 5);
+  return matches.sort((a,b) => b.score - a.score).slice(0,5);
 }
 
 /* -------------------------
@@ -427,9 +326,7 @@ const CLOTHING_IGNORE_WORDS = ['men','women','kid','kids','child','children','ma
 function stripClothingFromType2(type2) {
   if (!type2) return type2;
   let tokens = type2.split(/\s+/);
-  while (tokens.length && CLOTHING_IGNORE_WORDS.includes(tokens[0].toLowerCase().replace(/[^a-z]/g, ''))) {
-    tokens.shift();
-  }
+  while (tokens.length && CLOTHING_IGNORE_WORDS.includes(tokens[0].toLowerCase().replace(/[^a-z]/g, ''))) tokens.shift();
   return tokens.join(' ').trim();
 }
 
@@ -438,13 +335,11 @@ function matchSellersByStoreName(type2Value, detectedGender = null) {
   const stripped = stripClothingFromType2(type2Value);
   const norm = normalizeToken(stripped);
   if (!norm) return [];
-
   const matches = [];
   sellersData.forEach(seller => {
     const store = seller.store_name || '';
     const sim = smartSimilarity(store, norm);
     if (sim < 0.82) return;
-
     if (detectedGender) {
       const sellerGenders = new Set();
       (seller.category_ids_array || []).forEach(c => {
@@ -452,14 +347,11 @@ function matchSellersByStoreName(type2Value, detectedGender = null) {
         if (/\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(c)) sellerGenders.add('women');
         if (/\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c)) sellerGenders.add('kids');
       });
-      if (sellerGenders.size > 0 && !sellerGenders.has(detectedGender)) {
-        return;
-      }
+      if (sellerGenders.size > 0 && !sellerGenders.has(detectedGender)) return;
     }
-
     matches.push({ seller, score: sim });
   });
-  return matches.sort((a,b) => b.score - a.score).map(m => ({ ...m.seller, score: m.score })).slice(0, 10);
+  return matches.sort((a,b) => b.score - a.score).map(m => ({ ...m.seller, score: m.score })).slice(0,10);
 }
 
 function matchSellersByCategoryIds(userMessage, detectedGender = null) {
@@ -468,7 +360,6 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   const matches = [];
   sellersData.forEach(seller => {
     const categories = seller.category_ids_array || [];
-
     if (detectedGender) {
       const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
       if (sellerHasGender) {
@@ -481,13 +372,10 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
         if (!sellerGenderMatch) return;
       }
     }
-
     const common = categories.filter(c => terms.some(t => t.includes(c) || c.includes(t)));
-    if (common.length > 0) {
-      matches.push({ seller, matches: common.length });
-    }
+    if (common.length > 0) matches.push({ seller, matches: common.length });
   });
-  return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0, 10);
+  return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0,10);
 }
 
 async function isQueryHome(userMessage) {
@@ -499,20 +387,12 @@ USER QUERY: "${userMessage}"
 
 Answer ONLY with JSON:
 { "is_home_score": 0.0 }
-
-Where is_home_score is a number 0.0 - 1.0 representing how strongly this query is home/home-decor related.
-
-Do not include any text, only the JSON.
   `;
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are a concise classifier that returns only JSON with is_home_score." },
-        { role: "user", content: prompt }
-      ],
-      max_tokens: 50,
-      temperature: 0.0
+      messages: [{ role: "system", content: "You are a concise classifier that returns only JSON with is_home_score." }, { role: "user", content: prompt }],
+      max_tokens: 50, temperature: 0.0
     });
     const raw = completion.choices[0].message.content.trim();
     try {
@@ -531,7 +411,6 @@ Do not include any text, only the JSON.
 
 async function gptCheckSellerMaySell(userMessage, seller) {
   if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured' };
-
   const prompt = `
 You are an assistant that rates how likely a seller sells a product a user asks for.
 
@@ -546,21 +425,13 @@ Other info (raw CSV row): ${JSON.stringify(seller.raw || {})}
 Question: Based on the above, how likely (0.0 - 1.0) is it that this seller sells the product the user is asking for? Provide ONLY valid JSON in the following format:
 
 { "score": 0.0, "reason": "one-sentence reason" }
-
-Do not return anything else.
   `;
-
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are a concise classifier that returns only JSON {score, reason}." },
-        { role: "user", content: prompt }
-      ],
-      max_tokens: 150,
-      temperature: 0.0
+      messages: [{ role: "system", content: "You are a concise classifier that returns only JSON {score, reason}." }, { role: "user", content: prompt }],
+      max_tokens: 150, temperature: 0.0
     });
-
     const content = completion.choices[0].message.content.trim();
     try {
       const parsed = JSON.parse(content);
@@ -610,20 +481,16 @@ function inferGenderFromCategories(matchedCategories = []) {
 async function findSellersForQuery(userMessage, galleryMatches = [], detectedGender = null) {
   const homeCheck = await isQueryHome(userMessage);
   const applyHomeFilter = homeCheck.isHome;
-
   if (!detectedGender) detectedGender = inferGenderFromCategories(galleryMatches);
-
   const sellers_by_type2 = new Map();
   for (const gm of galleryMatches) {
     const type2 = gm.type2 || '';
     const found = matchSellersByStoreName(type2, detectedGender);
     found.forEach(s => sellers_by_type2.set(s.seller_id || (s.store_name+'#'), s));
   }
-
   const catMatches = matchSellersByCategoryIds(userMessage, detectedGender);
   const sellers_by_category = new Map();
   catMatches.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
-
   if (applyHomeFilter) {
     const homeSyns = ['home','decor','home decor','home-decor','home_decor','furniture','homeaccessories','home-accessories','home_accessories','decoratives','showpiece','showpieces','lamp','lamps','vase','vases','clock','clocks','cushion','cushions'];
     const keepIfHome = (s) => {
@@ -633,14 +500,9 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
         return homeSyns.some(h => cc.includes(h) || h.includes(cc));
       });
     };
-    for (const [k, s] of Array.from(sellers_by_type2.entries())) {
-      if (!keepIfHome(s)) sellers_by_type2.delete(k);
-    }
-    for (const [k, s] of Array.from(sellers_by_category.entries())) {
-      if (!keepIfHome(s)) sellers_by_category.delete(k);
-    }
+    for (const [k, s] of Array.from(sellers_by_type2.entries())) if (!keepIfHome(s)) sellers_by_type2.delete(k);
+    for (const [k, s] of Array.from(sellers_by_category.entries())) if (!keepIfHome(s)) sellers_by_category.delete(k);
   }
-
   const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
   if (candidateIds.size === 0) {
@@ -661,8 +523,8 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
         const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
         if (sellerHasGender) {
           const genderMatch = detectedGender === 'men' ? categories.some(c => /\bmen\b|\bman\b|\bmens\b/.test(c))
-                          : detectedGender === 'women' ? categories.some(c => /\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(c))
-                          : categories.some(c => /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
+                        : detectedGender === 'women' ? categories.some(c => /\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(c))
+                        : categories.some(c => /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
           if (!genderMatch) continue;
         }
       }
@@ -682,8 +544,8 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
             const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
             if (sellerHasGender) {
               const genderMatch = detectedGender === 'men' ? categories.some(c => /\bmen\b|\bman\b|\bmens\b/.test(c))
-                              : detectedGender === 'women' ? categories.some(c => /\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(c))
-                              : categories.some(c => /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
+                            : detectedGender === 'women' ? categories.some(c => /\bwomen\b|\bwoman\b|\bwomens\b|ladies\b/.test(c))
+                            : categories.some(c => /\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
               if (!genderMatch) continue;
             }
           }
@@ -692,7 +554,6 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
       }
     }
   }
-
   const sellers_by_gpt = [];
   for (let i = 0; i < Math.min(candidateList.length, MAX_GPT_SELLER_CHECK); i++) {
     const seller = candidateList[i];
@@ -703,20 +564,11 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
       }
     }
     const result = await gptCheckSellerMaySell(userMessage, seller);
-    if (result.score > GPT_THRESHOLD) {
-      sellers_by_gpt.push({ seller, score: result.score, reason: result.reason });
-    }
+    if (result.score > GPT_THRESHOLD) sellers_by_gpt.push({ seller, score: result.score, reason: result.reason });
   }
-
   const sellersType2Arr = Array.from(sellers_by_type2.values()).slice(0, 10);
   const sellersCategoryArr = Array.from(sellers_by_category.values()).slice(0, 10);
-
-  return {
-    by_type2: sellersType2Arr,
-    by_category: sellersCategoryArr,
-    by_gpt: sellers_by_gpt,
-    homeCheck
-  };
+  return { by_type2: sellersType2Arr, by_category: sellersCategoryArr, by_gpt: sellers_by_gpt, homeCheck: homeCheck };
 }
 
 /* -------------------------
@@ -726,7 +578,6 @@ function urlEncodeType2(t) {
   if (!t) return '';
   return encodeURIComponent(t.trim().replace(/\s+/g, ' ')).replace(/%20/g, '%20');
 }
-
 function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}) {
   const galleries = (galleryMatches && galleryMatches.length) ? galleryMatches.slice(0,5) : galleriesData.slice(0,5);
   const sellersList = [];
@@ -740,9 +591,7 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
   (sellersObj.by_category || []).forEach(addSeller);
   (sellersObj.by_gpt || []).forEach(item => addSeller(item.seller));
   const sellersToShow = sellersList.slice(0,5);
-
   let msg = `Based on your interest in "${userMessage}":\n`;
-
   if (galleries.length) {
     msg += `\nGalleries:\n`;
     galleries.slice(0,5).forEach((g, i) => {
@@ -750,10 +599,7 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
       const link = `app.zulu.club/${urlEncodeType2(t)}`;
       msg += `${i+1}. ${t} — ${link}\n`;
     });
-  } else {
-    msg += `\nGalleries:\nNone\n`;
-  }
-
+  } else msg += `\nGalleries:\nNone\n`;
   msg += `\nSellers:\n`;
   if (sellersToShow.length) {
     sellersToShow.forEach((s, i) => {
@@ -762,60 +608,54 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
       const link = id ? `app.zulu.club/sellerassets/${id}` : '';
       msg += `${i+1}. ${name}${link ? ` — ${link}` : ''}\n`;
     });
-  } else {
-    msg += `None\n`;
-  }
-
+  } else msg += `None\n`;
   return msg.trim();
 }
 
 /* -------------------------
-   findGptMatchedCategories (kept - returns categories)
+   findGptMatchedCategories (MODIFIED to accept conversationHistory)
+   - Now includes recent session messages as context, so follow-ups like
+     "tshirt" then "men" map correctly.
 --------------------------*/
-async function findGptMatchedCategories(userMessage) {
+async function findGptMatchedCategories(userMessage, conversationHistory = []) {
   try {
-    const csvDataForGPT = galleriesData.map(item => ({
-      type2: item.type2,
-      cat1: item.cat1,
-      cat_id: item.cat_id
-    }));
+    // Include up to last N messages in the prompt so GPT can combine earlier 'tshirt' with 'men'
+    const MAX_HISTORY_TO_INCLUDE = 30;
+    const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => ({ role: h.role, content: h.content }));
+    const contextStr = historyToInclude.length ? historyToInclude.map((m, i) => `${i+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n') : '(none)';
+
+    const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
 
     const prompt = `
-USER MESSAGE: "${userMessage}"
+Conversation context (most recent first):
+${contextStr}
+
+USER LATEST MESSAGE: "${userMessage}"
 
 AVAILABLE PRODUCT CATEGORIES (from CSV):
 ${JSON.stringify(csvDataForGPT, null, 2)}
 
 TASK:
-1. Understand what product the user is looking for (even if misspelled or incomplete like "tshir" for "t-shirt")
-2. Find the BEST matching categories from the CSV data
-3. Return the top 5 most relevant matches in JSON format
+1. Use the conversation context and latest message to understand the product the user wants (handle misspellings).
+2. Return the top 5 most relevant categories from AVAILABLE PRODUCT CATEGORIES.
+3. Provide brief reason and relevance score (0.0-1.0).
 
-RESPONSE FORMAT:
+RESPONSE FORMAT (JSON only):
 {
   "matches": [
     { "type2": "exact-type2-value-from-csv", "reason": "brief explanation", "relevance_score": 0.9 }
   ]
 }
-
-Only return JSON.
     `;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
-        {
-          role: "system",
-          content: `You are a product matching expert for Zulu Club. Return valid JSON.`
-        },
-        {
-          role: "user",
-          content: prompt
-        }
+        { role: "system", content: "You are a product matching expert for Zulu Club. Return valid JSON." },
+        { role: "user", content: prompt }
       ],
       max_tokens: 800,
-      temperature: 0.3,
-      response_format: { type: "json_object" }
+      temperature: 0.25
     });
 
     const responseText = completion.choices[0].message.content.trim();
@@ -840,61 +680,41 @@ Only return JSON.
 }
 
 /* -------------------------
-   classifyAndMatchWithGPT (MODIFIED)
-   - Now accepts conversationHistory (array of {role, content, ts})
-   - Includes recent history in the prompt so GPT uses prior messages when classifying / matching
+   classifyAndMatchWithGPT (MODIFIED to accept conversationHistory)
+   - classifier now sees recent messages and must use them
 --------------------------*/
 async function classifyAndMatchWithGPT(userMessage, conversationHistory = []) {
   const text = (userMessage || '').trim();
-  if (!text) {
-    return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
-  }
+  if (!text) return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
+  if (!openai || !process.env.OPENAI_API_KEY) return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
 
-  if (!openai || !process.env.OPENAI_API_KEY) {
-    return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
-  }
-
-  // Limit how many prior messages we include to control tokens.
-  // We'll include up to the last 20 messages (you can adjust).
   const MAX_HISTORY_TO_INCLUDE = 20;
-  const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => {
-    // show role and content only
-    return { role: h.role, content: h.content };
-  });
+  const historyToInclude = (Array.isArray(conversationHistory) ? conversationHistory.slice(-MAX_HISTORY_TO_INCLUDE) : []).map(h => ({ role: h.role, content: h.content }));
+  const convoContext = historyToInclude.length ? historyToInclude.map((m, idx) => `${idx+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n') : '(none)';
 
-  // Prepare compact categories list for GPT
   const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
 
-  // Build a short conversation context string
-  const convoContext = historyToInclude.map((m, idx) => `${idx+1}. ${m.role.toUpperCase()}: ${m.content}`).join('\n');
-
   const prompt = `
-You are an assistant for Zulu Club (a lifestyle shopping service).
+You are an assistant for Zulu Club.
 
-You are given a short conversation context (most recent messages) and the user's latest message.
+You are given a short conversation context and the user's latest message.
 Use the conversation context to determine intent and product category matches.
 
 Conversation context (most recent first):
-${convoContext || '(none)'}
+${convoContext}
 
 Latest user message:
 "${userMessage}"
 
 Task:
 1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors".
-   - "company": general questions, greetings, store info, pop-ups, support, availability.
-   - "product": the user is asking to browse or buy items, asking what we have, searching for products/categories.
-   - "seller": queries about selling on the platform, onboarding merchants.
-   - "investors": questions about business model, revenue, funding, pitch, investment.
-
-2) If the intent is "product", pick up to 5 best-matching categories from the AVAILABLE CATEGORIES list provided (match using the "type2" field). For each match return a short reason and a relevance score between 0.0 and 1.0.
-
-3) Return ONLY valid JSON in this exact format (no extra text):
+2) If the intent is "product", pick up to 5 best-matching categories from AVAILABLE CATEGORIES (use "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
+3) Return ONLY valid JSON in this exact format:
 
 {
   "intent": "product",
   "confidence": 0.0,
-  "reason": "short explanation for the chosen intent",
+  "reason": "short explanation",
   "matches": [
     { "type2": "exact-type2-from-csv", "reason": "why it matches", "score": 0.85 }
   ]
@@ -904,8 +724,6 @@ If intent is not "product", return "matches": [].
 
 AVAILABLE CATEGORIES:
 ${JSON.stringify(csvDataForGPT, null, 2)}
-
-Be concise and return only the requested JSON.
   `;
 
   try {
@@ -939,50 +757,30 @@ Be concise and return only the requested JSON.
 
 /* -------------------------
    Company Response Generator (kept)
-   NOTE: we will pass full session.history into this when appropriate
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
-  
   const systemMessage = {
     role: "system",
-    content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
+    content: `You are a friendly and helpful customer service assistant for Zulu Club. 
     
     ZULU CLUB INFORMATION:
     ${companyInfo}
 
     IMPORTANT RESPONSE GUIDELINES:
-    1. **Keep responses conversational** and helpful
-    2. **Highlight key benefits**: 100-minute delivery, try-at-home, easy returns
-    3. **Mention availability**: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-    4. **Use emojis** to make it engaging but professional
-    5. **Keep responses under 200 characters** for WhatsApp compatibility
-    6. **Be enthusiastic and helpful**
-    7. **Direct users to our website** zulu.club for more information and shopping
+    1. Keep responses conversational and helpful
+    2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
+    3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+    4. Use emojis to make it engaging but professional
+    5. Keep responses under 200 characters for WhatsApp compatibility
     `
   };
-  
   messages.push(systemMessage);
-  
   if (conversationHistory && conversationHistory.length > 0) {
-    // conversationHistory expected to be the FULL session.history array
-    // include last up to 6 messages to reduce token usage in the assistant response
     const recentHistory = conversationHistory.slice(-6);
-    recentHistory.forEach(msg => {
-      if (msg.role && msg.content) {
-        messages.push({
-          role: msg.role,
-          content: msg.content
-        });
-      }
-    });
+    recentHistory.forEach(msg => { if (msg.role && msg.content) messages.push({ role: msg.role, content: msg.content }); });
   }
-  
-  messages.push({
-    role: "user",
-    content: userMessage
-  });
-  
+  messages.push({ role: "user", content: userMessage });
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -1003,28 +801,37 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 function isSellerOnboardQuery(userMessage) {
   if (!userMessage) return false;
   const m = userMessage.toLowerCase();
-  const triggers = [
-    'sell on', 'sell with', 'become a seller', 'become seller', 'be a seller', 'how to join', 'how to onboard',
-    'onboard', 'onboarding', 'register as seller', 'register as a seller', 'join as seller', 'become a merchant',
-    'how to sell', 'partner with', 'partner with zulu', 'seller signup', 'seller sign up', 'how to become a seller',
-    'how to register', 'apply as seller', 'apply to sell', 'sell on zulu', 'seller onboarding'
-  ];
+  const triggers = ['sell on','sell with','become a seller','become seller','be a seller','how to join','how to onboard','onboard','onboarding','register as seller','register as a seller','join as seller','become a merchant','how to sell','partner with','partner with zulu','seller signup','seller sign up','how to become a seller','how to register','apply as seller','apply to sell','sell on zulu','seller onboarding'];
   return triggers.some(t => m.includes(t));
 }
-
 function sellerOnboardMessage() {
   const link = 'https://app.zulu.club/brand';
   return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers`;
 }
 
 /* -------------------------
+   Heuristic helper - detect product words in history
+   (fallback when classifier misses product intent)
+--------------------------*/
+function recentHistoryContainsProductSignal(conversationHistory = []) {
+  if (!Array.isArray(conversationHistory) || conversationHistory.length === 0) return null;
+  // product keywords (expandable)
+  const productKeywords = ['tshirt','t-shirt','shirt','tee','jeans','pant','pants','trouser','kurta','lehenga','top','dress','saree','innerwear','jacket','sweater','shorts','t-shirt','tshir','t shrt','t shrt'];
+  // look back up to last 10 user messages
+  const recentUserMsgs = conversationHistory.slice(-10).filter(m => m.role === 'user').map(m => (m.content || '').toLowerCase());
+  for (const msg of recentUserMsgs) {
+    for (const pk of productKeywords) {
+      if (msg.includes(pk)) return true;
+    }
+  }
+  return false;
+}
+
+/* -------------------------
    Main product flow:
-   - When handling a message we will:
-     1) create/touch session
-     2) append user message to session.history
-     3) pass the FULL session.history to getChatGPTResponse so GPT can use all prior messages
-     4) append assistant response to history
-     5) do NOT clear history until session TTL expires
+   - We now pass full conversationHistory into classifier & matcher.
+   - If classifier says product -> use its matches
+   - If classifier doesn't say product but recent history contains product keywords -> force product flow using findGptMatchedCategories over combined prior user messages + latest
 --------------------------*/
 async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -1032,61 +839,51 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
   }
 
   try {
-    // Quick explicit onboarding check (still useful for very specific phrases)
-    if (isSellerOnboardQuery(userMessage)) {
-      return sellerOnboardMessage();
-    }
+    if (isSellerOnboardQuery(userMessage)) return sellerOnboardMessage();
 
-    // >>> Pass conversationHistory into classifier so it uses previous messages
+    // 1) classifier receives conversationHistory (so it can use previous messages)
     const classification = await classifyAndMatchWithGPT(userMessage, conversationHistory);
-    const intent = classification.intent || 'company';
-
-    // Debug logs (comment out in production if noisy)
+    let intent = classification.intent || 'company';
     console.log('🧠 GPT classification:', { intent: classification.intent, confidence: classification.confidence, reason: classification.reason });
 
-    // 2) Intent handling
-    if (intent === 'seller') {
-      // If GPT says 'seller', give onboarding message
-      return sellerOnboardMessage();
+    // If GPT didn't return "product" but history suggests product -> force product flow
+    if (intent !== 'product') {
+      const historyHasProduct = recentHistoryContainsProductSignal(conversationHistory);
+      if (historyHasProduct) {
+        console.log('ℹ️ Classifier did not say product but session history contains product-like messages -> forcing product flow.');
+        intent = 'product';
+      }
     }
 
-    if (intent === 'investors') {
-      // Return investors paragraph (editable)
-      return INVESTORS_PARAGRAPH.trim();
-    }
+    if (intent === 'seller') return sellerOnboardMessage();
+    if (intent === 'investors') return INVESTORS_PARAGRAPH.trim();
 
     if (intent === 'product' && galleriesData.length > 0) {
-      // Map GPT returned matches (type2 strings) to actual gallery objects
-      const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
+      // If classifier returned matches use them; otherwise run findGptMatchedCategories using conversationHistory
+      let matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
       if (matchedType2s.length > 0) {
         matchedCategories = matchedType2s.map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim())).filter(Boolean).slice(0,5);
       }
 
-      // If GPT didn't return matches, fallback to local keyword matcher
+      // If no matches from classifier, use GPT matcher with conversation history included
       if (matchedCategories.length === 0) {
-        // clothing queries prefer GPT matching (we still use findGptMatchedCategories which uses GPT)
-        if (containsClothingKeywords(userMessage)) {
-          matchedCategories = await findGptMatchedCategories(userMessage);
-        } else {
-          const keywordMatches = findKeywordMatchesInCat1(userMessage);
-          if (keywordMatches.length > 0) {
-            matchedCategories = keywordMatches;
-          } else {
-            matchedCategories = await findGptMatchedCategories(userMessage);
-          }
-        }
+        matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
       }
 
-      // IMPORTANT: infer gender from matched categories' cat_id / cat1 (your source of truth)
-      const detectedGender = inferGenderFromCategories(matchedCategories); // 'men'|'women'|'kids'|null
+      // As a last fallback, use keyword matching
+      if (matchedCategories.length === 0) {
+        const keywordMatches = findKeywordMatchesInCat1(userMessage);
+        if (keywordMatches.length > 0) matchedCategories = keywordMatches;
+      }
 
-      // find sellers using matchedCategories and detectedGender
+      // infer gender from matched categories
+      const detectedGender = inferGenderFromCategories(matchedCategories);
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // default: company conversational response
+    // default: company response (pass conversation history so it can use recent context)
     return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
 
   } catch (error) {
@@ -1097,25 +894,14 @@ async function getChatGPTResponse(userMessage, conversationHistory = [], company
 
 /* -------------------------
    Webhook + endpoints
-   (handleMessage wired to session/back-history logic)
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
-    // 1) Ensure session exists and append user message (full history persists)
     appendToSessionHistory(sessionId, 'user', userMessage);
-
-    // 2) Retrieve FULL session history and pass it to getChatGPTResponse
     const fullHistory = getFullSessionHistory(sessionId);
-
-    // 3) Get AI response (GPT functions that use conversationHistory will receive the full history)
     const aiResponse = await getChatGPTResponse(userMessage, fullHistory);
-
-    // 4) Append assistant response to session history (full persisted)
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
-
-    // 5) update lastActive (appendToSessionHistory already set lastActive), do not clear history here
     conversations[sessionId].lastActive = nowMs();
-
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message:', error);
@@ -1147,32 +933,22 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'Server is running on Vercel', 
+  res.json({
+    status: 'Server is running on Vercel',
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context',
-    stats: {
-      product_categories_loaded: galleriesData.length,
-      sellers_loaded: sellersData.length,
-      active_sessions: Object.keys(conversations).length
-    },
+    version: '6.0 - GPT-first classifier & category matcher (AI is boss) - session history + classifier context (improved)',
+    stats: { product_categories_loaded: galleriesData.length, sellers_loaded: sellersData.length, active_sessions: Object.keys(conversations).length },
     timestamp: new Date().toISOString()
   });
 });
 
 app.get('/refresh-csv', async (req, res) => {
-  try {
-    galleriesData = await loadGalleriesData();
-    sellersData = await loadSellersData();
-    res.json({ status: 'success', message: 'CSV data refreshed successfully', categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
-  } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
-  }
+  try { galleriesData = await loadGalleriesData(); sellersData = await loadSellersData(); res.json({ status: 'success', message: 'CSV data refreshed successfully', categories_loaded: galleriesData.length, sellers_loaded: sellersData.length }); }
+  catch (error) { res.status(500).json({ status: 'error', message: error.message }); }
 });
 
 app.get('/test-keyword-matching', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.status(400).json({ error: 'Missing query parameter' });
+  const { query } = req.query; if (!query) return res.status(400).json({ error: 'Missing query parameter' });
   try {
     const isClothing = containsClothingKeywords(query);
     const keywordMatches = findKeywordMatchesInCat1(query);
@@ -1180,21 +956,16 @@ app.get('/test-keyword-matching', async (req, res) => {
     const sellers = await findSellersForQuery(query, keywordMatches, detectedGender);
     const concise = buildConciseResponse(query, keywordMatches, sellers);
     res.json({ query, is_clothing_query: isClothing, detected_gender: detectedGender, keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/test-gpt-matching', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.status(400).json({ error: 'Missing query parameter' });
+  const { query } = req.query; if (!query) return res.status(400).json({ error: 'Missing query parameter' });
   try {
     const matched = await findGptMatchedCategories(query);
     const detectedGender = inferGenderFromCategories(matched);
     res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/send-test-message', async (req, res) => {
@@ -1203,9 +974,7 @@ app.post('/send-test-message', async (req, res) => {
     if (!to) return res.status(400).json({ error: 'Missing "to" in request body', example: { "to": "918368127760", "name": "Rishi", "message": "What products do you have?" } });
     const result = await sendMessage(to, name || 'Test User', message || 'Hello! This is a test message from Zulu Club AI Assistant. 🚀');
     res.json({ status: 'success', message: 'Test message sent successfully', data: result });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to send test message', details: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: 'Failed to send test message', details: error.message }); }
 });
 
 // Export for Vercel
