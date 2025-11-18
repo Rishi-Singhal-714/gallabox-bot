@@ -1,21 +1,18 @@
-// server.js - GPT-first intent + category matcher (AI is the boss)
-// Gender detection now uses category data (cat_id / cat1) as the source of truth.
-
+// server.js - Unified GPT (gpt-4o-mini) handling everything
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
-
 const { google } = require('googleapis');
 
 const app = express();
-
-// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Gallabox API configuration - use environment variables
+/* -------------------------
+   CONFIG
+--------------------------*/
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
   apiKey: process.env.GALLABOX_API_KEY,
@@ -24,27 +21,19 @@ const gallaboxConfig = {
   baseUrl: 'https://server.gallabox.com/devapi'
 };
 
-// OpenAI configuration
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
 
-// Google Sheets config (minimal, non-invasive)
-// Required env vars to enable sheet logging:
-// - GOOGLE_SHEET_ID (the spreadsheet id)
-// - GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded service account JSON)
-// Make sure the service account email has Editor access to the sheet.
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
 
-if (!GOOGLE_SHEET_ID) {
-  console.log('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
-}
-if (!SA_JSON_B64) {
-  console.log('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
-}
+if (!GOOGLE_SHEET_ID) console.log('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
+if (!SA_JSON_B64) console.log('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
 
-// Helper: get authorized sheets client (or null if not configured)
+/* -------------------------
+   Sheets helper
+--------------------------*/
 async function getSheets() {
   if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
   try {
@@ -63,7 +52,6 @@ async function getSheets() {
   }
 }
 
-// Helper: convert 1-based column number to A,B,..Z,AA...
 function colLetter(n) {
   let s = '';
   while (n > 0) {
@@ -74,7 +62,6 @@ function colLetter(n) {
   return s;
 }
 
-// Helper: write a value to a single cell
 async function writeCell(colNum, rowNum, value) {
   const sheets = await getSheets();
   if (!sheets) return;
@@ -91,17 +78,14 @@ async function writeCell(colNum, rowNum, value) {
   }
 }
 
-// Helper: append under column headerName (headerName is exact phone string). If header doesn't exist, append it at end of first row.
 async function appendUnderColumn(headerName, text) {
   const sheets = await getSheets();
   if (!sheets) return;
   try {
-    // read headers (first row)
     const headersResp = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: '1:1' });
     const headers = (headersResp.data.values && headersResp.data.values[0]) || [];
     let colIndex = headers.findIndex(h => String(h).trim() === headerName);
     if (colIndex === -1) {
-      // add header at end
       colIndex = headers.length;
       const headerCol = colLetter(colIndex + 1) + '1';
       await sheets.spreadsheets.values.update({
@@ -112,7 +96,6 @@ async function appendUnderColumn(headerName, text) {
       });
     }
     const colNum = colIndex + 1;
-    // read column values from row 2 down to find next empty row
     const colRange = `${colLetter(colNum)}2:${colLetter(colNum)}`;
     let colValues = [];
     try {
@@ -134,105 +117,37 @@ async function appendUnderColumn(headerName, text) {
   }
 }
 
-// Store conversations and CSV data
+/* -------------------------
+   Storage + CSV data
+--------------------------*/
 let conversations = {};
 let galleriesData = [];
-let sellersData = []; // sellers CSV data
+let sellersData = [];
 
 /* -------------------------
-   DOWNLOAD LINKS
+   Download links + Zulu info
 --------------------------*/
 const DOWNLOAD_LINKS = `\n\nDownload the Zulu Club app:\n• App Store: https://apps.apple.com/in/app/zulu-club/id6739531325\n• Google Play: https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer`;
 
-/* -------------------------
-   SESSION / BACK-HISTORY LOGIC
---------------------------*/
-const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
-const SESSION_CLEANUP_MS = 1000 * 60 * 5; // cleanup every 5 minutes
-const MAX_HISTORY_MESSAGES = 500; // safety cap - adjust as needed
-
-function nowMs() { return Date.now(); }
-
-function createOrTouchSession(sessionId) {
-  if (!conversations[sessionId]) {
-    conversations[sessionId] = { history: [], lastActive: nowMs() };
-  } else {
-    conversations[sessionId].lastActive = nowMs();
-  }
-  return conversations[sessionId];
-}
-
-function appendToSessionHistory(sessionId, role, content) {
-  createOrTouchSession(sessionId);
-  const entry = { role, content, ts: nowMs() };
-  conversations[sessionId].history.push(entry);
-  if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
-    conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
-  }
-  conversations[sessionId].lastActive = nowMs();
-}
-
-function getFullSessionHistory(sessionId) {
-  const s = conversations[sessionId];
-  if (!s || !s.history) return [];
-  return s.history.slice();
-}
-
-function purgeExpiredSessions() {
-  const cutoff = nowMs() - SESSION_TTL_MS;
-  const before = Object.keys(conversations).length;
-  for (const id of Object.keys(conversations)) {
-    if (!conversations[id].lastActive || conversations[id].lastActive < cutoff) {
-      delete conversations[id];
-    }
-  }
-  const after = Object.keys(conversations).length;
-  if (before !== after) console.log(`🧹 Purged ${before - after} expired sessions`);
-}
-setInterval(purgeExpiredSessions, SESSION_CLEANUP_MS);
-
-// Optional debug endpoint
-app.get('/session/:id', (req, res) => {
-  const id = req.params.id;
-  const s = conversations[id];
-  if (!s) return res.status(404).json({ error: 'No session found' });
-  res.json({ sessionId: id, lastActive: s.lastActive, historyLen: s.history.length, history: s.history });
-});
-
-/* -------------------------
-   ZULU CLUB INFORMATION
---------------------------*/
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
 
 Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
 
 Browse and shop high-quality lifestyle products across categories you love:
+- Women's Fashion, Men's Fashion, Kids, Footwear, Home Decor, Beauty & Self-Care, Accessories, Gifting.
 
-- Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more
-- Men's Fashion — shirts, tees, jackets, athleisure & more
-- Kids — clothing, toys, learning kits & accessories
-- Footwear — sneakers, heels, flats, sandals & kids shoes
-- Home Decor — showpieces, vases, lamps, aroma decor, premium home accessories
-- Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
-- Fashion Accessories — bags, jewelry, watches, sunglasses & belts
-- Lifestyle Gifting — curated gift sets & décor-based gifting
-
-And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
-
-Now live in Gurgaon
-Experience us at our pop-ups: AIPL Joy Street & AIPL Central
+Now live in Gurgaon. Pop-ups: AIPL Joy Street & AIPL Central.
 Explore & shop on zulu.club
 ${DOWNLOAD_LINKS}
 `;
 
 const INVESTORS_PARAGRAPH = `
-Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
+Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you.
 `;
 
 /* -------------------------
-   CSV loaders: galleries + sellers
-   (unchanged)
+   CSV loaders
 --------------------------*/
 async function loadGalleriesData() {
   try {
@@ -240,11 +155,7 @@ async function loadGalleriesData() {
     const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv', { timeout: 60000 });
     return new Promise((resolve, reject) => {
       const results = [];
-      if (!response.data || response.data.trim().length === 0) {
-        console.log('❌ Empty CSV data received');
-        resolve([]);
-        return;
-      }
+      if (!response.data || response.data.trim().length === 0) { console.log('❌ Empty CSV data received'); resolve([]); return; }
       const stream = Readable.from(response.data);
       stream
         .pipe(csv())
@@ -272,11 +183,7 @@ async function loadSellersData() {
     const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/sellers.csv', { timeout: 60000 });
     return new Promise((resolve, reject) => {
       const results = [];
-      if (!response.data || response.data.trim().length === 0) {
-        console.log('❌ Empty sellers CSV received');
-        resolve([]);
-        return;
-      }
+      if (!response.data || response.data.trim().length === 0) { console.log('❌ Empty sellers CSV received'); resolve([]); return; }
       const stream = Readable.from(response.data);
       stream
         .pipe(csv())
@@ -308,7 +215,51 @@ async function loadSellersData() {
 })();
 
 /* -------------------------
-   sendMessage (unchanged)
+   Session / history
+--------------------------*/
+const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
+const SESSION_CLEANUP_MS = 1000 * 60 * 5;
+const MAX_HISTORY_MESSAGES = 500;
+
+function nowMs() { return Date.now(); }
+
+function createOrTouchSession(sessionId) {
+  if (!conversations[sessionId]) {
+    conversations[sessionId] = { history: [], lastActive: nowMs() };
+  } else {
+    conversations[sessionId].lastActive = nowMs();
+  }
+  return conversations[sessionId];
+}
+function appendToSessionHistory(sessionId, role, content) {
+  createOrTouchSession(sessionId);
+  const entry = { role, content, ts: nowMs() };
+  conversations[sessionId].history.push(entry);
+  if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
+    conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
+  }
+  conversations[sessionId].lastActive = nowMs();
+}
+function getFullSessionHistory(sessionId) {
+  const s = conversations[sessionId];
+  if (!s || !s.history) return [];
+  return s.history.slice();
+}
+function purgeExpiredSessions() {
+  const cutoff = nowMs() - SESSION_TTL_MS;
+  const before = Object.keys(conversations).length;
+  for (const id of Object.keys(conversations)) {
+    if (!conversations[id].lastActive || conversations[id].lastActive < cutoff) {
+      delete conversations[id];
+    }
+  }
+  const after = Object.keys(conversations).length;
+  if (before !== after) console.log(`🧹 Purged ${before - after} expired sessions`);
+}
+setInterval(purgeExpiredSessions, SESSION_CLEANUP_MS);
+
+/* -------------------------
+   Messaging helper
 --------------------------*/
 async function sendMessage(to, name, message) {
   try {
@@ -396,7 +347,7 @@ function containsClothingKeywords(userMessage) {
 }
 
 /* -------------------------
-   Gallery keyword matching (kept)
+   Gallery keyword matching
 --------------------------*/
 function findKeywordMatchesInCat1(userMessage) {
   if (!userMessage || !galleriesData.length) return [];
@@ -429,7 +380,7 @@ function findKeywordMatchesInCat1(userMessage) {
 }
 
 /* -------------------------
-   Seller matching (kept)
+   Seller matching helpers
 --------------------------*/
 const MAX_GPT_SELLER_CHECK = 20;
 const GPT_THRESHOLD = 0.7;
@@ -492,91 +443,7 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
 }
 
 /* -------------------------
-   isQueryHome (kept)
---------------------------*/
-async function isQueryHome(userMessage) {
-  if (!openai || !process.env.OPENAI_API_KEY) return { isHome: false, score: 0 };
-  const prompt = `
-You are a classifier that decides whether a user search query is about HOME / HOME DECOR items (vases, lamps, clocks, showpieces, cushions, etc.) or NOT.
-
-USER QUERY: "${userMessage}"
-
-Answer ONLY with JSON:
-{ "is_home_score": 0.0 }
-  `;
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "system", content: "You are a concise classifier that returns only JSON with is_home_score." }, { role: "user", content: prompt }],
-      max_tokens: 50, temperature: 0.0
-    });
-    const raw = completion.choices[0].message.content.trim();
-    try {
-      const parsed = JSON.parse(raw);
-      const score = Number(parsed.is_home_score) || 0;
-      return { isHome: score >= GPT_HOME_THRESHOLD, score };
-    } catch (e) {
-      console.error('Error parsing isQueryHome JSON:', e, 'raw:', raw);
-      return { isHome: false, score: 0 };
-    }
-  } catch (err) {
-    console.error('GPT error in isQueryHome:', err);
-    return { isHome: false, score: 0 };
-  }
-}
-
-/* -------------------------
-   gptCheckSellerMaySell (kept)
---------------------------*/
-async function gptCheckSellerMaySell(userMessage, seller) {
-  if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured' };
-  const prompt = `
-You are an assistant that rates how likely a seller sells a product a user asks for.
-
-USER MESSAGE: "${userMessage}"
-
-SELLER INFORMATION:
-Store name: "${seller.store_name || ''}"
-Seller id: "${seller.seller_id || ''}"
-Seller categories: "${(seller.category_ids_array || []).join(', ')}"
-Other info (raw CSV row): ${JSON.stringify(seller.raw || {})}
-
-Question: Based on the above, how likely (0.0 - 1.0) is it that this seller sells the product the user is asking for? Provide ONLY valid JSON in the following format:
-
-{ "score": 0.0, "reason": "one-sentence reason" }
-  `;
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "system", content: "You are a concise classifier that returns only JSON {score, reason}." }, { role: "user", content: prompt }],
-      max_tokens: 150, temperature: 0.0
-    });
-    const content = completion.choices[0].message.content.trim();
-    try {
-      const parsed = JSON.parse(content);
-      return { score: Number(parsed.score) || 0, reason: parsed.reason || '' };
-    } catch (parseError) {
-      console.error('Error parsing GPT seller-check response:', parseError, 'raw:', content);
-      return { score: 0, reason: 'GPT response could not be parsed' };
-    }
-  } catch (error) {
-    console.error('Error during GPT seller-check:', error);
-    return { score: 0, reason: 'GPT error' };
-  }
-}
-
-/* -------------------------
-   helpers
---------------------------*/
-function getUserIdForSellerId(sellerId) {
-  if (!sellerId) return '';
-  const s = sellersData.find(x => (x.seller_id && String(x.seller_id) === String(sellerId)));
-  if (s && s.user_id && String(s.user_id).trim().length > 0) return String(s.user_id).trim();
-  return String(sellerId).trim();
-}
-
-/* -------------------------
-   Utility: infer gender from matched categories (cat_id / cat1)
+   inferGenderFromCategories
 --------------------------*/
 function inferGenderFromCategories(matchedCategories = []) {
   if (!Array.isArray(matchedCategories) || matchedCategories.length === 0) return null;
@@ -598,12 +465,289 @@ function inferGenderFromCategories(matchedCategories = []) {
 }
 
 /* -------------------------
-   findSellersForQuery (kept)
+   Unified OpenAI helper (gpt-4o-mini)
 --------------------------*/
+async function runOpenAIChat(messages, opts = {}) {
+  if (!openai || !process.env.OPENAI_API_KEY) {
+    throw new Error('OpenAI not configured');
+  }
+  const params = {
+    model: "gpt-4o-mini",
+    messages,
+    max_tokens: opts.max_tokens || 800,
+    temperature: typeof opts.temperature === 'number' ? opts.temperature : 0.25
+  };
+  try {
+    const completion = await openai.chat.completions.create(params);
+    return completion.choices[0].message.content.trim();
+  } catch (err) {
+    console.error('OpenAI error (runOpenAIChat):', err);
+    throw err;
+  }
+}
+
+/* -------------------------
+   Single GPT-run to handle Intent, Category matching, Seller scoring, and final reply
+--------------------------*/
+async function gptHandleAll(userMessage, conversationHistory = []) {
+  // Limit data included in prompt to avoid huge token usage.
+  const limitedGalleries = galleriesData.slice(0, 150).map(g => ({ type2: g.type2, cat1: g.cat1, cat_id: g.cat_id }));
+  const limitedSellers = sellersData.slice(0, 150).map(s => ({
+    seller_id: s.seller_id, user_id: s.user_id, store_name: s.store_name, category_ids_array: s.category_ids_array
+  }));
+
+  const system = `
+You are Zulu Club's assistant. You will receive a USER MESSAGE and recent conversation history.
+Your job: (1) decide intent (company|product|seller|investors), (2) return up to 5 category matches (type2 from provided categories) with reason+score, (3) return up to 8 candidate sellers with score+one-line reason, and (4) produce a short conversational reply for the user (<= 300 chars) that can be returned directly to WhatsApp.
+Important: Return ONLY valid JSON (no markdown). Use numeric scores 0.0-1.0.
+Fields required in JSON:
+{
+  "intent": "<company|product|seller|investors>",
+  "intent_confidence": 0.0,
+  "category_matches": [
+    { "type2": "...", "reason": "...", "score": 0.0 }
+  ],
+  "seller_matches": [
+    { "seller_id": "...", "store_name": "...", "score": 0.0, "reason": "..." }
+  ],
+  "is_home_score": 0.0,
+  "final_reply": "user-facing reply string"
+}
+Use the provided CATEGORIES and SELLERS to ground matches. If you cannot find matches, return empty arrays but still produce a helpful final_reply.
+  `;
+
+  const messages = [{ role: 'system', content: system }];
+
+  // Include recent history (converted to 'user'/'assistant')
+  const histToInclude = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+  for (const h of histToInclude) {
+    const role = (h.role === 'assistant') ? 'assistant' : 'user';
+    messages.push({ role, content: h.content });
+  }
+
+  const userPrompt = `
+USER MESSAGE: """${String(userMessage).replace(/"/g, '\\"')}"""
+
+AVAILABLE_CATEGORIES JSON:
+${JSON.stringify(limitedGalleries, null, 2)}
+
+AVAILABLE_SELLERS JSON:
+${JSON.stringify(limitedSellers, null, 2)}
+
+Now produce the required JSON object only.
+  `;
+  messages.push({ role: 'user', content: userPrompt });
+
+  try {
+    const raw = await runOpenAIChat(messages, { max_tokens: 1200, temperature: 0.2 });
+    try {
+      const parsed = JSON.parse(raw);
+      parsed.intent = parsed.intent || 'company';
+      parsed.intent_confidence = Number(parsed.intent_confidence || 0.0);
+      parsed.category_matches = Array.isArray(parsed.category_matches) ? parsed.category_matches.slice(0,5) : [];
+      parsed.seller_matches = Array.isArray(parsed.seller_matches) ? parsed.seller_matches.slice(0,8) : [];
+      parsed.is_home_score = Number(parsed.is_home_score || 0.0);
+      parsed.final_reply = String(parsed.final_reply || '').trim();
+      return parsed;
+    } catch (parseErr) {
+      console.warn('gptHandleAll: failed JSON parse, raw response:', raw);
+      return {
+        intent: 'company', intent_confidence: 0.0,
+        category_matches: [], seller_matches: [], is_home_score: 0.0,
+        final_reply: raw.substring(0, 1500)
+      };
+    }
+  } catch (err) {
+    console.error('gptHandleAll error:', err);
+    return {
+      intent: 'company', intent_confidence: 0.0,
+      category_matches: [], seller_matches: [], is_home_score: 0.0,
+      final_reply: `Hi! We're Zulu Club — shop at zulu.club or visit our pop-ups in Gurgaon.`
+    };
+  }
+}
+
+/* -------------------------
+   Lightweight helpers still used
+--------------------------*/
+function urlEncodeType2(t) {
+  if (!t) return '';
+  return encodeURIComponent(t.trim().replace(/\s+/g, ' ')).replace(/%20/g, '%20');
+}
+
+function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}) {
+  const galleries = (galleryMatches && galleryMatches.length) ? galleryMatches.slice(0,5) : galleriesData.slice(0,5);
+  const sellersList = [];
+  const addSeller = (s) => {
+    if (!s) return;
+    const id = s.user_id || s.seller_id || '';
+    if (!id) return;
+    if (!sellersList.some(x => (x.user_id || x.seller_id) === id)) sellersList.push(s);
+  };
+  (sellersObj.by_type2 || []).forEach(addSeller);
+  (sellersObj.by_category || []).forEach(addSeller);
+  (sellersObj.by_gpt || []).forEach(item => addSeller(item.seller));
+  const sellersToShow = sellersList.slice(0,5);
+  let msg = `Based on your interest in "${userMessage}":\n`;
+  if (galleries.length) {
+    msg += `\nGalleries:\n`;
+    galleries.slice(0,5).forEach((g, i) => {
+      const t = g.type2 || '';
+      const link = `app.zulu.club/${urlEncodeType2(t)}`;
+      msg += `${i+1}. ${t} — ${link}\n`;
+    });
+  } else msg += `\nGalleries:\nNone\n`;
+  msg += `\nSellers:\n`;
+  if (sellersToShow.length) {
+    sellersToShow.forEach((s, i) => {
+      const name = s.store_name || s.seller_id || `Seller ${i+1}`;
+      const id = s.user_id || s.seller_id || '';
+      const link = id ? `app.zulu.club/sellerassets/${id}` : '';
+      msg += `${i+1}. ${name}${link ? ` — ${link}` : ''}\n`;
+    });
+  } else msg += `None\n`;
+  msg += DOWNLOAD_LINKS;
+  return msg.trim();
+}
+
+/* -------------------------
+   Greeting / seller detection heuristics
+--------------------------*/
+function isSellerOnboardQuery(userMessage) {
+  if (!userMessage) return false;
+  const m = userMessage.toLowerCase();
+  const triggers = ['sell on','sell with','become a seller','become seller','be a seller','how to join','how to onboard','onboard','onboarding','register as seller','register as a seller','join as seller','become a merchant','how to sell','partner with','partner with zulu','seller signup','seller sign up','how to become a seller','how to register','apply as seller','apply to sell','sell on zulu','seller onboarding'];
+  return triggers.some(t => m.includes(t));
+}
+
+function sellerOnboardMessage() {
+  const link = 'https://app.zulu.club/brand';
+  return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers${DOWNLOAD_LINKS}`;
+}
+
+function isGreetingMessage(msg) {
+  if (!msg) return false;
+  const m = msg.toLowerCase().trim();
+  const greetings = ['hi','hello','hey','good morning','good afternoon','good evening','hola','namaste'];
+  for (const g of greetings) {
+    if (m === g) return true;
+    if (m.startsWith(g + ' ') || m.startsWith(g + ',')) return true;
+  }
+  return false;
+}
+
+/* -------------------------
+   Recent history product hint
+--------------------------*/
+function recentHistoryContainsProductSignal(conversationHistory = []) {
+  if (!Array.isArray(conversationHistory) || conversationHistory.length === 0) return null;
+  const productKeywords = ['tshirt','t-shirt','shirt','tee','jeans','pant','pants','trouser','kurta','lehenga','top','dress','saree','innerwear','jacket','sweater','shorts','tshir','t shrt'];
+  const recentUserMsgs = conversationHistory.slice(-10).filter(m => m.role === 'user').map(m => (m.content || '').toLowerCase());
+  for (const msg of recentUserMsgs) {
+    for (const pk of productKeywords) {
+      if (msg.includes(pk)) return true;
+    }
+  }
+  return false;
+}
+
+/* -------------------------
+   Main response flow (delegates to gptHandleAll)
+--------------------------*/
+async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
+  if (!process.env.OPENAI_API_KEY) {
+    return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
+  }
+
+  try {
+    // Quick heuristics
+    if (isSellerOnboardQuery(userMessage)) return sellerOnboardMessage();
+    if (isGreetingMessage(userMessage)) {
+      // Let GPT produce greeting via unified handler for consistency
+      const gptResult = await gptHandleAll(userMessage, conversationHistory);
+      const finalReply = (gptResult && gptResult.final_reply) ? `${gptResult.final_reply}${DOWNLOAD_LINKS}` : `${await generateCompanyResponse(userMessage, conversationHistory, companyInfo)}`;
+      return finalReply;
+    }
+
+    // Primary: let GPT do everything
+    const gptResult = await gptHandleAll(userMessage, conversationHistory);
+
+    // If GPT indicates investors or seller intent, fast-route
+    if (gptResult.intent === 'investors') {
+      return `${INVESTORS_PARAGRAPH.trim()}${DOWNLOAD_LINKS}`;
+    }
+    if (gptResult.intent === 'seller') {
+      return sellerOnboardMessage();
+    }
+
+    // Prefer GPT final_reply if present
+    if (gptResult && gptResult.final_reply && gptResult.final_reply.length > 0) {
+      return `${gptResult.final_reply}${DOWNLOAD_LINKS}`;
+    }
+
+    // As fallback, try classical matching flows (keyword & heuristics)
+    // 1) try keyword matches
+    const keywordMatches = findKeywordMatchesInCat1(userMessage);
+    const detectedGender = inferGenderFromCategories(keywordMatches);
+    const sellers = await findSellersForQuery(userMessage, keywordMatches, detectedGender);
+    const concise = buildConciseResponse(userMessage, keywordMatches, sellers);
+    return concise;
+
+  } catch (error) {
+    console.error('❌ getChatGPTResponse error (unified mode):', error);
+    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None${DOWNLOAD_LINKS}`;
+  }
+}
+
+/* -------------------------
+   findSellersForQuery (uses gptCheckSellerMaySell via runOpenAIChat fallback)
+--------------------------*/
+async function gptCheckSellerMaySell(userMessage, seller) {
+  if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured' };
+  const prompt = `
+You are an assistant that rates how likely a seller sells a product a user asks for.
+
+USER MESSAGE: "${userMessage}"
+
+SELLER INFORMATION:
+Store name: "${seller.store_name || ''}"
+Seller id: "${seller.seller_id || ''}"
+Seller categories: "${(seller.category_ids_array || []).join(', ')}"
+Other info (raw CSV row): ${JSON.stringify(seller.raw || {})}
+
+Question: Based on the above, how likely (0.0 - 1.0) is it that this seller sells the product the user is asking for? Provide ONLY valid JSON in the following format:
+{ "score": 0.0, "reason": "one-sentence reason" }
+  `;
+  try {
+    const messages = [
+      { role: 'system', content: 'You are a concise classifier that returns only JSON {score, reason}.' },
+      { role: 'user', content: prompt }
+    ];
+    const raw = await runOpenAIChat(messages, { max_tokens: 150, temperature: 0.0 });
+    try {
+      const parsed = JSON.parse(raw);
+      return { score: Number(parsed.score) || 0, reason: parsed.reason || '' };
+    } catch (e) {
+      console.error('Error parsing GPT seller-check response:', e, 'raw:', raw);
+      return { score: 0, reason: 'GPT response could not be parsed' };
+    }
+  } catch (error) {
+    console.error('Error during GPT seller-check:', error);
+    return { score: 0, reason: 'GPT error' };
+  }
+}
+
 async function findSellersForQuery(userMessage, galleryMatches = [], detectedGender = null) {
-  const homeCheck = await isQueryHome(userMessage);
-  const applyHomeFilter = homeCheck.isHome;
+  const homeCheck = { isHome: false, score: 0 };
+  try {
+    // Basic home check using simple keywords
+    const hc = /home|decor|vase|lamp|clock|showpiece|furniture|cushion/i;
+    homeCheck.isHome = hc.test(userMessage);
+    homeCheck.score = homeCheck.isHome ? 0.9 : 0.0;
+  } catch (e) { homeCheck.isHome = false; homeCheck.score = 0; }
+
   if (!detectedGender) detectedGender = inferGenderFromCategories(galleryMatches);
+
   const sellers_by_type2 = new Map();
   for (const gm of galleryMatches) {
     const type2 = gm.type2 || '';
@@ -613,8 +757,9 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
   const catMatches = matchSellersByCategoryIds(userMessage, detectedGender);
   const sellers_by_category = new Map();
   catMatches.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
-  if (applyHomeFilter) {
-    const homeSyns = ['home','decor','home decor','home-decor','home_decor','furniture','homeaccessories','home-accessories','home_accessories','decoratives','showpiece','showpieces','lamp','lamps','vase','vases','clock','clocks','cushion','cushions'];
+
+  if (homeCheck.isHome) {
+    const homeSyns = ['home','decor','home decor','furniture','vase','lamp','clock','showpiece','cushion','home-accessories'];
     const keepIfHome = (s) => {
       const arr = s.category_ids_array || [];
       return arr.some(c => {
@@ -625,18 +770,11 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
     for (const [k, s] of Array.from(sellers_by_type2.entries())) if (!keepIfHome(s)) sellers_by_type2.delete(k);
     for (const [k, s] of Array.from(sellers_by_category.entries())) if (!keepIfHome(s)) sellers_by_category.delete(k);
   }
+
   const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
+
   if (candidateIds.size === 0) {
-    if (applyHomeFilter) {
-      for (const s of sellersData) {
-        const arr = s.category_ids_array || [];
-        if (arr.some(c => c.includes('home') || c.includes('decor') || c.includes('furnit') || c.includes('vase') || c.includes('lamp') || c.includes('clock'))) {
-          candidateList.push(s);
-          if (candidateList.length >= MAX_GPT_SELLER_CHECK) break;
-        }
-      }
-    }
     for (let i = 0; i < Math.min(MAX_GPT_SELLER_CHECK, sellersData.length) && candidateList.length < MAX_GPT_SELLER_CHECK; i++) {
       const s = sellersData[i];
       if (!s) continue;
@@ -676,10 +814,11 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
       }
     }
   }
+
   const sellers_by_gpt = [];
   for (let i = 0; i < Math.min(candidateList.length, MAX_GPT_SELLER_CHECK); i++) {
     const seller = candidateList[i];
-    if (applyHomeFilter) {
+    if (homeCheck.isHome) {
       const arr = seller.category_ids_array || [];
       if (!arr.some(c => c.includes('home') || c.includes('decor') || c.includes('vase') || c.includes('lamp') || c.includes('clock') || c.includes('furnit'))) {
         continue;
@@ -688,260 +827,30 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
     const result = await gptCheckSellerMaySell(userMessage, seller);
     if (result.score > GPT_THRESHOLD) sellers_by_gpt.push({ seller, score: result.score, reason: result.reason });
   }
+
   const sellersType2Arr = Array.from(sellers_by_type2.values()).slice(0, 10);
   const sellersCategoryArr = Array.from(sellers_by_category.values()).slice(0, 10);
   return { by_type2: sellersType2Arr, by_category: sellersCategoryArr, by_gpt: sellers_by_gpt, homeCheck: homeCheck };
 }
 
 /* -------------------------
-   Small/concise response builder (kept) + append download links
---------------------------*/
-function urlEncodeType2(t) {
-  if (!t) return '';
-  return encodeURIComponent(t.trim().replace(/\s+/g, ' ')).replace(/%20/g, '%20');
-}
-function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}) {
-  const galleries = (galleryMatches && galleryMatches.length) ? galleryMatches.slice(0,5) : galleriesData.slice(0,5);
-  const sellersList = [];
-  const addSeller = (s) => {
-    if (!s) return;
-    const id = s.user_id || s.seller_id || '';
-    if (!id) return;
-    if (!sellersList.some(x => (x.user_id || x.seller_id) === id)) sellersList.push(s);
-  };
-  (sellersObj.by_type2 || []).forEach(addSeller);
-  (sellersObj.by_category || []).forEach(addSeller);
-  (sellersObj.by_gpt || []).forEach(item => addSeller(item.seller));
-  const sellersToShow = sellersList.slice(0,5);
-  let msg = `Based on your interest in "${userMessage}":\n`;
-  if (galleries.length) {
-    msg += `\nGalleries:\n`;
-    galleries.slice(0,5).forEach((g, i) => {
-      const t = g.type2 || '';
-      const link = `app.zulu.club/${urlEncodeType2(t)}`;
-      msg += `${i+1}. ${t} — ${link}\n`;
-    });
-  } else msg += `\nGalleries:\nNone\n`;
-  msg += `\nSellers:\n`;
-  if (sellersToShow.length) {
-    sellersToShow.forEach((s, i) => {
-      const name = s.store_name || s.seller_id || `Seller ${i+1}`;
-      const id = s.user_id || s.seller_id || '';
-      const link = id ? `app.zulu.club/sellerassets/${id}` : '';
-      msg += `${i+1}. ${name}${link ? ` — ${link}` : ''}\n`;
-    });
-  } else msg += `None\n`;
-  // append download links
-  msg += DOWNLOAD_LINKS;
-  return msg.trim();
-}
-
-/* -------------------------
-   Modified findGptMatchedCategories: send full chat history as messages[]
-   So GPT has direct access to previous user & assistant messages, not only embedded text.
-   (Kept unchanged from your prior version)
---------------------------*/
-async function findGptMatchedCategories(userMessage, conversationHistory = []) {
-  try {
-    // Build messages array: first a system instruction, then the session history, then the task prompt as user
-    const systemContent = "You are a product matching expert for Zulu Club. Use the conversation history to understand what the user wants, and return only JSON with top matches.";
-    const messagesForGPT = [{ role: 'system', content: systemContent }];
-
-    // Append recent conversation history (already stored as {role, content})
-    // Convert stored roles to OpenAI roles: 'user' or 'assistant'
-    const historyToInclude = Array.isArray(conversationHistory) ? conversationHistory.slice(-30) : [];
-    for (const h of historyToInclude) {
-      // ensure role is 'user' or 'assistant'
-      const role = (h.role === 'assistant') ? 'assistant' : 'user';
-      messagesForGPT.push({ role, content: h.content });
-    }
-
-    // Add final user instruction describing the available categories
-    const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
-    const userPrompt = `
-Using the conversation above and the user's latest message, return the top 5 matching categories from the following AVAILABLE PRODUCT CATEGORIES (use the "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
-
-AVAILABLE PRODUCT CATEGORIES:
-${JSON.stringify(csvDataForGPT, null, 2)}
-
-RESPONSE FORMAT (JSON only):
-{
-  "matches": [
-    { "type2": "exact-type2-value-from-csv", "reason": "brief explanation", "relevance_score": 0.9 }
-  ]
-}
-    `;
-    messagesForGPT.push({ role: 'user', content: userPrompt });
-
-    console.log(`🧾 findGptMatchedCategories -> sending ${messagesForGPT.length} messages to OpenAI (session history included).`);
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messagesForGPT,
-      max_tokens: 800,
-      temperature: 0.25
-    });
-
-    const responseText = completion.choices[0].message.content.trim();
-    let matches = [];
-    try {
-      matches = JSON.parse(responseText).matches || [];
-    } catch (e) {
-      console.error('Error parsing GPT product matches JSON:', e, 'raw:', responseText);
-      matches = [];
-    }
-
-    const matchedCategories = matches
-      .map(match => galleriesData.find(item => item.type2 === match.type2))
-      .filter(Boolean)
-      .slice(0,5);
-
-    return matchedCategories;
-  } catch (error) {
-    console.error('Error in findGptMatchedCategories:', error);
-    return [];
-  }
-}
-
-/* -------------------------
-   Robust classifyAndMatchWithGPT (replacement)
-   - single-message classifier
-   - few-shot examples
-   - retry with stricter prompt when parse fails or confidence is 0
---------------------------*/
-async function classifyAndMatchWithGPT(userMessage) {
-  const text = (userMessage || '').trim();
-  if (!text) return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [] };
-  if (!openai || !process.env.OPENAI_API_KEY) return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [] };
-
-  // Few-shot examples to teach the model the difference between intents.
-  // Examples are short and varied; they avoid trivial keyword-matching and show intent by intent.
-  const examples = [
-    { msg: "Hi, who are you and what do you do?", intent: "company", reason: "general greeting / ask about the company" },
-    { msg: "Tell me about Zulu Club and how it works.", intent: "company", reason: "asking for company info" },
-    { msg: "I want to invest in your startup — who should I contact and what's your runway?", intent: "investors", reason: "explicit investor interest and funding questions" },
-    { msg: "We are VCs evaluating new retail investments; request pitch deck and cap table.", intent: "investors", reason: "professional investor inquiry" },
-    { msg: "How do I list my products and join as a seller?", intent: "seller", reason: "onboarding as seller" },
-    { msg: "Show me dresses for women", intent: "product", reason: "product search" },
-    { msg: "Do you have lamps and home decor items?", intent: "product", reason: "product search (home decor)" }
-  ];
-
-  // Helper to build the prompt with examples
-  function buildPromptWithExamples(message) {
-    const lines = [];
-    lines.push("You are a concise JSON-only classifier. From the single USER MESSAGE, choose exactly one intent from: \"company\", \"product\", \"seller\", \"investors\".");
-    lines.push("Return ONLY valid JSON, with these keys: intent, confidence (0.0-1.0), reason (short). If intent is product include matches: [] or the matched type2 entries.");
-    lines.push("");
-    lines.push("Examples (USER_MESSAGE -> intent, reason):");
-    for (const ex of examples) {
-      lines.push(`USER_MESSAGE: """${ex.msg.replace(/"/g, '\\"')}""" -> intent: "${ex.intent}", reason: "${ex.reason}"`);
-    }
-    lines.push("");
-    lines.push(`Now classify this message. Be careful: DO NOT rely on simple word presence; use intent meaning. Return JSON only.`);
-    lines.push(`USER_MESSAGE: """${message.replace(/"/g, '\\"')}"""`);
-    return lines.join('\n');
-  }
-
-  // First attempt: moderate temperature, few-shot examples, explicit JSON-only instruction
-  const prompt1 = buildPromptWithExamples(text);
-  try {
-    const resp1 = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        { role: 'system', content: 'You are a strict JSON classifier. Output only JSON.' },
-        { role: 'user', content: prompt1 }
-      ],
-      max_tokens: 300,
-      temperature: 0.0
-    });
-
-    const raw1 = (resp1.choices && resp1.choices[0] && resp1.choices[0].message && resp1.choices[0].message.content) ? resp1.choices[0].message.content.trim() : '';
-    console.log('classifyAndMatchWithGPT: raw1 ->', raw1);
-
-    try {
-      const parsed = JSON.parse(raw1);
-      // ensure intent is valid
-      const intent = (parsed.intent && ['company','product','seller','investors'].includes(parsed.intent)) ? parsed.intent : 'company';
-      const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
-      const reason = parsed.reason || '';
-      const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
-      return { intent, confidence, reason, matches };
-    } catch (e) {
-      console.warn('classifyAndMatchWithGPT: parse error on first response:', e);
-      // fallthrough to retry
-    }
-  } catch (err) {
-    console.error('classifyAndMatchWithGPT: first GPT call error:', err);
-    // fallthrough to retry
-  }
-
-  // Second attempt: stricter, minimal JSON-only prompt with explicit examples mapping to INVESTORS vs COMPANY
-  const prompt2 = `
-You MUST return valid JSON only, nothing else. The JSON MUST be:
-{ "intent": "<one of company|product|seller|investors>", "confidence": 0.0, "reason": "short explanation", "matches": [] }
-
-Here are clarifying examples:
-- "I want to see your pitch deck and discuss terms" -> investors
-- "Who are you? What's Zulu Club?" -> company
-- "I'd like to sell on your platform" -> seller
-- "Show me men's t-shirts" -> product
-
-Classify this single USER MESSAGE now:
-USER_MESSAGE: """${text.replace(/"/g, '\\"')}"""
-  `;
-  try {
-    const resp2 = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        { role: 'system', content: 'You are a strict JSON-only classifier. Return exactly the JSON structure requested.' },
-        { role: 'user', content: prompt2 }
-      ],
-      max_tokens: 200,
-      temperature: 0.0
-    });
-
-    const raw2 = (resp2.choices && resp2.choices[0] && resp2.choices[0].message && resp2.choices[0].message.content) ? resp2.choices[0].message.content.trim() : '';
-    console.log('classifyAndMatchWithGPT: raw2 ->', raw2);
-
-    try {
-      const parsed2 = JSON.parse(raw2);
-      const intent = (parsed2.intent && ['company','product','seller','investors'].includes(parsed2.intent)) ? parsed2.intent : 'company';
-      const confidence = Math.max(0, Math.min(1, Number(parsed2.confidence) || 0));
-      const reason = parsed2.reason || '';
-      const matches = Array.isArray(parsed2.matches) ? parsed2.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
-      return { intent, confidence, reason, matches };
-    } catch (e2) {
-      console.warn('classifyAndMatchWithGPT: parse error on second response:', e2);
-    }
-  } catch (err2) {
-    console.error('classifyAndMatchWithGPT: second GPT call error:', err2);
-  }
-
-  // Final fallback: return company with very low confidence but include raw debug note
-  console.error('classifyAndMatchWithGPT: both attempts failed to produce valid JSON. Defaulting to company intent with 0 confidence. Consider inspecting logs.');
-  return { intent: 'company', confidence: 0.0, reason: 'failed to parse GPT responses or GPT returned low confidence', matches: [] };
-}
-
-
-/* -------------------------
-   Company Response Generator (kept, append download links)
+   generateCompanyResponse (kept, but uses runOpenAIChat)
 --------------------------*/
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
   const systemMessage = {
     role: "system",
     content: `You are a friendly and helpful customer service assistant for Zulu Club. 
-    
-    ZULU CLUB INFORMATION:
-    ${companyInfo}
+ZULU CLUB INFORMATION:
+${companyInfo}
 
-    IMPORTANT RESPONSE GUIDELINES:
-    1. Keep responses conversational and helpful
-    2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
-    3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-    4. Use emojis to make it engaging but professional
-    5. Keep responses under 200 characters for WhatsApp compatibility
-    `
+IMPORTANT RESPONSE GUIDELINES:
+1. Keep responses conversational and helpful
+2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
+3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+4. Use emojis to make it engaging but professional
+5. Keep responses under 200 characters for WhatsApp compatibility
+`
   };
   messages.push(systemMessage);
   if (conversationHistory && conversationHistory.length > 0) {
@@ -950,13 +859,8 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   }
   messages.push({ role: "user", content: userMessage });
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messages,
-      max_tokens: 300,
-      temperature: 0.6
-    });
-    const reply = completion.choices[0].message.content.trim();
+    const raw = await runOpenAIChat(messages, { max_tokens: 300, temperature: 0.6 });
+    const reply = raw.trim();
     return `${reply}${DOWNLOAD_LINKS}`;
   } catch (e) {
     console.error('Error in generateCompanyResponse:', e);
@@ -965,178 +869,23 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 }
 
 /* -------------------------
-   Seller onboarding helper (kept)
---------------------------*/
-function isSellerOnboardQuery(userMessage) {
-  if (!userMessage) return false;
-  const m = userMessage.toLowerCase();
-  const triggers = ['sell on','sell with','become a seller','become seller','be a seller','how to join','how to onboard','onboard','onboarding','register as seller','register as a seller','join as seller','become a merchant','how to sell','partner with','partner with zulu','seller signup','seller sign up','how to become a seller','how to register','apply as seller','apply to sell','sell on zulu','seller onboarding'];
-  return triggers.some(t => m.includes(t));
-}
-function sellerOnboardMessage() {
-  const link = 'https://app.zulu.club/brand';
-  return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers${DOWNLOAD_LINKS}`;
-}
-
-/* -------------------------
-   Greeting detector -> route greetings to company intent
---------------------------*/
-function isGreetingMessage(msg) {
-  if (!msg) return false;
-  const m = msg.toLowerCase().trim();
-  const greetings = ['hi','hello','hey','good morning','good afternoon','good evening','hola','namaste'];
-  for (const g of greetings) {
-    if (m === g) return true;
-    if (m.startsWith(g + ' ') || m.startsWith(g + ',')) return true;
-  }
-  return false;
-}
-
-/* -------------------------
-   Heuristic helper - detect product words in history
---------------------------*/
-function recentHistoryContainsProductSignal(conversationHistory = []) {
-  if (!Array.isArray(conversationHistory) || conversationHistory.length === 0) return null;
-  const productKeywords = ['tshirt','t-shirt','shirt','tee','jeans','pant','pants','trouser','kurta','lehenga','top','dress','saree','innerwear','jacket','sweater','shorts','tshir','t shrt'];
-  const recentUserMsgs = conversationHistory.slice(-10).filter(m => m.role === 'user').map(m => (m.content || '').toLowerCase());
-  for (const msg of recentUserMsgs) {
-    for (const pk of productKeywords) {
-      if (msg.includes(pk)) return true;
-    }
-  }
-  return false;
-}
-
-/* -------------------------
-   Intent thresholds (new)
---------------------------*/
-// Intent confidence thresholds (tweak as needed)
-const CLASSIFY_CONFIDENCE_STRONG = 0.70; // classifier confidence above this -> trust classifier
-const CLASSIFY_CONFIDENCE_WEAK = 0.40;   // below this -> definitely consider history
-
-/* -------------------------
-   Main product flow:
-   - classifier -> single-message only
-   - if classifier low confidence, allow history to nudge
-   - greetings are handled as company intent
-   - seller-onboard handled early
---------------------------*/
-async function getChatGPTResponse(userMessage, conversationHistory = [], companyInfo = ZULU_CLUB_INFO) {
-  if (!process.env.OPENAI_API_KEY) {
-    return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
-  }
-
-  try {
-    // greetings -> company flow
-    if (isGreetingMessage(userMessage)) {
-      return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
-    }
-
-    if (isSellerOnboardQuery(userMessage)) return sellerOnboardMessage();
-
-    // classifier receives only the latest message (no history)
-    const classification = await classifyAndMatchWithGPT(userMessage);
-    let intent = classification.intent || 'company';
-    const classifierConfidence = Number(classification.confidence || 0.0);
-    console.log('🧠 GPT classification (single-message):', { intent: classification.intent, confidence: classifierConfidence, reason: classification.reason });
-
-    // If classifier is strong (>= threshold), trust it immediately
-    if (classifierConfidence >= CLASSIFY_CONFIDENCE_STRONG) {
-      console.log('✅ Classifier confidence strong — honoring classifier intent.');
-      // intent stays as returned
-    } else {
-      // classifier is uncertain -> allow history to influence but only as a nudge
-      const historyHasProduct = recentHistoryContainsProductSignal(conversationHistory);
-      if (historyHasProduct) {
-        console.log('ℹ️ Classifier low confidence and session history contains product signals -> nudging intent to "product".');
-        intent = 'product';
-      } else if (classifierConfidence >= CLASSIFY_CONFIDENCE_WEAK) {
-        // medium confidence -> honor classifier but allow fallback matching
-        console.log('ℹ️ Classifier medium confidence — honoring classifier intent but will use fallback matching if product intent later required.');
-      } else {
-        // very low confidence and no history -> default to company
-        console.log('ℹ️ Classifier very low confidence and no strong history signals -> defaulting to "company".');
-        intent = classification.intent || 'company';
-      }
-    }
-
-    if (intent === 'seller') return sellerOnboardMessage();
-    if (intent === 'investors') return `${INVESTORS_PARAGRAPH.trim()}${DOWNLOAD_LINKS}`;
-
-    if (intent === 'product' && galleriesData.length > 0) {
-      // If classifier returned matches use them; otherwise run findGptMatchedCategories using conversationHistory
-      let matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
-      let matchedCategories = [];
-      if (matchedType2s.length > 0) {
-        matchedCategories = matchedType2s.map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim())).filter(Boolean).slice(0,5);
-      }
-
-      // If classifier didn't provide matches or confidence was low, use GPT matcher that can use conversation history
-      if (matchedCategories.length === 0) {
-        matchedCategories = await findGptMatchedCategories(userMessage, conversationHistory);
-      }
-
-      // As a last fallback, use keyword matching
-      if (matchedCategories.length === 0) {
-        const keywordMatches = findKeywordMatchesInCat1(userMessage);
-        if (keywordMatches.length > 0) matchedCategories = keywordMatches;
-      }
-
-      // infer gender from matched categories
-      const detectedGender = inferGenderFromCategories(matchedCategories);
-      const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
-      return buildConciseResponse(userMessage, matchedCategories, sellers);
-    }
-
-    // default: company response (pass conversation history so it can use recent context)
-    return await generateCompanyResponse(userMessage, conversationHistory, companyInfo);
-
-  } catch (error) {
-    console.error('❌ getChatGPTResponse error:', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None${DOWNLOAD_LINKS}`;
-  }
-}
-
-/* -------------------------
-   Webhook + endpoints
-   - IMPORTANT: explicit logging and session-history handling here
+   Handler that receives & processes messages
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
-    // 1) Save incoming user message to session (this ensures history is persistent)
     appendToSessionHistory(sessionId, 'user', userMessage);
+    try { await appendUnderColumn(sessionId, `USER: ${userMessage}`); } catch (e) { console.error('sheet log user failed', e); }
 
-    // NEW: log user message to Google Sheet (column = phone/sessionId)
-    try {
-      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
-    } catch (e) {
-      console.error('sheet log user failed', e);
-    }
-
-    // 2) Get the full session history and log it (for debugging)
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
-    console.log('🔁 Session history (most recent last):');
-    fullHistory.forEach((h, idx) => {
-      console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
-    });
 
-    // 3) Call main response flow — pass fullHistory so GPT sees everything as chat messages when needed
     const aiResponse = await getChatGPTResponse(userMessage, fullHistory);
 
-    // 4) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
-
-    // NEW: log assistant response to Google Sheet (same column)
-    try {
-      await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
-    } catch (e) {
-      console.error('sheet log assistant failed', e);
-    }
+    try { await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`); } catch (e) { console.error('sheet log assistant failed', e); }
 
     conversations[sessionId].lastActive = nowMs();
 
-    // 5) Return the response
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message:', error);
@@ -1144,6 +893,9 @@ async function handleMessage(sessionId, userMessage) {
   }
 }
 
+/* -------------------------
+   Webhook + endpoints
+--------------------------*/
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
@@ -1155,16 +907,11 @@ app.post('/webhook', async (req, res) => {
 
     if (userMessage && userPhone) {
       const sessionId = userPhone;
-
-      // Step-by-step debug: show that we will store the message first
       console.log(`➡️ Storing incoming message into session ${sessionId}.`);
-      // handleMessage will append user, call GPT with full session, append assistant, and return reply
       const aiResponse = await handleMessage(sessionId, userMessage);
-
       console.log(`➡️ Sending AI response to ${sessionId}. Response length: ${aiResponse.length}`);
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
-
       res.status(200).json({ status: 'success', message: 'Webhook processed successfully', processed: true });
     } else {
       console.log('❓ No valid message or phone number found in webhook');
@@ -1178,9 +925,9 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/', (req, res) => {
   res.json({
-    status: 'Server is running on Vercel',
+    status: 'Server is running',
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.1 - Intent-first classifier (single-message) + history-nudge',
+    version: 'unified-gpt-4o-mini-v1',
     stats: { product_categories_loaded: galleriesData.length, sellers_loaded: sellersData.length, active_sessions: Object.keys(conversations).length },
     timestamp: new Date().toISOString()
   });
@@ -1206,11 +953,10 @@ app.get('/test-keyword-matching', async (req, res) => {
 app.get('/test-gpt-matching', async (req, res) => {
   const { query } = req.query; if (!query) return res.status(400).json({ error: 'Missing query parameter' });
   try {
-    // For debugging: run findGptMatchedCategories using a synthetic conversation history
     const dummyHistory = [{ role: 'user', content: 'I want a tshirt' }];
-    const matched = await findGptMatchedCategories(query, dummyHistory);
-    const detectedGender = inferGenderFromCategories(matched);
-    res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
+    const matched = await gptHandleAll(query, dummyHistory);
+    const detectedGender = inferGenderFromCategories(matched.category_matches || []);
+    res.json({ query, matched_categories: matched.category_matches, categories_loaded: galleriesData.length, detected_gender: detectedGender, seller_matches: matched.seller_matches || [] });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1223,5 +969,10 @@ app.post('/send-test-message', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Failed to send test message', details: error.message }); }
 });
 
-// Export for Vercel
+// Export for Vercel or run directly
 module.exports = app;
+
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+}
