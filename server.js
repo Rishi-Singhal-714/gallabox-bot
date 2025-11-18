@@ -985,10 +985,33 @@ USER MESSAGE:
   }
 }
 
-
 /* -------------------------
    Company Response Generator (kept)
 --------------------------*/
+
+// -------------------------
+// App links (ADD)
+const APP_LINK_ANDROID = 'https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer';
+const APP_LINK_IOS = 'https://apps.apple.com/in/app/zulu-club/id6739531325';
+
+// Simple greeting detector - returns true if the message looks like a greeting
+function isGreeting(text) {
+  if (!text || typeof text !== 'string') return false;
+  const t = text.toLowerCase().trim();
+  // common short greetings; adjust if you want stricter detection
+  const greetings = ['hi', 'hello', 'hey', 'good morning', 'good evening', 'good afternoon', 'greetings', 'namaste', 'hola', 'hey there'];
+  // treat very short messages that are only a greeting or "hi!" etc.
+  const cleaned = t.replace(/[^\w\s]/g, '').trim();
+  if (greetings.includes(cleaned)) return true;
+  // also if text is just one or two characters like "hi" or "hii"
+  if (/^hi+$/i.test(cleaned)) return true;
+  // one-word salutations
+  if (greetings.some(g => cleaned === g)) return true;
+  return false;
+}
+
+// -------------------------
+// Company Response Generator (UPDATED to append app links for non-greetings)
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
   
@@ -1036,10 +1059,39 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
       max_tokens: 300,
       temperature: 0.6
     });
-    return completion.choices[0].message.content.trim();
+    let resp = completion.choices[0].message.content.trim();
+
+    // If this is a greeting (simple detection), DO NOT append links.
+    // Else append app links at the end (only if not already present).
+    try {
+      if (!isGreeting(userMessage)) {
+        const alreadyHasAndroid = resp.includes(APP_LINK_ANDROID);
+        const alreadyHasIOS = resp.includes(APP_LINK_IOS);
+        if (!alreadyHasAndroid || !alreadyHasIOS) {
+          // append in a short form at the end (kept concise)
+          const linksLineParts = [];
+          if (!alreadyHasAndroid) linksLineParts.push(`Android: ${APP_LINK_ANDROID}`);
+          if (!alreadyHasIOS) linksLineParts.push(`iOS: ${APP_LINK_IOS}`);
+          if (linksLineParts.length > 0) {
+            const linksLine = linksLineParts.join(' | ');
+            // Ensure we append after a newline for clarity
+            resp = `${resp}\n\nGet the Zulu Club app: ${linksLine}`;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error while appending app links:', e);
+    }
+
+    return resp;
   } catch (e) {
     console.error('Error in generateCompanyResponse:', e);
-    return `Hi! We're Zulu Club — shop at zulu.club or visit our pop-ups in Gurgaon.`;
+    // fallback message (append links if not a greeting)
+    let fallback = `Hi! We're Zulu Club — shop at zulu.club or visit our pop-ups in Gurgaon.`;
+    if (!isGreeting(userMessage)) {
+      fallback = `${fallback}\n\nGet the Zulu Club app: Android: ${APP_LINK_ANDROID} | iOS: ${APP_LINK_IOS}`;
+    }
+    return fallback;
   }
 }
 
