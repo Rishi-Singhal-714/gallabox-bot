@@ -7,8 +7,6 @@ const { OpenAI } = require('openai');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 
-const { google } = require('googleapis');
-
 const app = express();
 
 // Middleware
@@ -28,111 +26,6 @@ const gallaboxConfig = {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
-
-// Google Sheets config (minimal, non-invasive)
-// Required env vars to enable sheet logging:
-// - GOOGLE_SHEET_ID (the spreadsheet id)
-// - GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded service account JSON)
-// Make sure the service account email has Editor access to the sheet.
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
-const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
-
-if (!GOOGLE_SHEET_ID) {
-  console.log('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
-}
-if (!SA_JSON_B64) {
-  console.log('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
-}
-
-// Helper: get authorized sheets client (or null if not configured)
-async function getSheets() {
-  if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
-  try {
-    const keyJson = JSON.parse(Buffer.from(SA_JSON_B64, 'base64').toString('utf8'));
-    const jwt = new google.auth.JWT(
-      keyJson.client_email,
-      null,
-      keyJson.private_key,
-      ['https://www.googleapis.com/auth/spreadsheets']
-    );
-    await jwt.authorize();
-    return google.sheets({ version: 'v4', auth: jwt });
-  } catch (e) {
-    console.error('❌ Error initializing Google Sheets client:', e);
-    return null;
-  }
-}
-
-// Helper: convert 1-based column number to A,B,..Z,AA...
-function colLetter(n) {
-  let s = '';
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    s = String.fromCharCode(65 + rem) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
-}
-
-// Helper: write a value to a single cell
-async function writeCell(colNum, rowNum, value) {
-  const sheets = await getSheets();
-  if (!sheets) return;
-  const range = `${colLetter(colNum)}${rowNum}`;
-  try {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[value]] }
-    });
-  } catch (e) {
-    console.error('❌ writeCell error', e);
-  }
-}
-
-// Helper: append under column headerName (headerName is exact phone string). If header doesn't exist, append it at end of first row.
-async function appendUnderColumn(headerName, text) {
-  const sheets = await getSheets();
-  if (!sheets) return;
-  try {
-    // read headers (first row)
-    const headersResp = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: '1:1' });
-    const headers = (headersResp.data.values && headersResp.data.values[0]) || [];
-    let colIndex = headers.findIndex(h => String(h).trim() === headerName);
-    if (colIndex === -1) {
-      // add header at end
-      colIndex = headers.length;
-      const headerCol = colLetter(colIndex + 1) + '1';
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: headerCol,
-        valueInputOption: 'RAW',
-        requestBody: { values: [[headerName]] }
-      });
-    }
-    const colNum = colIndex + 1;
-    // read column values from row 2 down to find next empty row
-    const colRange = `${colLetter(colNum)}2:${colLetter(colNum)}`;
-    let colValues = [];
-    try {
-      const colResp = await sheets.spreadsheets.values.get({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: colRange,
-        majorDimension: 'COLUMNS'
-      });
-      colValues = (colResp.data.values && colResp.data.values[0]) || [];
-    } catch (e) {
-      colValues = [];
-    }
-    const nextRow = 2 + colValues.length;
-    const ts = new Date().toISOString();
-    const finalText = `${ts} | ${text}`;
-    await writeCell(colNum, nextRow, finalText);
-  } catch (e) {
-    console.error('❌ appendUnderColumn error', e);
-  }
-}
 
 // Store conversations and CSV data
 let conversations = {};
@@ -1039,13 +932,6 @@ async function handleMessage(sessionId, userMessage) {
     // 1) Save incoming user message to session (this ensures history is persistent)
     appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // NEW: log user message to Google Sheet (column = phone/sessionId)
-    try {
-      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
-    } catch (e) {
-      console.error('sheet log user failed', e);
-    }
-
     // 2) Get the full session history and log it (for debugging)
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
@@ -1059,14 +945,6 @@ async function handleMessage(sessionId, userMessage) {
 
     // 4) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
-
-    // NEW: log assistant response to Google Sheet (same column)
-    try {
-      await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
-    } catch (e) {
-      console.error('sheet log assistant failed', e);
-    }
-
     conversations[sessionId].lastActive = nowMs();
 
     // 5) Return the response
