@@ -849,15 +849,34 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
   }
 
   const sellers_by_gpt = [];
-  for (let i = 0; i < Math.min(candidateList.length, MAX_GPT_SELLER_CHECK); i++) {
-    const seller = candidateList[i];
-    // If home filter applied, skip sellers that don't have that home keyword
-    if (applyHomeFilter) {
-      const arr = seller.category_ids_array || [];
-      if (!arr.some(c => c.includes('home') || c.includes('decor') || c.includes('vase') || c.includes('lamp') || c.includes('clock') || c.includes('furnit'))) {
-        continue;
-      }
-    }
+
+const toCheck = candidateList.slice(0, MAX_GPT_SELLER_CHECK);
+
+const gptPromises = toCheck.map(async (seller) => {
+  if (applyHomeFilter) {
+    const arr = seller.category_ids_array || [];
+    const isHome = arr.some(c => 
+      c.includes("home") || c.includes("decor") || 
+      c.includes("lamp") || c.includes("vase") || 
+      c.includes("clock") || c.includes("furnit")
+    );
+    if (!isHome) return null;
+  }
+
+  const result = await gptCheckSellerMaySell(userMessage, seller);
+
+  if (result.score > GPT_THRESHOLD) {
+    return { seller, score: result.score, reason: result.reason };
+  }
+
+  return null;
+});
+
+const gptResults = await Promise.all(gptPromises);
+
+gptResults.forEach(r => {
+  if (r) sellers_by_gpt.push(r);
+});
     const result = await gptCheckSellerMaySell(userMessage, seller);
     if (result.score > GPT_THRESHOLD) {
       sellers_by_gpt.push({ seller, score: result.score, reason: result.reason });
