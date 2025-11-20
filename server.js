@@ -1532,18 +1532,9 @@ app.post('/webhook', async (req, res) => {
     if (userMessage && userPhone) {
       const sessionId = userPhone;
       console.log(`➡️ Handling message for session ${sessionId}`);
-     // 1) Send instant wait message (non-blocking)
-      sendMessage(userPhone, userName, "Please allow me 1 minute while I check this for you 😊").catch(() => {});
-      // 2) Process heavy logic in background after 500ms
-      setTimeout(async () => {
-        try {
-          const aiResponse = await handleMessage(sessionId, userMessage);
-          await sendMessage(userPhone, userName, aiResponse);
-          console.log(`✅ Final AI response sent to ${userPhone}`);
-        } catch (err) {z
-          console.error("❌ Error sending delayed AI response:", err);
-        }
-}, 500); // small delay so they see the first message
+      const aiResponse = await handleMessage(sessionId, userMessage);
+      // send back over Gallabox
+      await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
       console.log('❓ No valid message or phone number found in webhook');
