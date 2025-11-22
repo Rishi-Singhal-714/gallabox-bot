@@ -1451,21 +1451,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
-    if (intent === 'voice_form') {
-      session.voiceFormActive = true;
-      session.voiceFormStep = 0;
-      session.voiceFormData = { phone: sessionId };
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
-    }
-
-    // 0) quick onboarding detection (explicit phrase)
-    if (isSellerOnboardQuery(userMessage)) {
-      // update session history / lastDetectedIntent
-      session.lastDetectedIntent = 'seller';
-      session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
-    }
-
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
@@ -1473,10 +1458,23 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
     console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
 
+    if (intent === 'voice_form') {
+      session.voiceFormActive = true;
+      session.voiceFormStep = 0;
+      session.voiceFormData = { phone: sessionId };
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
+    }
     // 2) If classifier returned 'product' -> set session.lastDetectedIntent = 'product'
     if (intent === 'product') {
       session.lastDetectedIntent = 'product';
       session.lastDetectedIntentTs = nowMs();
+    }
+    // 0) quick onboarding detection (explicit phrase)
+    if (isSellerOnboardQuery(userMessage)) {
+      // update session history / lastDetectedIntent
+      session.lastDetectedIntent = 'seller';
+      session.lastDetectedIntentTs = nowMs();
+      return sellerOnboardMessage();
     }
 
 // ----------------------------------------------------------
