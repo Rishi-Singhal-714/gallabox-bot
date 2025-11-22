@@ -1475,36 +1475,45 @@ if (session.voiceFormActive) {
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
-    // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
-    // handle agent intent (connect to human)
-    if (intent === 'agent') {
-      session.lastDetectedIntent = 'agent';
-      session.lastDetectedIntentTs = nowMs();
+// ----------------------------------------------------------
+// handle agent intent (connect to human)
+// ----------------------------------------------------------
+if (intent === 'agent') {
 
-      // full session history to capture last 5 user messages
-      const fullHistory = getFullSessionHistory(sessionId);
+  // ❗ DO NOT allow agent escalation during the Voice Form
+  if (session.voiceFormActive === true) {
+    // Simply continue the form instead of escalating
+    return await handleVoiceForm(sessionId, userMessage, sessionId);
+  }
 
-      // create ticket (best-effort)
-      let ticketId = '';
-      try {
-        ticketId = await createAgentTicket(sessionId, fullHistory);
-      } catch (e) {
-        console.error('Error creating agent ticket:', e);
-        ticketId = generateTicketId();
-      }
+  // Normal agent flow (ONLY runs when not in voice form)
+  session.lastDetectedIntent = 'agent';
+  session.lastDetectedIntentTs = nowMs();
 
-      // Log the ticket creation in the session-specific sheet column as well
-      try {
-        await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
-      } catch (e) {
-        console.error('Failed to log agent ticket into column:', e);
-      }
+  // full session history to capture last 5 user messages
+  const fullHistory = getFullSessionHistory(sessionId);
 
-      // reply to user
-      const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
-      return reply;
-    }
+  // create ticket (best-effort)
+  let ticketId = '';
+  try {
+    ticketId = await createAgentTicket(sessionId, fullHistory);
+  } catch (e) {
+    console.error('Error creating agent ticket:', e);
+    ticketId = generateTicketId();
+  }
+
+  // Log the ticket creation in the session-specific sheet column as well
+  try {
+    await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
+  } catch (e) {
+    console.error('Failed to log agent ticket into column:', e);
+  }
+
+  // reply to user
+  const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
+  return reply;
+}
+
     if (intent === 'voice_form') {
       session.voiceFormActive = true;
       session.voiceFormStep = 0;
