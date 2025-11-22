@@ -1506,8 +1506,9 @@ if (session.voiceFormActive) {
       return reply;
     }
     if (intent === 'voice_form') {
-      session.lastDetectedIntent = 'voice_form';
-      session.lastDetectedIntentTs = Date.now();
+      session.voiceFormActive = true;
+      session.voiceFormStep = 0;
+      session.voiceFormData = { phone: sessionId };
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
