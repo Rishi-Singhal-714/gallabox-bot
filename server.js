@@ -1365,7 +1365,7 @@ function createOrTouchSession(sessionId) {
       history: [],              // full chat history: { role, content, ts }
       lastActive: nowMs(),
       lastDetectedIntent: null, // 'product' | 'company' | 'seller' | 'investors' | null
-      lastDetectedIntentTs: 0
+      lastDetectedIntentTs: 0,
       voiceFormActive: false,   // NEW
       voiceFormStep: 0,         // NEW
       voiceFormData: {}  
