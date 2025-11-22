@@ -41,10 +41,71 @@ let sellersData = []; // sellers CSV data
 // -------------------------
 // Name of the sheet/tab to store agent tickets — default to the tab you added (Sheet2)
 // Override in production with env var AGENT_TICKETS_SHEET
+
 const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Sheet2';
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
+
+// -------------------------
+// VOICE AI FORM CONFIG
+// -------------------------
+
+const VOICE_FORM_SHEET = process.env.VOICE_FORM_SHEET || 'Sheet3';
+
+const VOICE_FORM_QUESTIONS = [
+  { key: 'name', label: "Your name?" },
+  { key: 'email', label: "Your email?" },
+  { key: 'genre', label: "Preferred genre?" },
+  { key: 'dialouge', label: "Your dialogue line?" },
+  { key: 'friend_name', label: "Friend's name?" },
+  { key: 'product', label: "Product you want to gift?" },
+  { key: 'time', label: "Time to deliver output?" },
+  { key: 'comment', label: "Any optional comment?" }
+];
+
+// temp storage per session
+let voiceFormSessions = {};  
+
+async function saveVoiceFormToSheet(formData) {
+  const sheets = await getSheets();
+  if (!sheets) return;
+
+  // Ensure sheet has header
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range: `${VOICE_FORM_SHEET}!A1:J1`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[
+        "id", "phone", "name", "email", "genre", "dialogue",
+        "friend_name", "product", "time", "comment"
+      ]]
+    }
+  });
+
+  const row = [
+    formData.id,
+    formData.phone,
+    formData.name || "",
+    formData.email || "",
+    formData.genre || "",
+    formData.dialouge || "",
+    formData.friend_name || "",
+    formData.product || "",
+    formData.time || "",
+    formData.comment || ""
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range: `${VOICE_FORM_SHEET}!A:Z`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [row] }
+  });
+}
+
 
 if (!GOOGLE_SHEET_ID) {
   console.log('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
@@ -1040,12 +1101,13 @@ async function classifyAndMatchWithGPT(userMessage) {
 You are an assistant for Zulu Club (a lifestyle shopping service).
 
 Task:
-1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors", "agent".
+1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors", "agent", "voice_form".
    - "company": general questions, greetings, store info, pop-ups, support, availability.
    - "product": the user is asking to browse or buy items, asking what we have, searching for products/categories.
    - "seller": queries about selling on the platform, onboarding merchants.
    - "investors": questions about business model, revenue, funding, pitch, investment.
    - "agent": the user explicitly asks to connect to a human/agent/representative, or asks for a person to contact them (e.g., "connect me to agent", "I want a human", "talk to a person", "connect to representative").
+   - "voice_form": Trigger when user talks about voice AI, AI voice output, generating voice messages, or anything related.
 
 2) If the intent is "product", pick up to 5 best-matching categories from the AVAILABLE CATEGORIES list provided (match using the "type2" field). For each match return a short reason and a relevance score between 0.0 and 1.0.
 
@@ -1085,7 +1147,7 @@ USER MESSAGE:
     try {
       const parsed = JSON.parse(raw);
       // include 'agent' in allowed intents so classifier preserves agent when GPT returns it
-      const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent'];
+      const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent', 'voice_form'];
       const intent = (parsed.intent && allowedIntents.includes(parsed.intent)) ? parsed.intent : 'company';
       const confidence = Number(parsed.confidence) || 0.0;
       const reason = parsed.reason || '';
@@ -1106,6 +1168,42 @@ return { intent, confidence, reason, matches, reasoning };
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [], reasoning: '' };
   }
 }
+
+async function handleVoiceForm(sessionId, userMessage, phone) {
+  // if session not started → initialize
+  if (!voiceFormSessions[sessionId]) {
+    voiceFormSessions[sessionId] = {
+      step: 0,
+      data: { phone },
+      id: Math.floor(10000 + Math.random() * 90000) // 5-digit id
+    };
+    return "Great! Let's create your voice AI output 🎤\n\n" + VOICE_FORM_QUESTIONS[0].label;
+  }
+
+  const session = voiceFormSessions[sessionId];
+  const step = session.step;
+
+  // store answer from previous step
+  if (step > 0) {
+    const key = VOICE_FORM_QUESTIONS[step - 1].key;
+    session.data[key] = userMessage;
+  }
+
+  // if form complete
+  if (step >= VOICE_FORM_QUESTIONS.length) {
+    session.data.id = session.id;
+    await saveVoiceFormToSheet(session.data);
+    delete voiceFormSessions[sessionId];
+
+    return `🎉 Your request is submitted!\nYour ID: *${session.id}*\nWe will deliver your voice AI output soon.`;
+  }
+
+  // ask next question
+  const nextQ = VOICE_FORM_QUESTIONS[step].label;
+  session.step++;
+  return nextQ;
+}
+
 
 /* -------------------------
    Company Response Generator (kept)
@@ -1382,6 +1480,11 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       // reply to user
       const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
       return reply;
+    }
+    if (intent === 'voice_form') {
+      session.lastDetectedIntent = 'voice_form';
+      session.lastDetectedIntentTs = Date.now();
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
