@@ -1447,6 +1447,12 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+// ----------------------------------------------------
+// VOICE FORM LOCK MODE: If active, ignore all intents
+// ----------------------------------------------------
+if (session.voiceFormActive) {
+  return await handleVoiceForm(sessionId, userMessage, sessionId);
+}
 
     // 0) quick onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
