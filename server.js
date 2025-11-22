@@ -1170,37 +1170,52 @@ return { intent, confidence, reason, matches, reasoning };
 }
 
 async function handleVoiceForm(sessionId, userMessage, phone) {
-  // if session not started → initialize
-  if (!voiceFormSessions[sessionId]) {
-    voiceFormSessions[sessionId] = {
-      step: 0,
-      data: { phone },
-      id: Math.floor(10000 + Math.random() * 90000) // 5-digit id
-    };
-    return "Great! Let's create your voice AI output 🎤\n\n" + VOICE_FORM_QUESTIONS[0].label;
+  const session = conversations[sessionId];
+
+  // Allow user to cancel
+  if (/^(stop|cancel|exit)$/i.test(userMessage.trim())) {
+    session.voiceFormActive = false;
+    session.voiceFormStep = 0;
+    session.voiceFormData = {};
+    return "Voice AI form cancelled.";
   }
 
-  const session = voiceFormSessions[sessionId];
-  const step = session.step;
+  // If form not started → initialize
+  if (!session.voiceFormActive) {
+    session.voiceFormActive = true;
+    session.voiceFormStep = 0;
+    session.voiceFormData = { phone };
 
-  // store answer from previous step
-  if (step > 0) {
-    const key = VOICE_FORM_QUESTIONS[step - 1].key;
-    session.data[key] = userMessage;
+    return (
+      "Great! Let's create your voice AI output 🎤\n\n" +
+      VOICE_FORM_QUESTIONS[0].label
+    );
   }
 
-  // if form complete
-  if (step >= VOICE_FORM_QUESTIONS.length) {
-    session.data.id = session.id;
-    await saveVoiceFormToSheet(session.data);
-    delete voiceFormSessions[sessionId];
-
-    return `🎉 Your request is submitted!\nYour ID: *${session.id}*\nWe will deliver your voice AI output soon.`;
+  // Save answer for previous question
+  if (session.voiceFormStep > 0) {
+    const key = VOICE_FORM_QUESTIONS[session.voiceFormStep - 1].key;
+    session.voiceFormData[key] = userMessage;
   }
 
-  // ask next question
-  const nextQ = VOICE_FORM_QUESTIONS[step].label;
-  session.step++;
+  // Completed all questions
+  if (session.voiceFormStep >= VOICE_FORM_QUESTIONS.length) {
+    const uniqueId = Math.floor(10000 + Math.random() * 90000);
+    session.voiceFormData.id = uniqueId;
+
+    await saveVoiceFormToSheet(session.voiceFormData);
+
+    // Reset form mode
+    session.voiceFormActive = false;
+    session.voiceFormStep = 0;
+
+    return `🎉 Your voice AI request is submitted!\nYour Request ID: *${uniqueId}*\nWe will deliver your output soon.`;
+  }
+
+  // Ask next question
+  const nextQ = VOICE_FORM_QUESTIONS[session.voiceFormStep].label;
+  session.voiceFormStep++;
+
   return nextQ;
 }
 
@@ -1351,6 +1366,9 @@ function createOrTouchSession(sessionId) {
       lastActive: nowMs(),
       lastDetectedIntent: null, // 'product' | 'company' | 'seller' | 'investors' | null
       lastDetectedIntentTs: 0
+      voiceFormActive: false,   // NEW
+      voiceFormStep: 0,         // NEW
+      voiceFormData: {}  
     };
   } else {
     conversations[sessionId].lastActive = nowMs();
@@ -1486,6 +1504,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       session.lastDetectedIntentTs = Date.now();
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
+
 
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
     if (intent === 'seller') {
