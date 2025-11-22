@@ -1447,99 +1447,89 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+
+    // ----------------------------------------------------
+    // 🔒 1. HARD LOCK — VOICE FORM ACTIVE
+    // ----------------------------------------------------
     if (session.voiceFormActive === true) {
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
-    // 1) classify only the single incoming message
+    // ----------------------------------------------------
+    // ❌ 2. NEVER check seller onboarding BEFORE classifier
+    // (it breaks the form)
+    // ----------------------------------------------------
+
+    // ----------------------------------------------------
+    // 3. CLASSIFIER
+    // ----------------------------------------------------
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
 
     console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
 
+    // ----------------------------------------------------
+    // 🔥 4. VOICE FORM START (your old code was AFTER agent & seller – WRONG)
+    // ----------------------------------------------------
     if (intent === 'voice_form') {
       session.voiceFormActive = true;
       session.voiceFormStep = 0;
       session.voiceFormData = { phone: sessionId };
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
-    // 2) If classifier returned 'product' -> set session.lastDetectedIntent = 'product'
-    if (intent === 'product') {
-      session.lastDetectedIntent = 'product';
-      session.lastDetectedIntentTs = nowMs();
-    }
-    // 0) quick onboarding detection (explicit phrase)
+
+    // ----------------------------------------------------
+    // 5. SAFE: seller onboarding (only after lock & voice start check)
+    // ----------------------------------------------------
     if (isSellerOnboardQuery(userMessage)) {
-      // update session history / lastDetectedIntent
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-// ----------------------------------------------------------
-// handle agent intent (connect to human)
-// ----------------------------------------------------------
-if (intent === 'agent') {
-
-  // ❗ DO NOT allow agent escalation during the Voice Form
-  if (session.voiceFormActive === true) {
-    // Simply continue the form instead of escalating
-    return await handleVoiceForm(sessionId, userMessage, sessionId);
-  }
-
-  // Normal agent flow (ONLY runs when not in voice form)
-  session.lastDetectedIntent = 'agent';
-  session.lastDetectedIntentTs = nowMs();
-
-  // full session history to capture last 5 user messages
-  const fullHistory = getFullSessionHistory(sessionId);
-
-  // create ticket (best-effort)
-  let ticketId = '';
-  try {
-    ticketId = await createAgentTicket(sessionId, fullHistory);
-  } catch (e) {
-    console.error('Error creating agent ticket:', e);
-    ticketId = generateTicketId();
-  }
-
-  // Log the ticket creation in the session-specific sheet column as well
-  try {
-    await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
-  } catch (e) {
-    console.error('Failed to log agent ticket into column:', e);
-  }
-
-  // reply to user
-  const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
-  return reply;
-}
-
-
-    // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
-    if (intent === 'seller') {
-      session.lastDetectedIntent = 'seller';
+    // ----------------------------------------------------
+    // 6. AGENT (blocked during voice form automatically)
+    // ----------------------------------------------------
+    if (intent === 'agent') {
+      session.lastDetectedIntent = 'agent';
       session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
+
+      const fullHistory = getFullSessionHistory(sessionId);
+
+      let ticketId = '';
+      try {
+        ticketId = await createAgentTicket(sessionId, fullHistory);
+      } catch (e) {
+        ticketId = generateTicketId();
+      }
+
+      try {
+        await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
+      } catch {}
+
+      return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
     }
 
+    // ----------------------------------------------------
+    // 7. INVESTORS
+    // ----------------------------------------------------
     if (intent === 'investors') {
       session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
       return INVESTORS_PARAGRAPH.trim();
     }
 
+    // ----------------------------------------------------
+    // 8. PRODUCT — unchanged
+    // ----------------------------------------------------
     if (intent === 'product' && galleriesData.length > 0) {
-      // mark session product timestamp if not already set
-      if (session.lastDetectedIntent !== 'product') {
-        session.lastDetectedIntent = 'product';
-        session.lastDetectedIntentTs = nowMs();
-      }
+      session.lastDetectedIntent = 'product';
+      session.lastDetectedIntentTs = nowMs();
 
-      // 4a) Try to use classifier-provided matches first (if any)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
+
       if (matchedType2s.length > 0) {
         matchedCategories = matchedType2s
           .map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim()))
@@ -1547,56 +1537,25 @@ if (intent === 'agent') {
           .slice(0,5);
       }
 
-      // 4b) If classifier didn't provide good matches, or we want refinement, call findGptMatchedCategories WITH full session history
       if (matchedCategories.length === 0) {
-        const fullHistory = getFullSessionHistory(sessionId);
-        matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
-      } else {
-        // even if we have matches from classifier, we still allow a re-run using history if the message is a short qualifier
-        // e.g., user said "i need a tshirt" (classifier returned matches), then user says "men" (classifier won't return product matches),
-        // we will call findGptMatchedCategories with full history to refine.
-        const fullHistory = getFullSessionHistory(sessionId);
-        // decide heuristically whether to refine: if current message is short/qualifier, refine
-        const isShortOrQualifier = (msg) => {
-          if (!msg) return false;
-          const trimmed = String(msg).trim();
-          if (trimmed.split(/\s+/).length <= 3) return true;
-          if (trimmed.length <= 12) return true;
-          return false;
-        };
-        if (isShortOrQualifier(userMessage)) {
-          const refined = await findGptMatchedCategories(userMessage, fullHistory);
-          if (refined && refined.length > 0) matchedCategories = refined;
-        }
+        matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
       }
 
-      // 4c) fallback local keyword matching if still empty
       if (matchedCategories.length === 0) {
-        if (containsClothingKeywords(userMessage)) {
-          const fullHistory = getFullSessionHistory(sessionId);
-          matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
-        } else {
-          const keywordMatches = findKeywordMatchesInCat1(userMessage);
-          if (keywordMatches.length > 0) {
-            matchedCategories = keywordMatches;
-          } else {
-            const fullHistory = getFullSessionHistory(sessionId);
-            matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
-          }
-        }
+        const km = findKeywordMatchesInCat1(userMessage);
+        if (km.length > 0) matchedCategories = km;
+        else matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
       }
 
-      // 4d) Determine gender from matched categories (cat_id / cat1)
       const detectedGender = inferGenderFromCategories(matchedCategories);
-
-      // 4e) Run seller matching using matchedCategories and detectedGender (this uses GPT-checks internally)
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
 
-      // Return concise response (unchanged format)
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // Default: company response — still pass full session history so assistant can use it for conversational answers
+    // ----------------------------------------------------
+    // 9. COMPANY — default
+    // ----------------------------------------------------
     return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
@@ -1604,6 +1563,7 @@ if (intent === 'agent') {
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
    - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
