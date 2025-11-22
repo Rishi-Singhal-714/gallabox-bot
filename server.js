@@ -1437,6 +1437,9 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
    - Use classifyAndMatchWithGPT (GPT is the boss) -> single-message only
    - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
    - history will not influence initial intent detection
+/* -------------------------
+   FIXED getChatGPTResponse()
+   - SUPER HARD VOICE FORM LOCK added at the top
 --------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -1447,9 +1450,26 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
+    // ----------------------------------------------------
+    // 🔒 SUPER HARD VOICE FORM LOCK (FIRST – NOTHING RUNS ABOVE THIS)
+    // ----------------------------------------------------
     if (session.voiceFormActive === true) {
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
+      console.log("🎤 Voice form ACTIVE → skipping classifier & all other logic.");
+
+      // TAKE ONLY THE ANSWER
+      const reply = await handleVoiceForm(sessionId, userMessage, sessionId);
+
+      // DO NOT run classifier  
+      // DO NOT suggest products  
+      // DO NOT detect anything  
+      // DO NOT return company reply  
+
+      return reply; // EXIT IMMEDIATELY
     }
+
+    // ----------------------------------------------------
+    // NORMAL FLOW STARTS AFTER VOICE FORM IS COMPLETED
+    // ----------------------------------------------------
 
     // 0) onboarding
     if (isSellerOnboardQuery(userMessage)) {
@@ -1468,19 +1488,19 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ✔ Email detection
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
 
-    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
+    // 🔥 STOP AGENT TRIGGER FROM EMAIL
     if (intent === "agent" && isEmail) {
       console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
-      intent = "voice_form"; // continue the form
+      intent = "voice_form"; // continue form
     }
 
-    // 2) store product intent
+    // 2) product flow intent memory
     if (intent === "product") {
       session.lastDetectedIntent = "product";
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // 💥 FIXED — Agent flow ONLY now runs if not email
+    // Agent flow
     if (intent === "agent") {
       session.lastDetectedIntent = "agent";
       session.lastDetectedIntentTs = nowMs();
@@ -1501,26 +1521,28 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
     }
 
-    // continue voice form
+    // Start voice form
     if (intent === "voice_form") {
       session.lastDetectedIntent = "voice_form";
       session.lastDetectedIntentTs = nowMs();
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
+    // Seller
     if (intent === "seller") {
       session.lastDetectedIntent = "seller";
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
+    // Investors
     if (intent === "investors") {
       session.lastDetectedIntent = "investors";
       session.lastDetectedIntentTs = nowMs();
       return INVESTORS_PARAGRAPH.trim();
     }
 
-    // Product flow
+    // PRODUCT FLOW
     if (intent === "product" && galleriesData.length > 0) {
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
@@ -1543,7 +1565,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // Default
+    // DEFAULT → company reply
     return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
@@ -1551,7 +1573,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
 
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
