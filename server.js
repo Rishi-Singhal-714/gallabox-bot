@@ -1438,6 +1438,7 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
    - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
    - history will not influence initial intent detection
 --------------------------*/
+console.log("🔥🔥 VOICE ACTIVE?", session.voiceFormActive, "USER MSG:", userMessage);
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
@@ -1447,12 +1448,14 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+    console.log("🔥🔥 VOICE ACTIVE?", session.voiceFormActive, "USER MSG:", userMessage);
 
     // ----------------------------------------------------
     // 🔒 1. HARD LOCK — VOICE FORM ACTIVE
     // ----------------------------------------------------
     if (session.voiceFormActive === true) {
       return await handleVoiceForm(sessionId, userMessage, sessionId);
+      console.log("🔒 GETCHAT LOCK ACTIVE → skipping classifier");
     }
 
     // ----------------------------------------------------
@@ -1466,8 +1469,8 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
-
-    console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
+    console.log("🔒 HANDLEMESSAGE LOCK ACTIVE → sending to handleVoiceForm()");
+    console.log("🔒 GETCHAT LOCK ACTIVE → skipping classifier");
 
     // ----------------------------------------------------
     // 🔥 4. VOICE FORM START (your old code was AFTER agent & seller – WRONG)
