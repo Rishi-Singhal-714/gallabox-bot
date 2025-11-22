@@ -1612,41 +1612,71 @@ if (intent === 'agent') {
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
+    // Make sure session exists
+    createOrTouchSession(sessionId);
+    const session = conversations[sessionId];
+
+    // ----------------------------------------------------
+    // 🔒 SUPER HARD VOICE FORM LOCK (TOP OF FUNCTION)
+    // ----------------------------------------------------
+    if (session.voiceFormActive === true) {
+
+      // Do NOT store voice-form messages in normal chat history
+      const reply = await handleVoiceForm(sessionId, userMessage, sessionId);
+
+      // Save assistant reply into history only
+      appendToSessionHistory(sessionId, 'assistant', reply);
+
+      // Log assistant reply
+      try {
+        await appendUnderColumn(sessionId, `ASSISTANT: ${reply}`);
+      } catch (e) {
+        console.error('sheet log assistant failed (voice mode)', e);
+      }
+
+      return reply; // EXIT HERE — DO NOT run classifier or product flow
+    }
+
+    // ----------------------------------------------------
+    // NORMAL (NON-FORM) FLOW
+    // ----------------------------------------------------
+
     // 1) Save incoming user message to session
     appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
+    // 2) Log incoming message to sheet
     try {
       await appendUnderColumn(sessionId, `USER: ${userMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
 
-    // 3) Debug print compact history
+    // Debug history
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    // 4) Get response using session-aware function (this will set/override session.lastDetectedIntent as needed)
+    // 4) Get response from main processor
     const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
-    // 5) Save AI response back into session history
+    // 5) Store assistant response
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
 
-    // 6) Log assistant response to Google Sheet (same column) — best-effort
+    // 6) Log assistant response to sheet
     try {
       await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
     } catch (e) {
       console.error('sheet log assistant failed', e);
     }
 
-    // 7) update lastActive (appendToSessionHistory already did this)
-    if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
+    if (conversations[sessionId]) {
+      conversations[sessionId].lastActive = nowMs();
+    }
 
-    // 8) return the assistant reply
     return aiResponse;
+
   } catch (error) {
     console.error('❌ Error handling message (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
