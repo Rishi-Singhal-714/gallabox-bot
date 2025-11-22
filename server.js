@@ -1438,72 +1438,59 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
    - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
    - history will not influence initial intent detection
 --------------------------*/
-console.log("🔥🔥 VOICE ACTIVE?", session.voiceFormActive, "USER MSG:", userMessage);
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
 
   try {
-    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
-    console.log("🔥🔥 VOICE ACTIVE?", session.voiceFormActive, "USER MSG:", userMessage);
 
-    // ----------------------------------------------------
-    // 🔒 1. HARD LOCK — VOICE FORM ACTIVE
-    // ----------------------------------------------------
     if (session.voiceFormActive === true) {
       return await handleVoiceForm(sessionId, userMessage, sessionId);
-      console.log("🔒 GETCHAT LOCK ACTIVE → skipping classifier");
     }
 
-    // ----------------------------------------------------
-    // ❌ 2. NEVER check seller onboarding BEFORE classifier
-    // (it breaks the form)
-    // ----------------------------------------------------
-
-    // ----------------------------------------------------
-    // 3. CLASSIFIER
-    // ----------------------------------------------------
-    const classification = await classifyAndMatchWithGPT(userMessage);
-    let intent = classification.intent || 'company';
-    let confidence = classification.confidence || 0;
-    console.log("🔒 HANDLEMESSAGE LOCK ACTIVE → sending to handleVoiceForm()");
-    console.log("🔒 GETCHAT LOCK ACTIVE → skipping classifier");
-
-    // ----------------------------------------------------
-    // 🔥 4. VOICE FORM START (your old code was AFTER agent & seller – WRONG)
-    // ----------------------------------------------------
-    if (intent === 'voice_form') {
-      session.voiceFormActive = true;
-      session.voiceFormStep = 0;
-      session.voiceFormData = { phone: sessionId };
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
-    }
-
-    // ----------------------------------------------------
-    // 5. SAFE: seller onboarding (only after lock & voice start check)
-    // ----------------------------------------------------
+    // 0) onboarding
     if (isSellerOnboardQuery(userMessage)) {
-      session.lastDetectedIntent = 'seller';
+      session.lastDetectedIntent = "seller";
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    // ----------------------------------------------------
-    // 6. AGENT (blocked during voice form automatically)
-    // ----------------------------------------------------
-    if (intent === 'agent') {
-      session.lastDetectedIntent = 'agent';
+    // 1) classify
+    const classification = await classifyAndMatchWithGPT(userMessage);
+    let intent = classification.intent || "company";
+    let confidence = classification.confidence || 0;
+
+    console.log("🧠 GPT classification:", { intent, confidence, reason: classification.reason });
+
+    // ✔ Email detection
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
+
+    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
+    if (intent === "agent" && isEmail) {
+      console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
+      intent = "voice_form"; // continue the form
+    }
+
+    // 2) store product intent
+    if (intent === "product") {
+      session.lastDetectedIntent = "product";
+      session.lastDetectedIntentTs = nowMs();
+    }
+
+    // 💥 FIXED — Agent flow ONLY now runs if not email
+    if (intent === "agent") {
+      session.lastDetectedIntent = "agent";
       session.lastDetectedIntentTs = nowMs();
 
-      const fullHistory = getFullSessionHistory(sessionId);
+      const history = getFullSessionHistory(sessionId);
 
-      let ticketId = '';
+      let ticketId = "";
       try {
-        ticketId = await createAgentTicket(sessionId, fullHistory);
-      } catch (e) {
+        ticketId = await createAgentTicket(sessionId, history);
+      } catch {
         ticketId = generateTicketId();
       }
 
@@ -1514,22 +1501,27 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
     }
 
-    // ----------------------------------------------------
-    // 7. INVESTORS
-    // ----------------------------------------------------
-    if (intent === 'investors') {
-      session.lastDetectedIntent = 'investors';
+    // continue voice form
+    if (intent === "voice_form") {
+      session.lastDetectedIntent = "voice_form";
+      session.lastDetectedIntentTs = nowMs();
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
+    }
+
+    if (intent === "seller") {
+      session.lastDetectedIntent = "seller";
+      session.lastDetectedIntentTs = nowMs();
+      return sellerOnboardMessage();
+    }
+
+    if (intent === "investors") {
+      session.lastDetectedIntent = "investors";
       session.lastDetectedIntentTs = nowMs();
       return INVESTORS_PARAGRAPH.trim();
     }
 
-    // ----------------------------------------------------
-    // 8. PRODUCT — unchanged
-    // ----------------------------------------------------
-    if (intent === 'product' && galleriesData.length > 0) {
-      session.lastDetectedIntent = 'product';
-      session.lastDetectedIntentTs = nowMs();
-
+    // Product flow
+    if (intent === "product" && galleriesData.length > 0) {
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
 
@@ -1537,35 +1529,29 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
         matchedCategories = matchedType2s
           .map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim()))
           .filter(Boolean)
-          .slice(0,5);
+          .slice(0, 5);
       }
 
       if (matchedCategories.length === 0) {
         matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
       }
 
-      if (matchedCategories.length === 0) {
-        const km = findKeywordMatchesInCat1(userMessage);
-        if (km.length > 0) matchedCategories = km;
-        else matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
-      }
-
       const detectedGender = inferGenderFromCategories(matchedCategories);
+
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
 
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // ----------------------------------------------------
-    // 9. COMPANY — default
-    // ----------------------------------------------------
+    // Default
     return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
-    console.error('❌ getChatGPTResponse error (session-aware):', error);
+    console.error("❌ getChatGPTResponse error:", error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
 
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
