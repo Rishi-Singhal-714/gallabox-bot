@@ -1451,6 +1451,13 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
+    if (intent === 'voice_form') {
+      session.voiceFormActive = true;
+      session.voiceFormStep = 0;
+      session.voiceFormData = { phone: sessionId };
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
+    }
+
     // 0) quick onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
       // update session history / lastDetectedIntent
@@ -1510,13 +1517,6 @@ if (intent === 'agent') {
   const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
   return reply;
 }
-
-    if (intent === 'voice_form') {
-      session.voiceFormActive = true;
-      session.voiceFormStep = 0;
-      session.voiceFormData = { phone: sessionId };
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
-    }
 
 
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
