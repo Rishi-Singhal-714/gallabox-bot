@@ -1555,10 +1555,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   }
 }
 
-
-
-
-
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
    - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
