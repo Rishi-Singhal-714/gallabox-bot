@@ -1085,16 +1085,60 @@ RESPONSE FORMAT (JSON ONLY):
    - matches: array of { type2, reason, score } when intent === 'product'
    (left unchanged: classifier uses only the single incoming message)
 --------------------------*/
-async function classifyAndMatchWithGPT(userMessage) {
+// Updated: classifyAndMatchWithGPT with session-aware voice-form protection
+async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
   const text = (userMessage || '').trim();
   if (!text) {
     return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [], reasoning: '' };
   }
 
-  // ---------- Voice-AI quick guard (RESPECTS voice-form lock) ----------
-  // If the user message clearly asks about voice AI / voice output / generating voice,
-  // return voice_form immediately so caller can enter voice form without running GPT.
-  const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice)\b/i;
+  // --- session-aware checks (if sessionId provided) ---
+  try {
+    if (sessionId && conversations && conversations[sessionId]) {
+      const sess = conversations[sessionId];
+
+      // If the session is actively inside the voice form flow, short-circuit to voice_form
+      if (sess.voiceFormActive === true) {
+        return {
+          intent: 'voice_form',
+          confidence: 1.0,
+          reason: 'Session already in voice form (session.voiceFormActive === true)',
+          matches: [],
+          reasoning: 'Session-level voice form lock — bypassing GPT.'
+        };
+      }
+
+      // If the assistant just asked the voice form first question (or is mid-form),
+      // treat the immediate user reply as voice_form (covers "after name" short replies)
+      // We check the last assistant message to see if it matches the first question prompt.
+      if (sess.history && sess.history.length > 0) {
+        const lastAssistant = [...sess.history].reverse().find(h => h.role === 'assistant');
+        if (lastAssistant && lastAssistant.content) {
+          const firstQ = (VOICE_FORM_QUESTIONS && VOICE_FORM_QUESTIONS[0] && VOICE_FORM_QUESTIONS[0].label) || 'Your name?';
+          // allow fuzzy match - lowercased substring check
+          if (String(lastAssistant.content).toLowerCase().includes(String(firstQ).toLowerCase())) {
+            // short replies (single word or two words, likely a name) should be treated as voice_form
+            const tokens = text.split(/\s+/).filter(Boolean);
+            if (tokens.length <= 3 && /^[A-Za-z.'\- ]+$/.test(text)) {
+              return {
+                intent: 'voice_form',
+                confidence: 0.95,
+                reason: 'Recent assistant prompt asked for name; treating this short reply as voice_form answer',
+                matches: [],
+                reasoning: 'Detected assistant asked voice-form first question and user replied with short alphabetic text (likely a name).'
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('session-aware guard error in classifyAndMatchWithGPT:', e);
+    // continue to other checks even if session guard fails
+  }
+
+  // ---------- Voice-AI quick guard (explicit keywords) ----------
+  const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice|voice ai form)\b/i;
   if (voiceTriggers.test(text)) {
     return {
       intent: 'voice_form',
@@ -1161,7 +1205,6 @@ USER MESSAGE:
     const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
     try {
       const parsed = JSON.parse(raw);
-      // include 'agent' in allowed intents so classifier preserves agent when GPT returns it
       const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent', 'voice_form'];
       const intent = (parsed.intent && allowedIntents.includes(parsed.intent)) ? parsed.intent : 'company';
       const confidence = Number(parsed.confidence) || 0.0;
@@ -1169,8 +1212,13 @@ USER MESSAGE:
       const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
       const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
 
-      // DEBUG: log parsed classifier output so you can inspect what GPT returned
       console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
+
+      // final safety: if GPT returned 'agent' but message looks like an email, block agent -> voice_form (your existing behavior)
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
+      if (intent === 'agent' && isEmail) {
+        return { intent: 'voice_form', confidence: 0.9, reason: 'Blocked agent because an email was detected', matches: [], reasoning: 'Email detected in user message; prefer voice_form.' };
+      }
 
       return { intent, confidence, reason, matches, reasoning };
 
@@ -1183,6 +1231,7 @@ USER MESSAGE:
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [], reasoning: '' };
   }
 }
+
 
 async function handleVoiceForm(sessionId, userMessage, phone) {
   // Make sure session exists (safety)
