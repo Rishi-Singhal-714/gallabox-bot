@@ -1233,7 +1233,8 @@ function isSellerOnboardQuery(userMessage) {
 
 function sellerOnboardMessage() {
   const link = 'https://app.zulu.club/brand';
-  return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers`;
+  const fillform = 'https://forms.gle/tvkaKncQMs29dPrPA';
+  return `Want to sell on Zulu Club? Sign up here: ${link}\\n\\nQuick steps:\\n• Fill the seller form at the link (${fillform})\\n• Our team will review & reach out\\n• Start listing products & reach Gurgaon customers`;
 }
 
 /* -------------------------
