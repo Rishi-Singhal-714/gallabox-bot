@@ -52,7 +52,97 @@ if (!GOOGLE_SHEET_ID) {
 if (!SA_JSON_B64) {
   console.log('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
 }
+// -------------------------
+// VOICE AI form: config + helpers
+// -------------------------
+// Sheet name for voice-ai form entries (override with env var if needed)
+const VOICE_FORM_SHEET = process.env.VOICE_FORM_SHEET || 'Sheet3';
 
+// The fixed questions and their target column keys (order matters)
+const VOICE_FORM_QUESTIONS = [
+  { key: 'name', prompt: 'Please provide your full name:' },
+  { key: 'email', prompt: 'Please provide your email address:' },
+  { key: 'genre', prompt: 'Which genre should the voice/dialogue be in?' },
+  { key: 'dialogue', prompt: 'Please paste/write the dialogue you want:' },
+  { key: 'friend_name', prompt: "Friend's name (who you are gifting to):" },
+  { key: 'product_you_gift', prompt: 'What product are you gifting?' },
+  { key: 'time_to_deliver_output', prompt: 'When should we deliver the output? (date/time):' },
+  { key: 'optional_comment', prompt: 'Any optional comment? (type "skip" to leave empty):' }
+];
+
+// generate a 5-digit numeric form id
+function generateFormId() {
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+// Ensure header row exists for VOICE_FORM_SHEET
+async function ensureVoiceFormHeader(sheets) {
+  try {
+    if (!sheets) return VOICE_FORM_SHEET;
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `${VOICE_FORM_SHEET}!1:1`
+    }).catch(() => null);
+    const existing = (resp && resp.data && resp.data.values && resp.data.values[0]) || [];
+    const required = ['id', 'phn_no', 'name', 'email', 'genre', 'dialogue', 'friend_name', 'product_you_gift', 'time_to_deliver_output', 'optional_comment'];
+    const needWrite = existing.length === 0 || required.some((h, i) => String(existing[i] || '').trim().toLowerCase() !== h);
+    if (needWrite) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: `${VOICE_FORM_SHEET}!1:1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [required] }
+      });
+    }
+    return VOICE_FORM_SHEET;
+  } catch (e) {
+    console.error('ensureVoiceFormHeader error', e);
+    return VOICE_FORM_SHEET;
+  }
+}
+
+// write a completed form row to Sheet3 (VOICE_FORM_SHEET)
+async function writeVoiceAIFormToSheet(formRow) {
+  const sheets = await getSheets();
+  if (!sheets) {
+    console.warn('Google Sheets not configured — cannot write voice form');
+    return false;
+  }
+  try {
+    const sheetName = await ensureVoiceFormHeader(sheets);
+    // build row in correct order
+    const row = [
+      formRow.id || '',
+      formRow.phn_no || '',
+      formRow.name || '',
+      formRow.email || '',
+      formRow.genre || '',
+      formRow.dialogue || '',
+      formRow.friend_name || '',
+      formRow.product_you_gift || '',
+      formRow.time_to_deliver_output || '',
+      formRow.optional_comment || ''
+    ];
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] }
+    });
+    return true;
+  } catch (e) {
+    console.error('writeVoiceAIFormToSheet error', e);
+    return false;
+  }
+}
+
+// Simple detector: activate when user mentions "voice ai", "voice-ai", "voice ai form", "voiceform", "voice form", or "voicebot"
+function isVoiceAIQuery(text) {
+  if (!text || typeof text !== 'string') return false;
+  const t = text.toLowerCase();
+  return /\bvoice\s*ai\b|\bvoice-ai\b|\bvoice\s*form\b|\bvoiceform\b|\bvoicebot\b|\bvoice\s*assistant\b/.test(t);
+}
 async function getSheets() {
   if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
   try {
@@ -1212,6 +1302,101 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     return fallback;
   }
 }
+// -------------------------
+// Voice AI form flow handler (session-scoped state)
+// -------------------------
+async function handleVoiceAIForm(sessionId, userMessage) {
+  createOrTouchSession(sessionId);
+  const session = conversations[sessionId];
+
+  // Normalize simple control commands
+  const trimmed = (userMessage || '').trim();
+  const lower = trimmed.toLowerCase();
+
+  // allow aborting with 'close' or 'stop'
+  if (lower === 'close' || lower === 'stop') {
+    // clear voice form state
+    session.voiceIntentActive = false;
+    session.voiceFormAnswers = {};
+    session.voiceFormQuestionIndex = 0;
+    session.voiceFormId = null;
+    // log cancellation
+    try { await appendUnderColumn(sessionId, `VOICE_AI_CANCELLED: ${new Date().toISOString()}`); } catch (e) { /* best-effort */ }
+    return 'Voice AI form has been cancelled. You may start a new request anytime.';
+  }
+
+  // if there is no active voice flow (defensive), start a new flow
+  if (!session.voiceIntentActive) {
+    // initialize
+    session.voiceIntentActive = true;
+    session.voiceFormAnswers = {};
+    session.voiceFormQuestionIndex = 0;
+    session.voiceFormId = generateFormId();
+    // log start
+    try { await appendUnderColumn(sessionId, `VOICE_AI_STARTED: ${session.voiceFormId}`); } catch (e) { /* best-effort */ }
+    // ask first question
+    return VOICE_FORM_QUESTIONS[0].prompt;
+  }
+
+  // If active: treat this userMessage as answer to current question
+  const idx = session.voiceFormQuestionIndex || 0;
+  const currentQuestion = VOICE_FORM_QUESTIONS[idx];
+  if (currentQuestion) {
+    // Save the answer (treat "skip" as empty)
+    const answer = (trimmed.toLowerCase() === 'skip') ? '' : trimmed;
+    session.voiceFormAnswers[currentQuestion.key] = answer;
+    // Log the answer (best-effort)
+    try {
+      await appendUnderColumn(sessionId, `VOICE_AI_ANSWER:${currentQuestion.key} | ${answer}`);
+    } catch (e) { /* ignore */ }
+    // move to next
+    session.voiceFormQuestionIndex = idx + 1;
+  }
+
+  // If finished
+  if (session.voiceFormQuestionIndex >= VOICE_FORM_QUESTIONS.length) {
+    // build final row
+    const formRow = {
+      id: session.voiceFormId,
+      phn_no: sessionId,
+      name: session.voiceFormAnswers.name || '',
+      email: session.voiceFormAnswers.email || '',
+      genre: session.voiceFormAnswers.genre || '',
+      dialogue: session.voiceFormAnswers.dialogue || '',
+      friend_name: session.voiceFormAnswers.friend_name || '',
+      product_you_gift: session.voiceFormAnswers.product_you_gift || '',
+      time_to_deliver_output: session.voiceFormAnswers.time_to_deliver_output || '',
+      optional_comment: session.voiceFormAnswers.optional_comment || ''
+    };
+
+    let success = false;
+    try {
+      success = await writeVoiceAIFormToSheet(formRow);
+    } catch (e) {
+      success = false;
+    }
+
+    // clear voice state
+    session.voiceIntentActive = false;
+    session.voiceFormQuestionIndex = 0;
+    session.voiceFormAnswers = {};
+    const completedId = session.voiceFormId;
+    session.voiceFormId = null;
+
+    // log completion
+    try { await appendUnderColumn(sessionId, `VOICE_AI_COMPLETED: ${completedId}`); } catch (e) { /* best-effort */ }
+
+    if (success) {
+      return `Thanks — your voice AI request has been recorded. Your form id is ${completedId}. We'll contact you shortly.`;
+    } else {
+      return `We recorded your voice AI answers locally, but failed to save to sheet. Your id is ${completedId}. Please notify support.`;
+    }
+  }
+
+  // Otherwise, ask the next question
+  const nextQ = VOICE_FORM_QUESTIONS[session.voiceFormQuestionIndex];
+  return nextQ.prompt;
+}
 
 
 /* -------------------------
@@ -1252,13 +1437,19 @@ function createOrTouchSession(sessionId) {
       history: [],              // full chat history: { role, content, ts }
       lastActive: nowMs(),
       lastDetectedIntent: null, // 'product' | 'company' | 'seller' | 'investors' | null
-      lastDetectedIntentTs: 0
+      lastDetectedIntentTs: 0,
+      // voice flow fields
+      voiceIntentActive: false,
+      voiceFormAnswers: {},
+      voiceFormQuestionIndex: 0,
+      voiceFormId: null
     };
   } else {
     conversations[sessionId].lastActive = nowMs();
   }
   return conversations[sessionId];
 }
+
 
 // append message to session history and keep it (no cleanup under 1 hour)
 function appendToSessionHistory(sessionId, role, content) {
@@ -1331,7 +1522,29 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+    // -------------------------
+    // Voice AI flow: Highest priority LOCK
+    // - If user just asked to start voice AI, begin the voice form flow.
+    // - If voice flow already active for this session, route message into handleVoiceAIForm.
+    // - While voice flow active, block/ignore all other intents until completed or cancelled with 'close'/'stop'.
+    // -------------------------
+    
+    if (isVoiceAIQuery(userMessage) && !session.voiceIntentActive) {
+      // start voice flow and ask first question
+      session.voiceIntentActive = true;
+      session.voiceFormAnswers = {};
+      session.voiceFormQuestionIndex = 0;
+      session.voiceFormId = generateFormId();
+      try { await appendUnderColumn(sessionId, `VOICE_AI_STARTED: ${session.voiceFormId}`); } catch (e) { /* best-effort */ }
+      // return first question
+      return VOICE_FORM_QUESTIONS[0].prompt;
+    }
 
+    // If already active, send message into voice flow handler and return result immediately
+    if (session.voiceIntentActive) {
+      const resp = await handleVoiceAIForm(sessionId, userMessage);
+      return resp;
+    }
     // 0) quick onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
       // update session history / lastDetectedIntent
@@ -1478,7 +1691,14 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 async function handleMessage(sessionId, userMessage) {
   try {
     // 1) Save incoming user message to session
-    appendToSessionHistory(sessionId, 'user', userMessage);
+  // If voice intent lock active, convert message to: voice_ai(intent):<message>
+  createOrTouchSession(sessionId);
+  const session = conversations[sessionId];
+  let toSaveMessage = userMessage;
+  if (session && session.voiceIntentActive) {
+    toSaveMessage = `voice_ai(intent):${userMessage}`;
+  }
+  appendToSessionHistory(sessionId, 'user', toSaveMessage);
 
     // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
