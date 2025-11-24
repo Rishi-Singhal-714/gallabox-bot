@@ -1559,43 +1559,63 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   }
 }
 
-/* -------------------------
-   Updated handleMessage to call session-aware getChatGPTResponse
---------------------------*/
+// -------------------------
+// Updated handleMessage to call session-aware getChatGPTResponse
+// - When voiceForm.active === true, store & pass the prefixed message everywhere
+// -------------------------
 async function handleMessage(sessionId, userMessage) {
   try {
-    appendToSessionHistory(sessionId, 'user', userMessage);
+    // ensure session exists so we can check voiceForm
+    createOrTouchSession(sessionId);
+    const session = conversations[sessionId];
 
+    // choose what we will store / pass downstream.
+    // if voice form active -> prefix the message everywhere (history, sheets, classifier, etc.)
+    const storedMessage = (session && session.voiceForm && session.voiceForm.active)
+      ? `voice_ai: ${userMessage}`
+      : userMessage;
+
+    // 1) Save incoming (possibly prefixed) user message to session history
+    appendToSessionHistory(sessionId, 'user', storedMessage);
+
+    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
-      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
+      await appendUnderColumn(sessionId, `USER: ${storedMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
 
+    // 3) Debug print compact history (after storing the prefixed message)
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    const aiResponse = await getChatGPTResponse(sessionId, userMessage);
+    // 4) IMPORTANT: pass the storedMessage (prefixed if voice form active) to the processor
+    const aiResponse = await getChatGPTResponse(sessionId, storedMessage);
 
+    // 5) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
 
+    // 6) Log assistant response to Google Sheet (same column) — best-effort
     try {
       await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
     } catch (e) {
       console.error('sheet log assistant failed', e);
     }
 
+    // 7) update lastActive (appendToSessionHistory already did this)
     if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
 
+    // 8) return the assistant reply
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
 
 /* -------------------------
    Webhook + endpoints
