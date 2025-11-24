@@ -10,6 +10,7 @@ const { Readable } = require('stream');
 const { google } = require('googleapis'); // ADDED: for Google Sheets logging
 
 const app = express();
+const VOICE_AI_FORM_LINK = 'https://forms.gle/CiPAk6RqWxkd8uSKA';
 
 // Middleware
 app.use(express.json());
@@ -41,71 +42,10 @@ let sellersData = []; // sellers CSV data
 // -------------------------
 // Name of the sheet/tab to store agent tickets — default to the tab you added (Sheet2)
 // Override in production with env var AGENT_TICKETS_SHEET
-
 const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Sheet2';
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
-
-// -------------------------
-// VOICE AI FORM CONFIG
-// -------------------------
-
-const VOICE_FORM_SHEET = process.env.VOICE_FORM_SHEET || 'Sheet3';
-
-const VOICE_FORM_QUESTIONS = [
-  { key: 'name', label: "Your name?" },
-  { key: 'email', label: "Your email?" },
-  { key: 'genre', label: "Preferred genre?" },
-  { key: 'dialouge', label: "Your dialogue line?" },
-  { key: 'friend_name', label: "Friend's name?" },
-  { key: 'product', label: "Product you want to gift?" },
-  { key: 'time', label: "Time to deliver output?" },
-  { key: 'comment', label: "Any optional comment?" }
-];
-
-// temp storage per session
-let voiceFormSessions = {};  
-
-async function saveVoiceFormToSheet(formData) {
-  const sheets = await getSheets();
-  if (!sheets) return;
-
-  // Ensure sheet has header
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: GOOGLE_SHEET_ID,
-    range: `${VOICE_FORM_SHEET}!A1:J1`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[
-        "id", "phone", "name", "email", "genre", "dialogue",
-        "friend_name", "product", "time", "comment"
-      ]]
-    }
-  });
-
-  const row = [
-    formData.id,
-    formData.phone,
-    formData.name || "",
-    formData.email || "",
-    formData.genre || "",
-    formData.dialouge || "",
-    formData.friend_name || "",
-    formData.product || "",
-    formData.time || "",
-    formData.comment || ""
-  ];
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: GOOGLE_SHEET_ID,
-    range: `${VOICE_FORM_SHEET}!A:Z`,
-    valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [row] }
-  });
-}
-
 
 if (!GOOGLE_SHEET_ID) {
   console.log('⚠️ GOOGLE_SHEET_ID not set — sheet logging disabled');
@@ -1101,13 +1041,13 @@ async function classifyAndMatchWithGPT(userMessage) {
 You are an assistant for Zulu Club (a lifestyle shopping service).
 
 Task:
-1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors", "agent", "voice_form".
+1) Decide the user's intent. Choose exactly one of: "company", "product", "seller", "investors", "agent", "voice_ai".
    - "company": general questions, greetings, store info, pop-ups, support, availability.
    - "product": the user is asking to browse or buy items, asking what we have, searching for products/categories.
    - "seller": queries about selling on the platform, onboarding merchants.
    - "investors": questions about business model, revenue, funding, pitch, investment.
    - "agent": the user explicitly asks to connect to a human/agent/representative, or asks for a person to contact them (e.g., "connect me to agent", "I want a human", "talk to a person", "connect to representative").
-   - "voice_form": Trigger when user talks about voice AI, AI voice output, generating voice messages, or anything related.
+   - "voice_ai": the user is asking for an AI-made song, AI music message, custom voice AI output, goofy/personalised audio, etc.
 
 2) If the intent is "product", pick up to 5 best-matching categories from the AVAILABLE CATEGORIES list provided (match using the "type2" field). For each match return a short reason and a relevance score between 0.0 and 1.0.
 
@@ -1147,7 +1087,7 @@ USER MESSAGE:
     try {
       const parsed = JSON.parse(raw);
       // include 'agent' in allowed intents so classifier preserves agent when GPT returns it
-      const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent', 'voice_form'];
+      const allowedIntents = ['company', 'product', 'seller', 'investors', 'agent', 'voice_ai'];
       const intent = (parsed.intent && allowedIntents.includes(parsed.intent)) ? parsed.intent : 'company';
       const confidence = Number(parsed.confidence) || 0.0;
       const reason = parsed.reason || '';
@@ -1168,57 +1108,6 @@ return { intent, confidence, reason, matches, reasoning };
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [], reasoning: '' };
   }
 }
-
-async function handleVoiceForm(sessionId, userMessage, phone) {
-  const session = conversations[sessionId];
-
-  // Allow user to cancel
-  if (/^(stop|cancel|exit)$/i.test(userMessage.trim())) {
-    session.voiceFormActive = false;
-    session.voiceFormStep = 0;
-    session.voiceFormData = {};
-    return "Voice AI form cancelled.";
-  }
-
-  // If form not started → initialize
-  if (!session.voiceFormActive) {
-    session.voiceFormActive = true;
-    session.voiceFormStep = 0;
-    session.voiceFormData = { phone };
-
-    return (
-      "Great! Let's create your voice AI output 🎤\n\n" +
-      VOICE_FORM_QUESTIONS[0].label
-    );
-  }
-
-  // Save answer for previous question
-  if (session.voiceFormStep > 0) {
-    const key = VOICE_FORM_QUESTIONS[session.voiceFormStep - 1].key;
-    session.voiceFormData[key] = userMessage;
-  }
-
-  // Completed all questions
-  if (session.voiceFormStep >= VOICE_FORM_QUESTIONS.length) {
-    const uniqueId = Math.floor(10000 + Math.random() * 90000);
-    session.voiceFormData.id = uniqueId;
-
-    await saveVoiceFormToSheet(session.voiceFormData);
-
-    // Reset form mode
-    session.voiceFormActive = false;
-    session.voiceFormStep = 0;
-
-    return `🎉 Your voice AI request is submitted!\nYour Request ID: *${uniqueId}*\nWe will deliver your output soon.`;
-  }
-
-  // Ask next question
-  const nextQ = VOICE_FORM_QUESTIONS[session.voiceFormStep].label;
-  session.voiceFormStep++;
-
-  return nextQ;
-}
-
 
 /* -------------------------
    Company Response Generator (kept)
@@ -1365,10 +1254,7 @@ function createOrTouchSession(sessionId) {
       history: [],              // full chat history: { role, content, ts }
       lastActive: nowMs(),
       lastDetectedIntent: null, // 'product' | 'company' | 'seller' | 'investors' | null
-      lastDetectedIntentTs: 0,
-      voiceFormActive: false,   // NEW
-      voiceFormStep: 0,         // NEW
-      voiceFormData: {}  
+      lastDetectedIntentTs: 0
     };
   } else {
     conversations[sessionId].lastActive = nowMs();
@@ -1377,20 +1263,10 @@ function createOrTouchSession(sessionId) {
 }
 
 // append message to session history and keep it (no cleanup under 1 hour)
-// NOTE: while voiceFormActive is true, DO NOT store any history (user OR assistant).
 function appendToSessionHistory(sessionId, role, content) {
   createOrTouchSession(sessionId);
-  const session = conversations[sessionId];
-  // If voice form is active, do not store any history entries (prevents history from influencing product matching)
-  if (session && session.voiceFormActive) {
-    // Optional: you can log to console for debugging
-    console.log(`🔕 History suppressed (voice mode) — skipped storing [${role}] for session ${sessionId}`);
-    return;
-  }
-
   const entry = { role, content, ts: nowMs() };
   conversations[sessionId].history.push(entry);
-
   // cap history length - keep enough messages for 1 hour
   if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
     conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
@@ -1399,17 +1275,11 @@ function appendToSessionHistory(sessionId, role, content) {
 }
 
 // return full session history (copy)
-// NOTE: return empty history while voiceFormActive is true so history-aware matchers don't see anything.
 function getFullSessionHistory(sessionId) {
   const s = conversations[sessionId];
   if (!s || !s.history) return [];
-  if (s.voiceFormActive) {
-    // Explicitly return an empty array during voice form to ensure downstream logic is not influenced.
-    return [];
-  }
   return s.history.slice();
 }
-
 
 // purge expired sessions older than TTL
 function purgeExpiredSessions() {
@@ -1448,211 +1318,222 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
   return false;
 }
 
+/* -------------------------
+   Main product flow:
+   - Use classifyAndMatchWithGPT (GPT is the boss) -> single-message only
+   - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
+   - history will not influence initial intent detection
+--------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
 
   try {
+    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    if (session.voiceFormActive === true) {
-          const transformed = `this is voice_form Intent:${userMessage}`;
-      return await handleVoiceForm(sessionId, transformed, sessionId);
-    }
-
-    // 0) onboarding
+    // 0) quick onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
-      session.lastDetectedIntent = "seller";
+      // update session history / lastDetectedIntent
+      session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    // 1) classify
+    // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
-    let intent = classification.intent || "company";
+    let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
 
-    console.log("🧠 GPT classification:", { intent, confidence, reason: classification.reason });
+    console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
 
-    // ✔ Email detection
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
-    
-    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
-    if (intent === "agent" && isEmail) {
-      console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
-    if (session && session.voiceFormActive) {
-    const transformed = `this is voice_form Intent:${userMessage}`;
-    console.log(`🔁 Voice form is already active for session ${sessionId} — forwarding message to handleVoiceForm.`);
-    return await handleVoiceForm(sessionId, transformed, sessionId);
-  }
-    }
-
-
-    // 2) store product intent
-    if (intent === "product") {
-      session.lastDetectedIntent = "product";
+    // 2) If classifier returned 'product' -> set session.lastDetectedIntent = 'product'
+    if (intent === 'product') {
+      session.lastDetectedIntent = 'product';
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // 💥 FIXED — Agent flow ONLY now runs if not email
-    if (intent === "agent") {
-      session.lastDetectedIntent = "agent";
+    // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
+    // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
+    // handle agent intent (connect to human)
+    if (intent === 'agent') {
+      session.lastDetectedIntent = 'agent';
       session.lastDetectedIntentTs = nowMs();
 
-      const history = getFullSessionHistory(sessionId);
+      // full session history to capture last 5 user messages
+      const fullHistory = getFullSessionHistory(sessionId);
 
-      let ticketId = "";
+      // create ticket (best-effort)
+      let ticketId = '';
       try {
-        ticketId = await createAgentTicket(sessionId, history);
-      } catch {
+        ticketId = await createAgentTicket(sessionId, fullHistory);
+      } catch (e) {
+        console.error('Error creating agent ticket:', e);
         ticketId = generateTicketId();
       }
 
+      // Log the ticket creation in the session-specific sheet column as well
       try {
         await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
-      } catch {}
+      } catch (e) {
+        console.error('Failed to log agent ticket into column:', e);
+      }
 
-      return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
+      // reply to user
+      const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
+      return reply;
     }
 
-    // continue voice form
-    if (intent === "voice_form") {
-      session.lastDetectedIntent = "voice_form";
-      session.lastDetectedIntentTs = nowMs();
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
-    }
+if (intent === 'voice_ai') {
+  session.lastDetectedIntent = 'voice_ai';
+  session.lastDetectedIntentTs = nowMs();
 
-    if (intent === "seller") {
-      session.lastDetectedIntent = "seller";
+  const message = 
+`🎵 *Custom AI Music Message (Premium Add-on)*
+
+For every gift above ₹1,000:
+• You give a fun/emotional dialogue or a voice note  
+• We turn it into a goofy or personalised AI song  
+• Delivered within *2 hours* on WhatsApp  
+• Adds emotional value & boosts the gifting impact ❤️
+
+Fill this quick form to create your AI song:
+${VOICE_AI_FORM_LINK}`;
+
+  return message;
+}
+
+    
+    // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
+    if (intent === 'seller') {
+      session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    if (intent === "investors") {
-      session.lastDetectedIntent = "investors";
+    if (intent === 'investors') {
+      session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
       return INVESTORS_PARAGRAPH.trim();
     }
 
-    // Product flow
-    if (intent === "product" && galleriesData.length > 0) {
-      if (session && session.voiceFormActive) {
-        const transformed = `this is voice_form Intent:${userMessage}`;
-        console.log(`🔁 Voice form is active — redirecting fallback to handleVoiceForm.`);
-        return await handleVoiceForm(sessionId, transformed, sessionId);
+    if (intent === 'product' && galleriesData.length > 0) {
+      // mark session product timestamp if not already set
+      if (session.lastDetectedIntent !== 'product') {
+        session.lastDetectedIntent = 'product';
+        session.lastDetectedIntentTs = nowMs();
       }
-      else{
+
+      // 4a) Try to use classifier-provided matches first (if any)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
-
       if (matchedType2s.length > 0) {
         matchedCategories = matchedType2s
           .map(t => galleriesData.find(g => String(g.type2).trim() === String(t).trim()))
           .filter(Boolean)
-          .slice(0, 5);
+          .slice(0,5);
       }
 
+      // 4b) If classifier didn't provide good matches, or we want refinement, call findGptMatchedCategories WITH full session history
       if (matchedCategories.length === 0) {
-        matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
+        const fullHistory = getFullSessionHistory(sessionId);
+        matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+      } else {
+        // even if we have matches from classifier, we still allow a re-run using history if the message is a short qualifier
+        // e.g., user said "i need a tshirt" (classifier returned matches), then user says "men" (classifier won't return product matches),
+        // we will call findGptMatchedCategories with full history to refine.
+        const fullHistory = getFullSessionHistory(sessionId);
+        // decide heuristically whether to refine: if current message is short/qualifier, refine
+        const isShortOrQualifier = (msg) => {
+          if (!msg) return false;
+          const trimmed = String(msg).trim();
+          if (trimmed.split(/\s+/).length <= 3) return true;
+          if (trimmed.length <= 12) return true;
+          return false;
+        };
+        if (isShortOrQualifier(userMessage)) {
+          const refined = await findGptMatchedCategories(userMessage, fullHistory);
+          if (refined && refined.length > 0) matchedCategories = refined;
+        }
       }
 
+      // 4c) fallback local keyword matching if still empty
+      if (matchedCategories.length === 0) {
+        if (containsClothingKeywords(userMessage)) {
+          const fullHistory = getFullSessionHistory(sessionId);
+          matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+        } else {
+          const keywordMatches = findKeywordMatchesInCat1(userMessage);
+          if (keywordMatches.length > 0) {
+            matchedCategories = keywordMatches;
+          } else {
+            const fullHistory = getFullSessionHistory(sessionId);
+            matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+          }
+        }
+      }
+
+      // 4d) Determine gender from matched categories (cat_id / cat1)
       const detectedGender = inferGenderFromCategories(matchedCategories);
 
+      // 4e) Run seller matching using matchedCategories and detectedGender (this uses GPT-checks internally)
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
 
+      // Return concise response (unchanged format)
       return buildConciseResponse(userMessage, matchedCategories, sellers);
-    }}
-    
-    // Default → BUT protect voice form from escaping into company response
-if (session && session.voiceFormActive) {
-  const transformed = `this is voice_form Intent:${userMessage}`;
-  console.log(`🔁 Voice form is active — redirecting fallback to handleVoiceForm.`);
-  return await handleVoiceForm(sessionId, transformed, sessionId);
-}
+    }
 
-// Otherwise normal company response
-return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
-
+    // Default: company response — still pass full session history so assistant can use it for conversational answers
+    return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
-    console.error("❌ getChatGPTResponse error:", error);
+    console.error('❌ getChatGPTResponse error (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
    - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
 --------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
-    // Make sure session exists
-    createOrTouchSession(sessionId);
-    const session = conversations[sessionId];
-
-    // ----------------------------------------------------
-    // 🔒 SUPER HARD VOICE FORM LOCK (TOP OF FUNCTION)
-    // ----------------------------------------------------
-    if (session.voiceFormActive === true) {
-          const transformed = `this is voice_form Intent:${userMessage}`;
-      // Do NOT store voice-form messages in normal chat history
-      const reply = await handleVoiceForm(sessionId, transformed, sessionId);
-
-      // Save assistant reply into history only
-      appendToSessionHistory(sessionId, 'assistant', reply);
-
-      // Log assistant reply
-      try {
-        await appendUnderColumn(sessionId, `ASSISTANT: ${reply}`);
-      } catch (e) {
-        console.error('sheet log assistant failed (voice mode)', e);
-      }
-
-      return reply; // EXIT HERE — DO NOT run classifier or product flow
-    }
-
-    // ----------------------------------------------------
-    // NORMAL (NON-FORM) FLOW
-    // ----------------------------------------------------
-
     // 1) Save incoming user message to session
     appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // 2) Log incoming message to sheet
+    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
       await appendUnderColumn(sessionId, `USER: ${userMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
 
-    // Debug history
+    // 3) Debug print compact history
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    // 4) Get response from main processor
+    // 4) Get response using session-aware function (this will set/override session.lastDetectedIntent as needed)
     const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
-    // 5) Store assistant response
+    // 5) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
 
-    // 6) Log assistant response to sheet
+    // 6) Log assistant response to Google Sheet (same column) — best-effort
     try {
       await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
     } catch (e) {
       console.error('sheet log assistant failed', e);
     }
 
-    if (conversations[sessionId]) {
-      conversations[sessionId].lastActive = nowMs();
-    }
+    // 7) update lastActive (appendToSessionHistory already did this)
+    if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
 
+    // 8) return the assistant reply
     return aiResponse;
-
   } catch (error) {
     console.error('❌ Error handling message (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
