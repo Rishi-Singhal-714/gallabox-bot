@@ -1126,13 +1126,22 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
           for (const q of (VOICE_FORM_QUESTIONS || [])) {
             const label = String(q.label || '').toLowerCase();
             if (!label) continue;
-            if (assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0])) {
+            // Use smartSimilarity for robust fuzzy match (covers paraphrases / minor edits)
+            let sim = 0;
+            try {
+              sim = smartSimilarity(assistantText, label);
+            } catch (e) {
+              sim = 0;
+            }
+            const directMatch = assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0]);
+            if (directMatch || sim >= 0.78) {
               // If the user reply looks short-ish or alphanumeric (typical of form answers), prefer voice_form
               const tokens = text.split(/\s+/).filter(Boolean);
-              if (tokens.length <= 30) {
+              if (tokens.length <= 80) {
+                console.log('🔒 classifyAndMatchWithGPT: honoring voice_form because assistant asked:', { label, assistantText, sim });
                 return {
                   intent: 'voice_form',
-                  confidence: 0.95,
+                  confidence: 0.98,
                   reason: 'Recent assistant prompt asked a voice-form question; treating reply as voice_form answer',
                   matches: [],
                   reasoning: 'Detected assistant asked voice-form question and user replied; honoring form flow.'
