@@ -1493,10 +1493,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
     }
 
-  // Otherwise (voice form not active), treat the email as the start/continuation of voice_form.
-  intent = "voice_form";
-}
-
 
     // 2) store product intent
     if (intent === "product") {
