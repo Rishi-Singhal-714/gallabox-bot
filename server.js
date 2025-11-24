@@ -1160,6 +1160,23 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
     // continue to other checks even if session guard fails
   }
 
+  // FALLBACK: If session shows partial voice form data or recently detected voice_form intent,
+  // prefer voice_form to avoid misclassifying short form answers.
+  try {
+    if (sessionId && conversations && conversations[sessionId]) {
+      const sess = conversations[sessionId];
+      const now = nowMs();
+      const recentVoiceIntent = sess.lastDetectedIntent === 'voice_form' && (now - (sess.lastDetectedIntentTs || 0) < (1000 * 60 * 10)); // 10 minutes
+      const hasPartialFormData = sess.voiceFormData && typeof sess.voiceFormData === 'object' && Object.keys(sess.voiceFormData).length > 0 && (Object.keys(sess.voiceFormData).length < (VOICE_FORM_QUESTIONS || []).length);
+      if (recentVoiceIntent || hasPartialFormData) {
+        console.log('🔁 classifyAndMatchWithGPT: fallback voice_form enforced because session shows partial/ recent voice form', { recentVoiceIntent, hasPartialFormData, sessionId });
+        return { intent: 'voice_form', confidence: 0.96, reason: 'Session indicates an in-progress voice_form', matches: [], reasoning: 'Fallback session-level guard.' };
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
   // ---------- Voice-AI quick guard (explicit keywords) ----------
   const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice|voice ai form)\b/i;
   if (voiceTriggers.test(text)) {
