@@ -1676,19 +1676,35 @@ async function handleMessage(sessionId, userMessage) {
       return firstQuestion;
     }
 
-    // If session is currently locked to voice_ai, route message to voice handler
-    const session = createOrTouchSession(sessionId);
-    if (session.lastDetectedIntent === 'voice_ai' && session.voiceState && session.voiceState.active) {
-      const reply = await handleVoiceStateMessage(sessionId, userMessage);
-      // Save AI response back into session history and sheet
-      appendToSessionHistory(sessionId, 'assistant', reply);
+  // ---- VOICE-AI LOCK: if this session is in voice mode, route message to voice handler and skip all other intent processing ----
+  const session = createOrTouchSession(sessionId);
+  if (session.lastDetectedIntent === 'voice_ai' && session.voiceState && session.voiceState.active) {
+    try {
+      // Handle voice message & get reply from voice handler
+      const voiceReply = await handleVoiceStateMessage(sessionId, userMessage);
+
+      // Save AI response back into session history (same pattern as handleMessage)
+      appendToSessionHistory(sessionId, 'assistant', voiceReply);
+
+      // Best-effort: log assistant reply into per-session sheet column
       try {
-        await appendUnderColumn(sessionId, `ASSISTANT: ${reply}`);
+        await appendUnderColumn(sessionId, `ASSISTANT: ${voiceReply}`);
       } catch (e) {
-        console.error('sheet log assistant failed', e);
+        console.error('sheet log assistant failed (voice lock):', e);
       }
-      return reply;
+
+      // Keep session lastActive updated
+      if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
+
+      // Return early — no other intent handling will run
+      return voiceReply;
+    } catch (e) {
+      console.error('Error handling voice-locked message in getChatGPTResponse:', e);
+      // On unexpected error, fall through to normal error handling below (or return a safe fallback)
+      return 'Sorry — something went wrong handling your voice session. Please type "stop" to end the session and try again.';
     }
+  }
+
 
     // -------------------------
     // Normal flow (unchanged)
