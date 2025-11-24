@@ -1377,10 +1377,20 @@ function createOrTouchSession(sessionId) {
 }
 
 // append message to session history and keep it (no cleanup under 1 hour)
+// NOTE: while voiceFormActive is true, DO NOT store any history (user OR assistant).
 function appendToSessionHistory(sessionId, role, content) {
   createOrTouchSession(sessionId);
+  const session = conversations[sessionId];
+  // If voice form is active, do not store any history entries (prevents history from influencing product matching)
+  if (session && session.voiceFormActive) {
+    // Optional: you can log to console for debugging
+    console.log(`🔕 History suppressed (voice mode) — skipped storing [${role}] for session ${sessionId}`);
+    return;
+  }
+
   const entry = { role, content, ts: nowMs() };
   conversations[sessionId].history.push(entry);
+
   // cap history length - keep enough messages for 1 hour
   if (conversations[sessionId].history.length > MAX_HISTORY_MESSAGES) {
     conversations[sessionId].history = conversations[sessionId].history.slice(-MAX_HISTORY_MESSAGES);
@@ -1389,11 +1399,17 @@ function appendToSessionHistory(sessionId, role, content) {
 }
 
 // return full session history (copy)
+// NOTE: return empty history while voiceFormActive is true so history-aware matchers don't see anything.
 function getFullSessionHistory(sessionId) {
   const s = conversations[sessionId];
   if (!s || !s.history) return [];
+  if (s.voiceFormActive) {
+    // Explicitly return an empty array during voice form to ensure downstream logic is not influenced.
+    return [];
+  }
   return s.history.slice();
 }
+
 
 // purge expired sessions older than TTL
 function purgeExpiredSessions() {
