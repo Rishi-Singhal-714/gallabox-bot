@@ -1091,6 +1091,21 @@ async function classifyAndMatchWithGPT(userMessage) {
     return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [], reasoning: '' };
   }
 
+  // ---------- Voice-AI quick guard (RESPECTS voice-form lock) ----------
+  // If the user message clearly asks about voice AI / voice output / generating voice,
+  // return voice_form immediately so caller can enter voice form without running GPT.
+  const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice)\b/i;
+  if (voiceTriggers.test(text)) {
+    return {
+      intent: 'voice_form',
+      confidence: 1.0,
+      reason: 'Local voice-form keyword matched; short-circuit to voice form',
+      matches: [],
+      reasoning: 'Detected explicit voice-form keywords; bypassing OpenAI to preserve voice-AI lock.'
+    };
+  }
+  // ---------------------------------------------------------------------
+
   if (!openai || !process.env.OPENAI_API_KEY) {
     return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [], reasoning: '' };
   }
@@ -1154,10 +1169,10 @@ USER MESSAGE:
       const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
       const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
 
-// DEBUG: log parsed classifier output so you can inspect what GPT returned
-console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
+      // DEBUG: log parsed classifier output so you can inspect what GPT returned
+      console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
 
-return { intent, confidence, reason, matches, reasoning };
+      return { intent, confidence, reason, matches, reasoning };
 
     } catch (e) {
       console.error('Error parsing classifyAndMatchWithGPT JSON:', e, 'raw:', raw);
