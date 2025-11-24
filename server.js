@@ -1487,21 +1487,11 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
     // ✔ Email detection
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
-
-// 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
-// If classifier labeled this as agent but message looks like an email, we want to treat it
-// as voice_form *only* if the voice form is NOT already active. If voice form IS active,
-// route the message directly into the active voice form handler (do not re-init or reset it).
-if (intent === "agent" && isEmail) {
-  console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
-
-  // If the session is already in voice form mode, forward the message to handleVoiceForm
-  // in the exact transformed format and return immediately to avoid restarting the flow.
-  if (session && session.voiceFormActive) {
-    const transformed = `this is voice_form Intent:${userMessage}`;
-    console.log(`🔁 Voice form already active for session ${sessionId} — forwarding transformed message to voice handler.`);
-    return await handleVoiceForm(sessionId, transformed, sessionId);
-  }
+    
+    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
+    if (intent === "agent" && isEmail) {
+      console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
+    }
 
   // Otherwise (voice form not active), treat the email as the start/continuation of voice_form.
   intent = "voice_form";
