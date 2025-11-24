@@ -1083,13 +1083,22 @@ RESPONSE FORMAT (JSON ONLY):
    Returns: { intent, confidence, reason, matches }
    - intent: one of 'company','product','seller','investors'
    - matches: array of { type2, reason, score } when intent === 'product'
-   (left unchanged: classifier uses only the single incoming message)
 --------------------------*/
-// Updated: classifyAndMatchWithGPT with session-aware voice-form protection
 async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
   const text = (userMessage || '').trim();
   if (!text) {
     return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [], reasoning: '' };
+  }
+
+  // 🔥 CRITICAL FIX: Check if session has active voice form FIRST
+  if (sessionId && conversations[sessionId] && conversations[sessionId].voiceFormActive === true) {
+    return {
+      intent: 'voice_form',
+      confidence: 1.0,
+      reason: 'Session has active voice form - force voice_form intent',
+      matches: [],
+      reasoning: 'Voice form is active - bypassing normal classification'
+    };
   }
 
   // --- session-aware checks (if sessionId provided) ---
@@ -1107,49 +1116,26 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
           reasoning: 'Session-level voice form lock — bypassing GPT.'
         };
       }
-      // If the session shows any sign of being mid-form (step > 0) treat as voice_form
-      if (sess.voiceFormStep && Number(sess.voiceFormStep) > 0) {
-        return {
-          intent: 'voice_form',
-          confidence: 0.99,
-          reason: 'Session.voiceFormStep indicates the form is in-progress',
-          matches: [],
-          reasoning: 'Detected session-level voice form step; bypassing GPT.'
-        };
-      }
 
-      // If the assistant just asked any of the voice form questions, and that assistant message
-      // is more recent than the last user message, treat the immediate reply as voice_form.
+      // If the assistant just asked the voice form first question (or is mid-form),
+      // treat the immediate user reply as voice_form (covers "after name" short replies)
+      // We check the last assistant message to see if it matches the first question prompt.
       if (sess.history && sess.history.length > 0) {
-        const reversed = [...sess.history].reverse();
-        const lastAssistant = reversed.find(h => h.role === 'assistant');
-        const lastUser = reversed.find(h => h.role === 'user');
+        const lastAssistant = [...sess.history].reverse().find(h => h.role === 'assistant');
         if (lastAssistant && lastAssistant.content) {
-          const assistantText = String(lastAssistant.content).toLowerCase();
-          // Only enforce if assistant asked after the last user message (i.e., assistant prompted)
-          const assistantTs = Number(lastAssistant.ts) || 0;
-          const userTs = Number(lastUser && lastUser.ts) || 0;
-          if (assistantTs >= userTs) {
-            for (const q of (VOICE_FORM_QUESTIONS || [])) {
-              const label = String(q.label || '').toLowerCase();
-              if (!label) continue;
-              let sim = 0;
-              try { sim = smartSimilarity(assistantText, label); } catch (e) { sim = 0; }
-              const directMatch = assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0]);
-              if (directMatch || sim >= 0.75) {
-                const tokens = text.split(/\s+/).filter(Boolean);
-                // Short replies or single-field answers are very likely form answers
-                if (tokens.length <= 40) {
-                  console.log('🔒 classifyAndMatchWithGPT: honoring voice_form because assistant asked (recent):', { label, assistantText, sim });
-                  return {
-                    intent: 'voice_form',
-                    confidence: 0.99,
-                    reason: 'Recent assistant prompt asked a voice-form question after the last user message; treating reply as voice_form answer',
-                    matches: [],
-                    reasoning: 'Detected assistant asked voice-form question and user replied; honoring form flow.'
-                  };
-                }
-              }
+          const firstQ = (VOICE_FORM_QUESTIONS && VOICE_FORM_QUESTIONS[0] && VOICE_FORM_QUESTIONS[0].label) || 'Your name?';
+          // allow fuzzy match - lowercased substring check
+          if (String(lastAssistant.content).toLowerCase().includes(String(firstQ).toLowerCase())) {
+            // short replies (single word or two words, likely a name) should be treated as voice_form
+            const tokens = text.split(/\s+/).filter(Boolean);
+            if (tokens.length <= 3 && /^[A-Za-z.'\- ]+$/.test(text)) {
+              return {
+                intent: 'voice_form',
+                confidence: 0.95,
+                reason: 'Recent assistant prompt asked for name; treating this short reply as voice_form answer',
+                matches: [],
+                reasoning: 'Detected assistant asked voice-form first question and user replied with short alphabetic text (likely a name).'
+              };
             }
           }
         }
@@ -1158,23 +1144,6 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
   } catch (e) {
     console.error('session-aware guard error in classifyAndMatchWithGPT:', e);
     // continue to other checks even if session guard fails
-  }
-
-  // FALLBACK: If session shows partial voice form data or recently detected voice_form intent,
-  // prefer voice_form to avoid misclassifying short form answers.
-  try {
-    if (sessionId && conversations && conversations[sessionId]) {
-      const sess = conversations[sessionId];
-      const now = nowMs();
-      const recentVoiceIntent = sess.lastDetectedIntent === 'voice_form' && (now - (sess.lastDetectedIntentTs || 0) < (1000 * 60 * 10)); // 10 minutes
-      const hasPartialFormData = sess.voiceFormData && typeof sess.voiceFormData === 'object' && Object.keys(sess.voiceFormData).length > 0 && (Object.keys(sess.voiceFormData).length < (VOICE_FORM_QUESTIONS || []).length);
-      if (recentVoiceIntent || hasPartialFormData) {
-        console.log('🔁 classifyAndMatchWithGPT: fallback voice_form enforced because session shows partial/ recent voice form', { recentVoiceIntent, hasPartialFormData, sessionId });
-        return { intent: 'voice_form', confidence: 0.96, reason: 'Session indicates an in-progress voice_form', matches: [], reasoning: 'Fallback session-level guard.' };
-      }
-    }
-  } catch (e) {
-    // ignore
   }
 
   // ---------- Voice-AI quick guard (explicit keywords) ----------
@@ -1271,7 +1240,6 @@ USER MESSAGE:
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [], reasoning: '' };
   }
 }
-
 
 async function handleVoiceForm(sessionId, userMessage, phone) {
   // Make sure session exists (safety)
@@ -1661,10 +1629,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       }
 
       if (matchedCategories.length === 0) {
-        // Pass a session history that includes the current user message for better context
-        const hist = getFullSessionHistory(sessionId) || [];
-        const augmentedHistory = hist.concat([{ role: 'user', content: userMessage, ts: nowMs() }]);
-        matchedCategories = await findGptMatchedCategories(userMessage, augmentedHistory);
+        matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
       }
 
       const detectedGender = inferGenderFromCategories(matchedCategories);
@@ -1720,30 +1685,35 @@ async function handleMessage(sessionId, userMessage) {
     // NORMAL (NON-FORM) FLOW
     // ----------------------------------------------------
 
-      // 1) Get response from main processor BEFORE appending the current user message
-      //    This ensures classifyAndMatchWithGPT sees the session history *before* the new user message
-      //    (so assistant prompts that preceded this user reply are still considered "recent assistant prompts").
-      const aiResponse = await getChatGPTResponse(sessionId, userMessage);
+    // 1) Save incoming user message to session
+    appendToSessionHistory(sessionId, 'user', userMessage);
 
-      // 2) Now save incoming user message to session (user -> assistant ordering preserved)
-      appendToSessionHistory(sessionId, 'user', userMessage);
+    // 2) Log incoming message to sheet
+    try {
+      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
+    } catch (e) {
+      console.error('sheet log user failed', e);
+    }
 
-      // 3) Log incoming message to sheet
-      try {
-        await appendUnderColumn(sessionId, `USER: ${userMessage}`);
-      } catch (e) {
-        console.error('sheet log user failed', e);
-      }
+    // Debug history
+    const fullHistory = getFullSessionHistory(sessionId);
+    console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
+    fullHistory.forEach((h, idx) => {
+      console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
+    });
 
-      // 4) Store assistant response
-      appendToSessionHistory(sessionId, 'assistant', aiResponse);
+    // 4) Get response from main processor
+    const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
-      // 5) Log assistant response to sheet
-      try {
-        await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
-      } catch (e) {
-        console.error('sheet log assistant failed', e);
-      }
+    // 5) Store assistant response
+    appendToSessionHistory(sessionId, 'assistant', aiResponse);
+
+    // 6) Log assistant response to sheet
+    try {
+      await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
+    } catch (e) {
+      console.error('sheet log assistant failed', e);
+    }
 
     if (conversations[sessionId]) {
       conversations[sessionId].lastActive = nowMs();
@@ -1833,19 +1803,6 @@ app.get('/test-gpt-matching', async (req, res) => {
     const matched = await findGptMatchedCategories(query, dummyHistory);
     const detectedGender = inferGenderFromCategories(matched);
     res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Debug: classify a message (session-aware) — useful to reproduce voice-form vs intent behavior
-app.post('/test-classify', async (req, res) => {
-  try {
-    const { sessionId, message } = req.body || {};
-    if (!message) return res.status(400).json({ error: 'Missing "message" in request body' });
-    const result = await classifyAndMatchWithGPT(message, sessionId || null);
-    const session = sessionId ? (conversations[sessionId] || null) : null;
-    res.json({ message, sessionId: sessionId || null, session, classification: result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
