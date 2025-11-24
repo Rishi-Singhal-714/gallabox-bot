@@ -1305,57 +1305,77 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 // -------------------------
 // Voice AI form flow handler (session-scoped state)
 // -------------------------
+
 async function handleVoiceAIForm(sessionId, userMessage) {
   createOrTouchSession(sessionId);
   const session = conversations[sessionId];
+
   console.log(`🔁 handleVoiceAIForm called for ${sessionId} | active=${session.voiceIntentActive} | qIndex=${session.voiceFormQuestionIndex} | msg="${String(userMessage).slice(0,80)}"`);
-  // Normalize simple control commands
+
+  // Normalize control commands
   const trimmed = (userMessage || '').trim();
   const lower = trimmed.toLowerCase();
 
-  // allow aborting with 'close' or 'stop'
+  // If the user typed 'close' or 'stop' -> cancel
   if (lower === 'close' || lower === 'stop') {
-    // clear voice form state
+    // log cancellation
+    try { await appendUnderColumn(sessionId, `VOICE_AI_CANCELLED: ${new Date().toISOString()}`); } catch (e) { /* best-effort */ }
+
+    // append assistant cancel message into session history (avoid duplicate)
+    const cancelMessage = 'Voice AI form has been cancelled. You may start a new request anytime.';
+    if (!lastHistoryEquals(sessionId, 'assistant', cancelMessage)) {
+      appendToSessionHistory(sessionId, 'assistant', cancelMessage);
+    }
+
+    // reset state
     session.voiceIntentActive = false;
     session.voiceFormAnswers = {};
     session.voiceFormQuestionIndex = 0;
     session.voiceFormId = null;
-    // log cancellation
-    try { await appendUnderColumn(sessionId, `VOICE_AI_CANCELLED: ${new Date().toISOString()}`); } catch (e) { /* best-effort */ }
-    return 'Voice AI form has been cancelled. You may start a new request anytime.';
+
+    return cancelMessage;
   }
 
-  // if there is no active voice flow (defensive), start a new flow
+  // If no active voice flow, start it
   if (!session.voiceIntentActive) {
-    // initialize
     session.voiceIntentActive = true;
     session.voiceFormAnswers = {};
     session.voiceFormQuestionIndex = 0;
     session.voiceFormId = generateFormId();
-    // log start
+
     try { await appendUnderColumn(sessionId, `VOICE_AI_STARTED: ${session.voiceFormId}`); } catch (e) { /* best-effort */ }
-    // ask first question
-    return VOICE_FORM_QUESTIONS[0].prompt;
+    console.log(`🔔 Voice-AI form started for ${sessionId}, formId=${session.voiceFormId}`);
+
+    // Ask first question (also append to history here to guarantee it's present)
+    const firstQ = VOICE_FORM_QUESTIONS[0].prompt;
+    if (!lastHistoryEquals(sessionId, 'assistant', firstQ)) {
+      appendToSessionHistory(sessionId, 'assistant', firstQ);
+    }
+    return firstQ;
   }
 
-  // If active: treat this userMessage as answer to current question
+  // At this point: session.voiceIntentActive === true and this message is an answer to current question
   const idx = session.voiceFormQuestionIndex || 0;
   const currentQuestion = VOICE_FORM_QUESTIONS[idx];
-  if (currentQuestion) {
-    // Save the answer (treat "skip" as empty)
-    const answer = (trimmed.toLowerCase() === 'skip') ? '' : trimmed;
-    session.voiceFormAnswers[currentQuestion.key] = answer;
-    // Log the answer (best-effort)
-    try {
-      await appendUnderColumn(sessionId, `VOICE_AI_ANSWER:${currentQuestion.key} | ${answer}`);
-    } catch (e) { /* ignore */ }
-    // move to next
-    session.voiceFormQuestionIndex = idx + 1;
+
+  // ensure user answer is recorded into the session history (if handleMessage didn't already)
+  // We expect handleMessage normally appended the user message, but do a safe append if not present
+  if (!lastHistoryEquals(sessionId, 'user', trimmed)) {
+    appendToSessionHistory(sessionId, 'user', trimmed);
   }
 
-  // If finished
+  // Save answer (treat "skip" as empty)
+  const answer = (trimmed.toLowerCase() === 'skip') ? '' : trimmed;
+  if (currentQuestion) {
+    session.voiceFormAnswers[currentQuestion.key] = answer;
+    try { await appendUnderColumn(sessionId, `VOICE_AI_ANSWER:${currentQuestion.key} | ${answer}`); } catch (e) { /* best-effort */ }
+  }
+
+  // move to next question index
+  session.voiceFormQuestionIndex = idx + 1;
+
+  // If finished - write full form to sheet and append confirmation to history
   if (session.voiceFormQuestionIndex >= VOICE_FORM_QUESTIONS.length) {
-    // build final row
     const formRow = {
       id: session.voiceFormId,
       phn_no: sessionId,
@@ -1370,32 +1390,40 @@ async function handleVoiceAIForm(sessionId, userMessage) {
     };
 
     let success = false;
-    try {
-      success = await writeVoiceAIFormToSheet(formRow);
-    } catch (e) {
-      success = false;
-    }
+    try { success = await writeVoiceAIFormToSheet(formRow); } catch (e) { success = false; }
 
     // clear voice state
+    const completedId = session.voiceFormId;
     session.voiceIntentActive = false;
     session.voiceFormQuestionIndex = 0;
     session.voiceFormAnswers = {};
-    const completedId = session.voiceFormId;
     session.voiceFormId = null;
 
     // log completion
     try { await appendUnderColumn(sessionId, `VOICE_AI_COMPLETED: ${completedId}`); } catch (e) { /* best-effort */ }
 
-    if (success) {
-      return `Thanks — your voice AI request has been recorded. Your form id is ${completedId}. We'll contact you shortly.`;
-    } else {
-      return `We recorded your voice AI answers locally, but failed to save to sheet. Your id is ${completedId}. Please notify support.`;
+    const completionMessage = success
+      ? `Thanks — your voice AI request has been recorded. Your form id is ${completedId}. We'll contact you shortly.`
+      : `We recorded your voice AI answers locally, but failed to save to sheet. Your id is ${completedId}. Please notify support.`;
+
+    // append confirmation to session history (avoid duplicate)
+    if (!lastHistoryEquals(sessionId, 'assistant', completionMessage)) {
+      appendToSessionHistory(sessionId, 'assistant', completionMessage);
     }
+    return completionMessage;
   }
 
-  // Otherwise, ask the next question
+  // Not finished — ask next question. Append the question into session history (avoid duplicate)
   const nextQ = VOICE_FORM_QUESTIONS[session.voiceFormQuestionIndex];
-  return nextQ.prompt;
+  if (nextQ) {
+    if (!lastHistoryEquals(sessionId, 'assistant', nextQ.prompt)) {
+      appendToSessionHistory(sessionId, 'assistant', nextQ.prompt);
+    }
+    return nextQ.prompt;
+  }
+
+  // Fallback (should not happen)
+  return 'Sorry — something went wrong with the voice form. Please type "stop" and try again.';
 }
 
 
