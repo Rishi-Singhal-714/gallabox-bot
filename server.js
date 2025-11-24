@@ -1616,7 +1616,18 @@ async function handleMessage(sessionId, userMessage) {
   }
 }
 
-
+// ---------- Add this helper somewhere near your session helpers ----------
+function ensureVoicePrefix(session, msg) {
+  if (!msg || typeof msg !== 'string') return msg;
+  const trimmed = msg.trim();
+  // if msg already starts with voice_ai: (case-insensitive), return as-is
+  if (/^voice_ai:\s*/i.test(trimmed)) return trimmed;
+  // if session indicates voice form active, prefix it
+  if (session && session.voiceForm && session.voiceForm.active) {
+    return `voice_ai: ${trimmed}`;
+  }
+  return trimmed;
+}
 /* -------------------------
    Webhook + endpoints
 --------------------------*/
