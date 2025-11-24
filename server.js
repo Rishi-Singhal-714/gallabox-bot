@@ -1596,16 +1596,34 @@ app.post('/webhook', async (req, res) => {
     const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
-    console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
-    if (userMessage && userPhone) {
-      const sessionId = userPhone;
+
+    if (!userPhone) {
+      console.log('❓ No phone number in webhook payload');
+      return res.status(400).json({ status: 'error', message: 'No phone number provided' });
+    }
+
+    const sessionId = userPhone;
+    // ensure session exists before checking voiceForm
+    createOrTouchSession(sessionId);
+
+    // if voice form is active for this session, show it in the logs as "voice_ai: <message>"
+    const consoleMessage = (conversations[sessionId] && conversations[sessionId].voiceForm && conversations[sessionId].voiceForm.active)
+      ? `voice_ai: ${userMessage}`
+      : userMessage;
+
+    console.log(`💬 Received message from ${userPhone} (${userName}): ${consoleMessage}`);
+
+    if (userMessage) {
       console.log(`➡️ Handling message for session ${sessionId}`);
+      // call handleMessage with the original userMessage (so existing logic & voice form flow still works)
       const aiResponse = await handleMessage(sessionId, userMessage);
+      // send back over Gallabox
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
-      console.log('❓ No valid message or phone number found in webhook');
+      console.log('❓ No valid message found in webhook');
     }
+
     res.status(200).json({ status: 'success', message: 'Webhook processed successfully', processed: true });
   } catch (error) {
     console.error('💥 Webhook error:', error.message);
