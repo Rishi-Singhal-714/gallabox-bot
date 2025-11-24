@@ -1525,9 +1525,8 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
   }
   return false;
 }
-
 /* -------------------------
-   FIXED getChatGPTResponse() - Complete voice form isolation
+   FIXED getChatGPTResponse() - Better voice form continuation
 --------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -1544,13 +1543,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
-    // 0) onboarding
-    if (isSellerOnboardQuery(userMessage)) {
-      session.lastDetectedIntent = "seller";
-      session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
-    }
-
     // 1) Check for explicit voice form triggers BEFORE any classification
     const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice|voice ai form)\b/i;
     if (voiceTriggers.test(userMessage)) {
@@ -1559,15 +1551,38 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     }
 
     // 2) Check if we should continue voice form based on conversation context
+    // This handles ALL voice form questions, not just the first one
     if (session.history && session.history.length > 0) {
       const lastAssistant = [...session.history].reverse().find(h => h.role === 'assistant');
       if (lastAssistant && lastAssistant.content) {
-        const firstQ = (VOICE_FORM_QUESTIONS && VOICE_FORM_QUESTIONS[0] && VOICE_FORM_QUESTIONS[0].label) || 'Your name?';
-        if (String(lastAssistant.content).toLowerCase().includes(String(firstQ).toLowerCase())) {
-          const tokens = userMessage.split(/\s+/).filter(Boolean);
-          if (tokens.length <= 3 && /^[A-Za-z.'\- ]+$/.test(userMessage)) {
-            console.log(`🎯 CONTINUING VOICE FORM - Short reply detected for session ${sessionId}`);
+        // Check if the last assistant message matches ANY voice form question
+        const isVoiceFormQuestion = VOICE_FORM_QUESTIONS.some(question => {
+          const questionText = question.label.toLowerCase();
+          const assistantText = lastAssistant.content.toLowerCase();
+          return assistantText.includes(questionText) || 
+                 assistantText.includes('voice ai') || 
+                 assistantText.includes('voice form') ||
+                 assistantText.includes('voice output') ||
+                 assistantText.includes('create your voice');
+        });
+
+        if (isVoiceFormQuestion) {
+          console.log(`🎯 CONTINUING VOICE FORM - Detected voice form question in last assistant message for session ${sessionId}`);
+          // For dialogue field specifically, be more lenient since it could be any text
+          const isDialogueQuestion = lastAssistant.content.toLowerCase().includes('dialogue') || 
+                                   lastAssistant.content.toLowerCase().includes('dialouge');
+          
+          if (isDialogueQuestion) {
+            // For dialogue questions, accept ANY response as continuation
+            console.log(`🎯 DIALOGUE QUESTION - Accepting any response as voice form continuation`);
             return await handleVoiceForm(sessionId, userMessage, sessionId);
+          } else {
+            // For other questions, use the original logic for short replies
+            const tokens = userMessage.split(/\s+/).filter(Boolean);
+            if (tokens.length <= 5) { // Increased to 5 for more flexibility
+              console.log(`🎯 CONTINUING VOICE FORM - Short reply detected for session ${sessionId}`);
+              return await handleVoiceForm(sessionId, userMessage, sessionId);
+            }
           }
         }
       }
@@ -1595,13 +1610,13 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
-    // 2) store product intent
+    // Continue with normal flow for other intents...
+    // [Rest of your existing code remains the same]
     if (intent === "product") {
       session.lastDetectedIntent = "product";
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // Agent flow
     if (intent === "agent") {
       session.lastDetectedIntent = "agent";
       session.lastDetectedIntentTs = nowMs();
