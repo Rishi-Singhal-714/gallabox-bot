@@ -1178,30 +1178,6 @@ function sellerOnboardMessage() {
   return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers`;
 }
 
-// --- add near createOrTouchSession / session helpers ---
-function enqueueSessionWork(sessionId, workFn) {
-  // ensure session exists
-  createOrTouchSession(sessionId);
-  const session = conversations[sessionId];
-
-  // create queue promise if missing
-  if (!session._queue) session._queue = Promise.resolve();
-
-  // append work to the queue and return the queued promise
-  const next = session._queue.then(() => {
-    // run the work and make sure exceptions don't break the queue chain
-    return Promise.resolve().then(workFn).catch(err => {
-      console.error(`Error in queued work for session ${sessionId}:`, err);
-      // swallow so queue continues
-    });
-  });
-
-  // set session._queue to the next one (so next work waits)
-  session._queue = next;
-  return next;
-}
-
-
 /* -------------------------
    Session/history helpers
 --------------------------*/
@@ -1454,41 +1430,24 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   }
 
   try {
-    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    // Normalize incoming text
-    const rawMsg = (userMessage || '').toString().trim();
-    // rawForProcessing = raw message without any voice_ai: prefix (clean)
-    const rawForProcessing = stripVoicePrefix(rawMsg);
-
-    // If session.voiceForm.active -> handle form flow using RAW text (no prefix)
-    if (session && session.voiceForm && session.voiceForm.active) {
-      return await handleVoiceAIForm(sessionId, rawForProcessing);
+    if (conversations[sessionId] && conversations[sessionId].voiceForm && conversations[sessionId].voiceForm.active) {
+      return await handleVoiceAIForm(sessionId, userMessage);
     }
 
-    // If user explicitly triggered a voice-AI start phrase -> start form (pass raw)
-    if (isVoiceAIQuery(rawMsg)) {
-      return await handleVoiceAIForm(sessionId, rawForProcessing);
+    if (isVoiceAIQuery(userMessage)) {
+      return await handleVoiceAIForm(sessionId, userMessage);
     }
 
-    // Seller onboarding check uses raw message
-    if (isSellerOnboardQuery(rawForProcessing)) {
+    if (isSellerOnboardQuery(userMessage)) {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    // Prepare classifier input: include prefix only for classifier when form is/was active in session
-    // (idempotent usage of prefix is handled upstream; here we ensure classifier sees the prefix when voice form active)
-    let classifierInput = rawForProcessing;
-    if (session && session.voiceForm && session.voiceForm.active) {
-      classifierInput = `voice_ai: ${rawForProcessing}`;
-    }
-
-    // Use classifierInput for intent classification
-    const classification = await classifyAndMatchWithGPT(classifierInput);
+    const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
 
@@ -1541,7 +1500,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
         session.lastDetectedIntentTs = nowMs();
       }
 
-      // Use classifier matches if provided (these come from classifierInput)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
       if (matchedType2s.length > 0) {
@@ -1551,10 +1509,9 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
           .slice(0,5);
       }
 
-      // If no direct matches from classifier, use GPT matching using full history and the RAW message (no prefix)
       if (matchedCategories.length === 0) {
         const fullHistory = getFullSessionHistory(sessionId);
-        matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
+        matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
       } else {
         const fullHistory = getFullSessionHistory(sessionId);
         const isShortOrQualifier = (msg) => {
@@ -1564,35 +1521,33 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
           if (trimmed.length <= 12) return true;
           return false;
         };
-        if (isShortOrQualifier(rawForProcessing)) {
-          const refined = await findGptMatchedCategories(rawForProcessing, fullHistory);
+        if (isShortOrQualifier(userMessage)) {
+          const refined = await findGptMatchedCategories(userMessage, fullHistory);
           if (refined && refined.length > 0) matchedCategories = refined;
         }
       }
 
       if (matchedCategories.length === 0) {
-        if (containsClothingKeywords(rawForProcessing)) {
+        if (containsClothingKeywords(userMessage)) {
           const fullHistory = getFullSessionHistory(sessionId);
-          matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
+          matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
         } else {
-          const keywordMatches = findKeywordMatchesInCat1(rawForProcessing);
+          const keywordMatches = findKeywordMatchesInCat1(userMessage);
           if (keywordMatches.length > 0) {
             matchedCategories = keywordMatches;
           } else {
             const fullHistory = getFullSessionHistory(sessionId);
-            matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
+            matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
           }
         }
       }
 
       const detectedGender = inferGenderFromCategories(matchedCategories);
-      // Pass rawForProcessing to seller search and response builder (keeps results clean)
-      const sellers = await findSellersForQuery(rawForProcessing, matchedCategories, detectedGender);
-      return buildConciseResponse(rawForProcessing, matchedCategories, sellers);
+      const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
+      return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
-    // Default: company response (pass rawForProcessing and session history)
-    return await generateCompanyResponse(rawForProcessing, getFullSessionHistory(sessionId), companyInfo);
+    return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
     console.error('❌ getChatGPTResponse error (session-aware):', error);
@@ -1600,66 +1555,58 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   }
 }
 
-// -------------------------
-// Updated handleMessage: store & pass prefixed message WHEN voice form active
-// -------------------------
+/* -------------------------
+   Updated handleMessage to call session-aware getChatGPTResponse
+   + voice_ai message converter when voice form is active
+--------------------------*/
 async function handleMessage(sessionId, userMessage) {
   try {
-    // ensure session exists
+    // ensure session exists and we have a session object to read voiceForm state
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    // Normalize incoming text
-    const rawMsg = (userMessage || '').toString().trim();
-
-    // If voice form active -> ensure prefix exists exactly once (idempotent)
-    let storedMessage = rawMsg;
+    // If voice form is active for this session, convert every incoming message
+    // to the form "voice_ai: <message>", unless it already starts with "voice_ai:".
     if (session && session.voiceForm && session.voiceForm.active) {
-      // remove any existing voice_ai: prefix then re-add (idempotent)
-      storedMessage = stripVoicePrefix(rawMsg);
-      storedMessage = `voice_ai: ${storedMessage}`;
+      if (typeof userMessage === 'string' && !/^voice_ai:/i.test(userMessage.trim())) {
+        userMessage = `voice_ai: ${userMessage}`;
+      }
     }
 
-    // 1) Save incoming (possibly prefixed) user message to session history
-    appendToSessionHistory(sessionId, 'user', storedMessage);
+    // append user message to session history (converted if needed)
+    appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
-      await appendUnderColumn(sessionId, `USER: ${storedMessage}`);
+      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
 
-    // 3) Debug print compact history (after storing the prefixed message)
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    // 4) Pass the storedMessage to the processor (classifier + flows)
-    const aiResponse = await getChatGPTResponse(sessionId, storedMessage);
+    const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
-    // 5) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
 
-    // 6) Log assistant response to Google Sheet (same column) — best-effort
     try {
       await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
     } catch (e) {
       console.error('sheet log assistant failed', e);
     }
 
-    // 7) update lastActive
     if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
 
-    // 8) return the assistant reply
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
 
 /* -------------------------
    Webhook + endpoints
@@ -1675,17 +1622,7 @@ app.post('/webhook', async (req, res) => {
     if (userMessage && userPhone) {
       const sessionId = userPhone;
       console.log(`➡️ Handling message for session ${sessionId}`);
-      // queue the entire handleMessage call so this session's messages are processed sequentially
-      await enqueueSessionWork(sessionId, async () => {
-        const aiResponse = await handleMessage(sessionId, userMessage);
-        // send message after processing — still inside the queue to preserve order
-        await sendMessage(userPhone, userName, aiResponse).catch(e => {
-          console.error('Failed to send queued AI response:', e);
-        });
-      });
-
-// NOTE: since we've already sent the message inside the queue, return success to webhook
-// and do not call sendMessage again below.
+      const aiResponse = await handleMessage(sessionId, userMessage);
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
