@@ -1217,7 +1217,7 @@ USER MESSAGE:
       // final safety: if GPT returned 'agent' but message looks like an email, block agent -> voice_form (your existing behavior)
       const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
       if (intent === 'agent' && isEmail) {
-        return { intent: 'voice_form', confidence: 0.9, reason: 'Blocked agent because an email was detected', matches: [], reasoning: 'Email detected in user message; prefer voice_form.' };
+        return { confidence: 0.9, reason: 'Blocked agent because an email was detected', matches: [], reasoning: 'Email detected in user message; prefer voice_form.' };
       }
 
       return { intent, confidence, reason, matches, reasoning };
