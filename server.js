@@ -1527,13 +1527,7 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
 }
 
 /* -------------------------
-   Main product flow:
-   - Use classifyAndMatchWithGPT (GPT is the boss) -> single-message only
-   - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
-   - history will not influence initial intent detection
-/* -------------------------
-   FIXED getChatGPTResponse()
-   - SUPER HARD VOICE FORM LOCK added at the top
+   FIXED getChatGPTResponse() - Complete voice form isolation
 --------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -1544,7 +1538,9 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
+    // 🔥 CRITICAL FIX: Complete voice form isolation
     if (session.voiceFormActive === true) {
+      console.log(`🎯 VOICE FORM ACTIVE - Bypassing all classification for session ${sessionId}`);
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
@@ -1555,19 +1551,48 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return sellerOnboardMessage();
     }
 
-    // 1) classify
+    // 1) Check for explicit voice form triggers BEFORE any classification
+    const voiceTriggers = /\b(voice\s?ai|voice message|voice output|generate voice|make voice|synthesiz(e|er)|text[- ]to[- ]speech|tts|record voice|dialogue|dialouge|voiceover|voice over|create voice|sample voice|voice ai form)\b/i;
+    if (voiceTriggers.test(userMessage)) {
+      console.log(`🎯 VOICE FORM TRIGGER DETECTED - Starting voice form for session ${sessionId}`);
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
+    }
+
+    // 2) Check if we should continue voice form based on conversation context
+    if (session.history && session.history.length > 0) {
+      const lastAssistant = [...session.history].reverse().find(h => h.role === 'assistant');
+      if (lastAssistant && lastAssistant.content) {
+        const firstQ = (VOICE_FORM_QUESTIONS && VOICE_FORM_QUESTIONS[0] && VOICE_FORM_QUESTIONS[0].label) || 'Your name?';
+        if (String(lastAssistant.content).toLowerCase().includes(String(firstQ).toLowerCase())) {
+          const tokens = userMessage.split(/\s+/).filter(Boolean);
+          if (tokens.length <= 3 && /^[A-Za-z.'\- ]+$/.test(userMessage)) {
+            console.log(`🎯 CONTINUING VOICE FORM - Short reply detected for session ${sessionId}`);
+            return await handleVoiceForm(sessionId, userMessage, sessionId);
+          }
+        }
+      }
+    }
+
+    // 3) Only NOW proceed with normal classification
     const classification = await classifyAndMatchWithGPT(userMessage, sessionId);
     let intent = classification.intent || "company";
     let confidence = classification.confidence || 0;
 
     console.log("🧠 GPT classification:", { intent, confidence, reason: classification.reason });
 
-    // ✔ Email detection
+    // Email detection
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
 
-    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
+    // Block agent intent for emails
     if (intent === "agent" && isEmail) {
       console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
+      intent = "company"; // Fall back to company intent
+    }
+
+    // Handle voice_form intent from classifier
+    if (intent === "voice_form") {
+      console.log(`🎯 GPT DETECTED VOICE FORM - Starting voice form for session ${sessionId}`);
+      return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
     // 2) store product intent
@@ -1576,7 +1601,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // 💥 FIXED — Agent flow ONLY now runs if not email
+    // Agent flow
     if (intent === "agent") {
       session.lastDetectedIntent = "agent";
       session.lastDetectedIntentTs = nowMs();
@@ -1595,13 +1620,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       } catch {}
 
       return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
-    }
-
-    // continue voice form
-    if (intent === "voice_form") {
-      session.lastDetectedIntent = "voice_form";
-      session.lastDetectedIntentTs = nowMs();
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
     if (intent === "seller") {
@@ -1647,8 +1665,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
-
 
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
