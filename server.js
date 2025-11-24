@@ -1538,6 +1538,12 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
     // Product flow
     if (intent === "product" && galleriesData.length > 0) {
+      if (session && session.voiceFormActive) {
+        const transformed = `this is voice_form Intent:${userMessage}`;
+        console.log(`🔁 Voice form is active — redirecting fallback to handleVoiceForm.`);
+        return await handleVoiceForm(sessionId, transformed, sessionId);
+      }
+      else{
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
 
@@ -1557,7 +1563,8 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
 
       return buildConciseResponse(userMessage, matchedCategories, sellers);
-    }
+    }}
+    
     // Default → BUT protect voice form from escaping into company response
 if (session && session.voiceFormActive) {
   const transformed = `this is voice_form Intent:${userMessage}`;
