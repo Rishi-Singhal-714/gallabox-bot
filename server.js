@@ -1644,7 +1644,10 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       }
 
       if (matchedCategories.length === 0) {
-        matchedCategories = await findGptMatchedCategories(userMessage, getFullSessionHistory(sessionId));
+        // Pass a session history that includes the current user message for better context
+        const hist = getFullSessionHistory(sessionId) || [];
+        const augmentedHistory = hist.concat([{ role: 'user', content: userMessage, ts: nowMs() }]);
+        matchedCategories = await findGptMatchedCategories(userMessage, augmentedHistory);
       }
 
       const detectedGender = inferGenderFromCategories(matchedCategories);
@@ -1700,35 +1703,30 @@ async function handleMessage(sessionId, userMessage) {
     // NORMAL (NON-FORM) FLOW
     // ----------------------------------------------------
 
-    // 1) Save incoming user message to session
-    appendToSessionHistory(sessionId, 'user', userMessage);
+      // 1) Get response from main processor BEFORE appending the current user message
+      //    This ensures classifyAndMatchWithGPT sees the session history *before* the new user message
+      //    (so assistant prompts that preceded this user reply are still considered "recent assistant prompts").
+      const aiResponse = await getChatGPTResponse(sessionId, userMessage);
 
-    // 2) Log incoming message to sheet
-    try {
-      await appendUnderColumn(sessionId, `USER: ${userMessage}`);
-    } catch (e) {
-      console.error('sheet log user failed', e);
-    }
+      // 2) Now save incoming user message to session (user -> assistant ordering preserved)
+      appendToSessionHistory(sessionId, 'user', userMessage);
 
-    // Debug history
-    const fullHistory = getFullSessionHistory(sessionId);
-    console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
-    fullHistory.forEach((h, idx) => {
-      console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
-    });
+      // 3) Log incoming message to sheet
+      try {
+        await appendUnderColumn(sessionId, `USER: ${userMessage}`);
+      } catch (e) {
+        console.error('sheet log user failed', e);
+      }
 
-    // 4) Get response from main processor
-    const aiResponse = await getChatGPTResponse(sessionId, userMessage);
+      // 4) Store assistant response
+      appendToSessionHistory(sessionId, 'assistant', aiResponse);
 
-    // 5) Store assistant response
-    appendToSessionHistory(sessionId, 'assistant', aiResponse);
-
-    // 6) Log assistant response to sheet
-    try {
-      await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
-    } catch (e) {
-      console.error('sheet log assistant failed', e);
-    }
+      // 5) Log assistant response to sheet
+      try {
+        await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
+      } catch (e) {
+        console.error('sheet log assistant failed', e);
+      }
 
     if (conversations[sessionId]) {
       conversations[sessionId].lastActive = nowMs();
