@@ -1337,6 +1337,10 @@ async function handleVoiceAIForm(sessionId, userMessage) {
   createOrTouchSession(sessionId);
   const session = conversations[sessionId];
 
+  // Always log incoming message while voice form is active (or starting)
+  const safeMsg = (userMessage || '').trim();
+
+  // If form not started, start it and log the trigger message
   if (!session.voiceForm || !session.voiceForm.active) {
     const id = generateFormId();
     session.voiceForm = {
@@ -1348,13 +1352,23 @@ async function handleVoiceAIForm(sessionId, userMessage) {
       phn_no: sessionId
     };
 
+    // Log into session column and dedicated columns
+    try { await appendUnderColumn(sessionId, `voice_ai: ${safeMsg}`); } catch (e) { /* ignore */ }
+    try { await appendUnderColumn('voice_ai', safeMsg); } catch (e) { /* ignore */ }
+    try { await appendUnderColumn('ex-voice_ai', safeMsg); } catch (e) { /* ignore */ }
+
     const firstQ = VOICE_AI_QUESTIONS[0].prompt;
     return `Sure — let's create your Voice AI form. Your form ID is *${id}*.\n\n${firstQ}`;
   }
 
+  // If form already active, log the incoming answer before processing
+  try { await appendUnderColumn(sessionId, `voice_ai: ${safeMsg}`); } catch (e) { /* ignore */ }
+  try { await appendUnderColumn('voice_ai', safeMsg); } catch (e) { /* ignore */ }
+  try { await appendUnderColumn('ex-voice_ai', safeMsg); } catch (e) { /* ignore */ }
+
   const vf = session.voiceForm;
   const idx = vf.stepIndex;
-  let answer = (userMessage || '').trim();
+  let answer = safeMsg;
   if (VOICE_AI_QUESTIONS[idx] && VOICE_AI_QUESTIONS[idx].key === 'optional_comment' && /^skip$/i.test(answer)) answer = '';
 
   const currentKey = VOICE_AI_QUESTIONS[idx].key;
@@ -1385,15 +1399,12 @@ async function handleVoiceAIForm(sessionId, userMessage) {
   try {
     ok = await writeVoiceAIFormToSheet(finalRow);
   } catch (e) {
-    console.error('Error writing voice AI form to sheet:', e);
     ok = false;
   }
 
   try {
     await appendUnderColumn(sessionId, `VOICEAI_FORM_SUBMITTED: ${vf.id} | ${JSON.stringify(finalRow)}`);
-  } catch (e) {
-    console.error('Failed to append voiceai log to column:', e);
-  }
+  } catch (e) { /* ignore */ }
 
   const ack = ok
     ? `Thank you! Your Voice AI form (ID *${vf.id}*) has been saved. We'll contact you at ${finalRow.email || 'the provided contact'} with next steps.`
@@ -1401,6 +1412,7 @@ async function handleVoiceAIForm(sessionId, userMessage) {
 
   return ack;
 }
+
 
 /* -------------------------
    Main product flow with Voice-AI integration
