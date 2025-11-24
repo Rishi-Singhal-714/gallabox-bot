@@ -170,7 +170,7 @@ Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 
 // INVESTORS paragraph placeholder (edit as required)
 const INVESTORS_PARAGRAPH = `
-Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact investor-relations@zulu.club and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
+Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact (https://forms.gle/5wwfYFB7gGs75pYq5) and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
 `;
 
 /* -------------------------
