@@ -1530,7 +1530,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     if (intent === "voice_form") {
       session.lastDetectedIntent = "voice_form";
       session.lastDetectedIntentTs = nowMs();
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
+      return await handleVoiceForm(sessionId, transformed, sessionId);
     }
 
     if (intent === "seller") {
