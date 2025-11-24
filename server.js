@@ -1624,14 +1624,25 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
     const webhookData = req.body;
-    const userMessage = webhookData.whatsapp?.text?.body?.trim();
+    const rawMessage = webhookData.whatsapp?.text?.body;
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
+
+    const userMessage = (rawMessage && String(rawMessage).trim()) ? String(rawMessage).trim() : '';
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
+
     if (userMessage && userPhone) {
       const sessionId = userPhone;
+      // ensure session exists so we can check voiceForm.active
+      createOrTouchSession(sessionId);
+      const session = conversations[sessionId];
+
+      // apply idempotent voice prefix EARLY so all downstream logic sees it
+      const storedMessage = ensureVoicePrefix(session, userMessage);
+
       console.log(`➡️ Handling message for session ${sessionId}`);
-      const aiResponse = await handleMessage(sessionId, userMessage);
+      const aiResponse = await handleMessage(sessionId, storedMessage);
+      // send back over Gallabox
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
