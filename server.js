@@ -1548,7 +1548,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     }
 
     // 1) classify
-    const classification = await classifyAndMatchWithGPT(userMessage);
+    const classification = await classifyAndMatchWithGPT(userMessage, sessionId);
     let intent = classification.intent || "company";
     let confidence = classification.confidence || 0;
 
@@ -1639,6 +1639,8 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
+
 
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
