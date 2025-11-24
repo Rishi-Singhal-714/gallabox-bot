@@ -1491,6 +1491,11 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
     if (intent === "agent" && isEmail) {
       console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
+    if (session && session.voiceFormActive) {
+    const transformed = `this is voice_form Intent:${userMessage}`;
+    console.log(`🔁 Voice form is already active for session ${sessionId} — forwarding message to handleVoiceForm.`);
+    return await handleVoiceForm(sessionId, transformed, sessionId);
+  }
     }
 
 
