@@ -1337,6 +1337,7 @@ async function handleVoiceAIForm(sessionId, userMessage) {
   createOrTouchSession(sessionId);
   const session = conversations[sessionId];
 
+  
   // Always log incoming message while voice form is active (or starting)
   const safeMsg = (userMessage || '').trim();
 
@@ -1425,6 +1426,10 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   try {
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+    
+    if (session.voiceForm && session.voiceForm.active) {
+        userMessage = `voice_ai: ${userMessage}`;
+    }
 
     if (conversations[sessionId] && conversations[sessionId].voiceForm && conversations[sessionId].voiceForm.active) {
       return await handleVoiceAIForm(sessionId, userMessage);
