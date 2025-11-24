@@ -1107,26 +1107,37 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
           reasoning: 'Session-level voice form lock — bypassing GPT.'
         };
       }
+      // If the session shows any sign of being mid-form (step > 0) treat as voice_form
+      if (sess.voiceFormStep && Number(sess.voiceFormStep) > 0) {
+        return {
+          intent: 'voice_form',
+          confidence: 0.99,
+          reason: 'Session.voiceFormStep indicates the form is in-progress',
+          matches: [],
+          reasoning: 'Detected session-level voice form step; bypassing GPT.'
+        };
+      }
 
-      // If the assistant just asked the voice form first question (or is mid-form),
-      // treat the immediate user reply as voice_form (covers "after name" short replies)
-      // We check the last assistant message to see if it matches the first question prompt.
+      // If the assistant just asked any of the voice form questions, treat the immediate reply as voice_form
       if (sess.history && sess.history.length > 0) {
         const lastAssistant = [...sess.history].reverse().find(h => h.role === 'assistant');
         if (lastAssistant && lastAssistant.content) {
-          const firstQ = (VOICE_FORM_QUESTIONS && VOICE_FORM_QUESTIONS[0] && VOICE_FORM_QUESTIONS[0].label) || 'Your name?';
-          // allow fuzzy match - lowercased substring check
-          if (String(lastAssistant.content).toLowerCase().includes(String(firstQ).toLowerCase())) {
-            // short replies (single word or two words, likely a name) should be treated as voice_form
-            const tokens = text.split(/\s+/).filter(Boolean);
-            if (tokens.length <= 3 && /^[A-Za-z.'\- ]+$/.test(text)) {
-              return {
-                intent: 'voice_form',
-                confidence: 0.95,
-                reason: 'Recent assistant prompt asked for name; treating this short reply as voice_form answer',
-                matches: [],
-                reasoning: 'Detected assistant asked voice-form first question and user replied with short alphabetic text (likely a name).'
-              };
+          const assistantText = String(lastAssistant.content).toLowerCase();
+          for (const q of (VOICE_FORM_QUESTIONS || [])) {
+            const label = String(q.label || '').toLowerCase();
+            if (!label) continue;
+            if (assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0])) {
+              // If the user reply looks short-ish or alphanumeric (typical of form answers), prefer voice_form
+              const tokens = text.split(/\s+/).filter(Boolean);
+              if (tokens.length <= 30) {
+                return {
+                  intent: 'voice_form',
+                  confidence: 0.95,
+                  reason: 'Recent assistant prompt asked a voice-form question; treating reply as voice_form answer',
+                  matches: [],
+                  reasoning: 'Detected assistant asked voice-form question and user replied; honoring form flow.'
+                };
+              }
             }
           }
         }
@@ -1795,6 +1806,19 @@ app.get('/test-gpt-matching', async (req, res) => {
     const matched = await findGptMatchedCategories(query, dummyHistory);
     const detectedGender = inferGenderFromCategories(matched);
     res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Debug: classify a message (session-aware) — useful to reproduce voice-form vs intent behavior
+app.post('/test-classify', async (req, res) => {
+  try {
+    const { sessionId, message } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'Missing "message" in request body' });
+    const result = await classifyAndMatchWithGPT(message, sessionId || null);
+    const session = sessionId ? (conversations[sessionId] || null) : null;
+    res.json({ message, sessionId: sessionId || null, session, classification: result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
