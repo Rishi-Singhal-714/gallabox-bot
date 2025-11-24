@@ -1178,6 +1178,30 @@ function sellerOnboardMessage() {
   return `Want to sell on Zulu Club? Sign up here: ${link}\n\nQuick steps:\n• Fill the seller form at the link\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers`;
 }
 
+// --- add near createOrTouchSession / session helpers ---
+function enqueueSessionWork(sessionId, workFn) {
+  // ensure session exists
+  createOrTouchSession(sessionId);
+  const session = conversations[sessionId];
+
+  // create queue promise if missing
+  if (!session._queue) session._queue = Promise.resolve();
+
+  // append work to the queue and return the queued promise
+  const next = session._queue.then(() => {
+    // run the work and make sure exceptions don't break the queue chain
+    return Promise.resolve().then(workFn).catch(err => {
+      console.error(`Error in queued work for session ${sessionId}:`, err);
+      // swallow so queue continues
+    });
+  });
+
+  // set session._queue to the next one (so next work waits)
+  session._queue = next;
+  return next;
+}
+
+
 /* -------------------------
    Session/history helpers
 --------------------------*/
@@ -1651,7 +1675,17 @@ app.post('/webhook', async (req, res) => {
     if (userMessage && userPhone) {
       const sessionId = userPhone;
       console.log(`➡️ Handling message for session ${sessionId}`);
-      const aiResponse = await handleMessage(sessionId, userMessage);
+      // queue the entire handleMessage call so this session's messages are processed sequentially
+      await enqueueSessionWork(sessionId, async () => {
+        const aiResponse = await handleMessage(sessionId, userMessage);
+        // send message after processing — still inside the queue to preserve order
+        await sendMessage(userPhone, userName, aiResponse).catch(e => {
+          console.error('Failed to send queued AI response:', e);
+        });
+      });
+
+// NOTE: since we've already sent the message inside the queue, return success to webhook
+// and do not call sendMessage again below.
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
