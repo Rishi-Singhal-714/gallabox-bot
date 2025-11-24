@@ -1186,6 +1186,13 @@ const SESSION_CLEANUP_MS = 1000 * 60 * 5;
 const MAX_HISTORY_MESSAGES = 2000;
 
 function nowMs() { return Date.now(); }
+// -------------------------
+// Voice prefix helper
+// -------------------------
+function stripVoicePrefix(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/^\s*voice_ai:\s*/i, '').trim();
+}
 
 function createOrTouchSession(sessionId) {
   if (!conversations[sessionId]) {
@@ -1337,7 +1344,6 @@ async function handleVoiceAIForm(sessionId, userMessage) {
   createOrTouchSession(sessionId);
   const session = conversations[sessionId];
 
-  
   // Always log incoming message while voice form is active (or starting)
   const safeMsg = (userMessage || '').trim();
 
@@ -1424,34 +1430,41 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   }
 
   try {
+    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
-    
-    if (session.voiceForm && session.voiceForm.active) {
-        userMessage = `voice_ai: ${userMessage}`;
+
+    // Normalize incoming text
+    const rawMsg = (userMessage || '').toString().trim();
+    // rawForProcessing = raw message without any voice_ai: prefix (clean)
+    const rawForProcessing = stripVoicePrefix(rawMsg);
+
+    // If session.voiceForm.active -> handle form flow using RAW text (no prefix)
+    if (session && session.voiceForm && session.voiceForm.active) {
+      return await handleVoiceAIForm(sessionId, rawForProcessing);
     }
 
-    if (conversations[sessionId] && conversations[sessionId].voiceForm && conversations[sessionId].voiceForm.active) {
-      return await handleVoiceAIForm(sessionId, userMessage);
+    // If user explicitly triggered a voice-AI start phrase -> start form (pass raw)
+    if (isVoiceAIQuery(rawMsg)) {
+      return await handleVoiceAIForm(sessionId, rawForProcessing);
     }
 
-    if (isVoiceAIQuery(userMessage)) {
-      return await handleVoiceAIForm(sessionId, userMessage);
-    }
-
-    if (isSellerOnboardQuery(userMessage)) {
+    // Seller onboarding check uses raw message
+    if (isSellerOnboardQuery(rawForProcessing)) {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return sellerOnboardMessage();
     }
 
-    // if voice form active for this session, prefix the classifier input so GPT sees "voice_ai: <message>"
-    let classificationInput = userMessage;
-    if (conversations[sessionId] && conversations[sessionId].voiceForm && conversations[sessionId].voiceForm.active) {
-        classificationInput = `voice_ai: ${userMessage}`;
+    // Prepare classifier input: include prefix only for classifier when form is/was active in session
+    // (idempotent usage of prefix is handled upstream; here we ensure classifier sees the prefix when voice form active)
+    let classifierInput = rawForProcessing;
+    if (session && session.voiceForm && session.voiceForm.active) {
+      classifierInput = `voice_ai: ${rawForProcessing}`;
     }
-    const classification = await classifyAndMatchWithGPT(classificationInput);
 
+    // Use classifierInput for intent classification
+    const classification = await classifyAndMatchWithGPT(classifierInput);
     let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
 
@@ -1504,6 +1517,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
         session.lastDetectedIntentTs = nowMs();
       }
 
+      // Use classifier matches if provided (these come from classifierInput)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
       if (matchedType2s.length > 0) {
@@ -1513,9 +1527,10 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
           .slice(0,5);
       }
 
+      // If no direct matches from classifier, use GPT matching using full history and the RAW message (no prefix)
       if (matchedCategories.length === 0) {
         const fullHistory = getFullSessionHistory(sessionId);
-        matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+        matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
       } else {
         const fullHistory = getFullSessionHistory(sessionId);
         const isShortOrQualifier = (msg) => {
@@ -1525,33 +1540,35 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
           if (trimmed.length <= 12) return true;
           return false;
         };
-        if (isShortOrQualifier(userMessage)) {
-          const refined = await findGptMatchedCategories(userMessage, fullHistory);
+        if (isShortOrQualifier(rawForProcessing)) {
+          const refined = await findGptMatchedCategories(rawForProcessing, fullHistory);
           if (refined && refined.length > 0) matchedCategories = refined;
         }
       }
 
       if (matchedCategories.length === 0) {
-        if (containsClothingKeywords(userMessage)) {
+        if (containsClothingKeywords(rawForProcessing)) {
           const fullHistory = getFullSessionHistory(sessionId);
-          matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+          matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
         } else {
-          const keywordMatches = findKeywordMatchesInCat1(userMessage);
+          const keywordMatches = findKeywordMatchesInCat1(rawForProcessing);
           if (keywordMatches.length > 0) {
             matchedCategories = keywordMatches;
           } else {
             const fullHistory = getFullSessionHistory(sessionId);
-            matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
+            matchedCategories = await findGptMatchedCategories(rawForProcessing, fullHistory);
           }
         }
       }
 
       const detectedGender = inferGenderFromCategories(matchedCategories);
-      const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
-      return buildConciseResponse(userMessage, matchedCategories, sellers);
+      // Pass rawForProcessing to seller search and response builder (keeps results clean)
+      const sellers = await findSellersForQuery(rawForProcessing, matchedCategories, detectedGender);
+      return buildConciseResponse(rawForProcessing, matchedCategories, sellers);
     }
 
-    return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
+    // Default: company response (pass rawForProcessing and session history)
+    return await generateCompanyResponse(rawForProcessing, getFullSessionHistory(sessionId), companyInfo);
 
   } catch (error) {
     console.error('❌ getChatGPTResponse error (session-aware):', error);
@@ -1560,20 +1577,24 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 }
 
 // -------------------------
-// Updated handleMessage to call session-aware getChatGPTResponse
-// - When voiceForm.active === true, store & pass the prefixed message everywhere
+// Updated handleMessage: store & pass prefixed message WHEN voice form active
 // -------------------------
 async function handleMessage(sessionId, userMessage) {
   try {
-    // ensure session exists so we can check voiceForm
+    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    // choose what we will store / pass downstream.
-    // if voice form active -> prefix the message everywhere (history, sheets, classifier, etc.)
-    const storedMessage = (session && session.voiceForm && session.voiceForm.active)
-      ? `voice_ai: ${userMessage}`
-      : userMessage;
+    // Normalize incoming text
+    const rawMsg = (userMessage || '').toString().trim();
+
+    // If voice form active -> ensure prefix exists exactly once (idempotent)
+    let storedMessage = rawMsg;
+    if (session && session.voiceForm && session.voiceForm.active) {
+      // remove any existing voice_ai: prefix then re-add (idempotent)
+      storedMessage = stripVoicePrefix(rawMsg);
+      storedMessage = `voice_ai: ${storedMessage}`;
+    }
 
     // 1) Save incoming (possibly prefixed) user message to session history
     appendToSessionHistory(sessionId, 'user', storedMessage);
@@ -1592,7 +1613,7 @@ async function handleMessage(sessionId, userMessage) {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
 
-    // 4) IMPORTANT: pass the storedMessage (prefixed if voice form active) to the processor
+    // 4) Pass the storedMessage to the processor (classifier + flows)
     const aiResponse = await getChatGPTResponse(sessionId, storedMessage);
 
     // 5) Save AI response back into session history
@@ -1605,7 +1626,7 @@ async function handleMessage(sessionId, userMessage) {
       console.error('sheet log assistant failed', e);
     }
 
-    // 7) update lastActive (appendToSessionHistory already did this)
+    // 7) update lastActive
     if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
 
     // 8) return the assistant reply
@@ -1616,18 +1637,6 @@ async function handleMessage(sessionId, userMessage) {
   }
 }
 
-// ---------- Add this helper somewhere near your session helpers ----------
-function ensureVoicePrefix(session, msg) {
-  if (!msg || typeof msg !== 'string') return msg;
-  const trimmed = msg.trim();
-  // if msg already starts with voice_ai: (case-insensitive), return as-is
-  if (/^voice_ai:\s*/i.test(trimmed)) return trimmed;
-  // if session indicates voice form active, prefix it
-  if (session && session.voiceForm && session.voiceForm.active) {
-    return `voice_ai: ${trimmed}`;
-  }
-  return trimmed;
-}
 /* -------------------------
    Webhook + endpoints
 --------------------------*/
@@ -1635,25 +1644,14 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
     const webhookData = req.body;
-    const rawMessage = webhookData.whatsapp?.text?.body;
+    const userMessage = webhookData.whatsapp?.text?.body?.trim();
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || 'Customer';
-
-    const userMessage = (rawMessage && String(rawMessage).trim()) ? String(rawMessage).trim() : '';
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
-
     if (userMessage && userPhone) {
       const sessionId = userPhone;
-      // ensure session exists so we can check voiceForm.active
-      createOrTouchSession(sessionId);
-      const session = conversations[sessionId];
-
-      // apply idempotent voice prefix EARLY so all downstream logic sees it
-      const storedMessage = ensureVoicePrefix(session, userMessage);
-
       console.log(`➡️ Handling message for session ${sessionId}`);
-      const aiResponse = await handleMessage(sessionId, storedMessage);
-      // send back over Gallabox
+      const aiResponse = await handleMessage(sessionId, userMessage);
       await sendMessage(userPhone, userName, aiResponse);
       console.log(`✅ AI response sent to ${userPhone}`);
     } else {
