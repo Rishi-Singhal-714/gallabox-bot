@@ -1118,34 +1118,37 @@ async function classifyAndMatchWithGPT(userMessage, sessionId = null) {
         };
       }
 
-      // If the assistant just asked any of the voice form questions, treat the immediate reply as voice_form
+      // If the assistant just asked any of the voice form questions, and that assistant message
+      // is more recent than the last user message, treat the immediate reply as voice_form.
       if (sess.history && sess.history.length > 0) {
-        const lastAssistant = [...sess.history].reverse().find(h => h.role === 'assistant');
+        const reversed = [...sess.history].reverse();
+        const lastAssistant = reversed.find(h => h.role === 'assistant');
+        const lastUser = reversed.find(h => h.role === 'user');
         if (lastAssistant && lastAssistant.content) {
           const assistantText = String(lastAssistant.content).toLowerCase();
-          for (const q of (VOICE_FORM_QUESTIONS || [])) {
-            const label = String(q.label || '').toLowerCase();
-            if (!label) continue;
-            // Use smartSimilarity for robust fuzzy match (covers paraphrases / minor edits)
-            let sim = 0;
-            try {
-              sim = smartSimilarity(assistantText, label);
-            } catch (e) {
-              sim = 0;
-            }
-            const directMatch = assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0]);
-            if (directMatch || sim >= 0.78) {
-              // If the user reply looks short-ish or alphanumeric (typical of form answers), prefer voice_form
-              const tokens = text.split(/\s+/).filter(Boolean);
-              if (tokens.length <= 80) {
-                console.log('🔒 classifyAndMatchWithGPT: honoring voice_form because assistant asked:', { label, assistantText, sim });
-                return {
-                  intent: 'voice_form',
-                  confidence: 0.98,
-                  reason: 'Recent assistant prompt asked a voice-form question; treating reply as voice_form answer',
-                  matches: [],
-                  reasoning: 'Detected assistant asked voice-form question and user replied; honoring form flow.'
-                };
+          // Only enforce if assistant asked after the last user message (i.e., assistant prompted)
+          const assistantTs = Number(lastAssistant.ts) || 0;
+          const userTs = Number(lastUser && lastUser.ts) || 0;
+          if (assistantTs >= userTs) {
+            for (const q of (VOICE_FORM_QUESTIONS || [])) {
+              const label = String(q.label || '').toLowerCase();
+              if (!label) continue;
+              let sim = 0;
+              try { sim = smartSimilarity(assistantText, label); } catch (e) { sim = 0; }
+              const directMatch = assistantText.includes(label) || label.includes(assistantText) || assistantText.includes(label.split('?')[0]);
+              if (directMatch || sim >= 0.75) {
+                const tokens = text.split(/\s+/).filter(Boolean);
+                // Short replies or single-field answers are very likely form answers
+                if (tokens.length <= 40) {
+                  console.log('🔒 classifyAndMatchWithGPT: honoring voice_form because assistant asked (recent):', { label, assistantText, sim });
+                  return {
+                    intent: 'voice_form',
+                    confidence: 0.99,
+                    reason: 'Recent assistant prompt asked a voice-form question after the last user message; treating reply as voice_form answer',
+                    matches: [],
+                    reasoning: 'Detected assistant asked voice-form question and user replied; honoring form flow.'
+                  };
+                }
               }
             }
           }
