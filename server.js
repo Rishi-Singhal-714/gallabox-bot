@@ -1448,69 +1448,6 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
   return false;
 }
 
-/* -------------------------
-   Helper: lightweight heuristics + GPT fallback for field detection
--------------------------*/
-function isLikelyName(text) {
-  if (!text) return false;
-  const t = text.trim();
-  return /^[A-Za-z][A-Za-z\s.'-]{1,80}$/.test(t);
-}
-function isLikelyComment(text) {
-  if (!text) return false;
-  return (typeof text === 'string' && text.trim().length > 2);
-}
-function isLikelyEmail(text) {
-  if (!text) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim());
-}
-function isLikelyTime(text) {
-  if (!text) return false;
-  const t = text.trim().toLowerCase();
-  return /^\d{1,2}:\d{2}$/.test(t) || /\b(am|pm|hour|hours|tomorrow|today)\b/.test(t) || /^\d+\s*(mins|minutes|hours|hrs|hr)$/i.test(t);
-}
-
-// GPT fallback: classify free-text into one of your voice form fields (genre, name, email, comment, time, product, friend_name, dialogue)
-// Returns: { field: 'genre'|'name'|'email'|'comment'|'time'|'product'|'friend_name'|'dialogue'|'unknown', confidence: 0.0-1.0 }
-async function classifyFieldWithGPT(userMessage) {
-  if (!openai || !process.env.OPENAI_API_KEY) return { field: 'unknown', confidence: 0 };
-
-  const prompt = `
-You are a concise classifier. Given this USER_RESPONSE, decide which voice-form field it best answers.
-Possible fields: name, email, genre, dialouge, friend_name, product, time, comment.
-
-Return ONLY JSON: { "field": "<one-of-the-fields-or-unknown>", "confidence": 0.0 }.
-
-USER_RESPONSE:
-"""${String(userMessage).replace(/"/g, '\\"')}"""
-`;
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a JSON-only classifier. Return only JSON {field, confidence}." },
-        { role: "user", content: prompt }
-      ],
-      max_tokens: 120,
-      temperature: 0.0
-    });
-    const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
-    try {
-      const parsed = JSON.parse(raw);
-      return { field: parsed.field || 'unknown', confidence: Number(parsed.confidence) || 0 };
-    } catch (e) {
-      console.error('classifyFieldWithGPT parse error:', e, 'raw:', raw);
-      return { field: 'unknown', confidence: 0 };
-    }
-  } catch (err) {
-    console.error('classifyFieldWithGPT error:', err);
-    return { field: 'unknown', confidence: 0 };
-  }
-}
-
-/* -------------------------
-   Updated getChatGPTResponse (drop-in replacement)
--------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
@@ -1520,38 +1457,9 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    // If voice form active -> forward to handler (do NOT re-init or let classifier hijack),
-    // unless user explicitly asks to cancel or asks for an agent (we still handle agent requests).
-    if (session && session.voiceFormActive === true) {
-      const trimmed = (userMessage || '').trim();
-      if (/^(stop|cancel|exit|close)$/i.test(trimmed)) {
-        // allow form to be cancelled by user normal flow in handler
-        return await handleVoiceForm(sessionId, trimmed, sessionId);
-      }
-
-      // If user sends something that looks strongly like an agent-request, let agent flow proceed (explicit)
-      // but otherwise always forward into voice form so we don't restart the form.
-      const quickAgentCheck = /(\b(agent|human|representative|support|person)\b)/i.test(trimmed);
-      if (quickAgentCheck) {
-        // create ticket but include form context: include last 5 user messages from session history
-        session.lastDetectedIntent = "agent";
-        session.lastDetectedIntentTs = nowMs();
-
-        const history = getFullSessionHistory(sessionId); // this returns [] while voiceFormActive per your code; we still create ticket with available data
-        let ticketId = "";
-        try {
-          ticketId = await createAgentTicket(sessionId, history);
-        } catch {
-          ticketId = generateTicketId();
-        }
-        try { await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`); } catch(e){/*ignore*/}
-
-        return `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
-      }
-
-      // Otherwise forward the actual raw message to handleVoiceForm (do not transform)
-      console.log(`🔁 Voice form active for session ${sessionId} — forwarding message to handleVoiceForm.`);
-      return await handleVoiceForm(sessionId, userMessage, sessionId);
+    if (session.voiceFormActive === true) {
+          const transformed = `this is voice_form Intent:${userMessage}`;
+      return await handleVoiceForm(sessionId, transformed, sessionId);
     }
 
     // 0) onboarding
@@ -1568,46 +1476,19 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
     console.log("🧠 GPT classification:", { intent, confidence, reason: classification.reason });
 
-    // Quick heuristics
-    const looksLikeEmail = isLikelyEmail(userMessage);
-    const looksLikeName = isLikelyName(userMessage);
-    const looksLikeTime = isLikelyTime(userMessage);
-
-    // SAFETY: if classifier returns 'agent' but the message looks like an email,
-    // avoid forcing/restarting the voice form. If voice form already active we already forwarded above.
-    if (intent === "agent" && looksLikeEmail) {
-      console.log("🚫 BLOCKED FALSE AGENT INTENT — looks like an email");
-      // If not in voice form, treat as voice_form starter candidate instead of forcing agent
-      intent = "voice_form";
+    // ✔ Email detection
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userMessage.trim());
+    
+    // 🔥🔥 FIX: STOP AGENT INTENT FROM EMAIL
+    if (intent === "agent" && isEmail) {
+      console.log("🚫 BLOCKED FALSE AGENT INTENT — email detected");
+    if (session && session.voiceFormActive) {
+    const transformed = `this is voice_form Intent:${userMessage}`;
+    console.log(`🔁 Voice form is already active for session ${sessionId} — forwarding message to handleVoiceForm.`);
+    return await handleVoiceForm(sessionId, transformed, sessionId);
+  }
     }
 
-    // NEW: Apply same safe-forwarding logic for other intents that frequently hijack form:
-    // if classifier says company/seller/investors/product but incoming text looks like a voice-field
-    // (name / email / genre / comment / time / product), then switch to voice_form to continue the flow.
-    // We use heuristics first and GPT fallback for 'genre' or uncertain cases.
-    if (!session.voiceFormActive) {
-      let fieldCandidate = null;
-      if (looksLikeEmail) fieldCandidate = 'email';
-      else if (looksLikeName) fieldCandidate = 'name';
-      else if (looksLikeTime) fieldCandidate = 'time';
-      else {
-        // uncertain fields (genre/comment/product) — use GPT to check if this answer looks like a voice-form field
-        const g = await classifyFieldWithGPT(userMessage);
-        if (g.confidence >= 0.7 && g.field && g.field !== 'unknown') {
-          fieldCandidate = g.field; // e.g., 'genre', 'comment', 'product' ...
-        }
-      }
-
-      if (fieldCandidate) {
-        // If classifier reported an intent that is different from voice_form and the text looks like a voice-field,
-        // prefer "voice_form" so the user can continue the voice flow (this prevents restarting full form accidentally).
-        // But be conservative: only convert to voice_form when classifier intent is not 'agent' (agent is explicit)
-        if (intent !== 'agent') {
-          console.log(`🔀 Converting routing to voice_form because user text looks like voice-field "${fieldCandidate}" (classifier intent was "${intent}")`);
-          intent = "voice_form";
-        }
-      }
-    }
 
     // 2) store product intent
     if (intent === "product") {
@@ -1615,7 +1496,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // Agent flow (if still agent at this point)
+    // 💥 FIXED — Agent flow ONLY now runs if not email
     if (intent === "agent") {
       session.lastDetectedIntent = "agent";
       session.lastDetectedIntentTs = nowMs();
@@ -1640,7 +1521,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     if (intent === "voice_form") {
       session.lastDetectedIntent = "voice_form";
       session.lastDetectedIntentTs = nowMs();
-      // forward raw message (do NOT use transformed placeholder here)
       return await handleVoiceForm(sessionId, userMessage, sessionId);
     }
 
@@ -1678,16 +1558,22 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
+    // Default → BUT protect voice form from escaping into company response
+if (session && session.voiceFormActive) {
+  const transformed = `this is voice_form Intent:${userMessage}`;
+  console.log(`🔁 Voice form is active — redirecting fallback to handleVoiceForm.`);
+  return await handleVoiceForm(sessionId, transformed, sessionId);
+}
 
-    // Default (company)
-    return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
+// Otherwise normal company response
+return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
+
 
   } catch (error) {
     console.error("❌ getChatGPTResponse error:", error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
 
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
