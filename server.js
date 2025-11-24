@@ -1308,7 +1308,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 async function handleVoiceAIForm(sessionId, userMessage) {
   createOrTouchSession(sessionId);
   const session = conversations[sessionId];
-
+  console.log(`🔁 handleVoiceAIForm called for ${sessionId} | active=${session.voiceIntentActive} | qIndex=${session.voiceFormQuestionIndex} | msg="${String(userMessage).slice(0,80)}"`);
   // Normalize simple control commands
   const trimmed = (userMessage || '').trim();
   const lower = trimmed.toLowerCase();
@@ -1520,8 +1520,27 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
   try {
     // ensure session exists
+    // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
+
+    // ---------- VOICE FLOW LOCK: HIGH PRIORITY ----------
+    // If a voice form is already active for this session, ALWAYS route the incoming message
+    // into the voice form handler and return its reply immediately. This prevents any other
+    // classifier / intent from running while voice flow is active.
+    if (session && session.voiceIntentActive) {
+      console.log(`🔒 Voice intent lock active for session ${sessionId} — routing to handleVoiceAIForm`);
+      try {
+        const voiceResp = await handleVoiceAIForm(sessionId, userMessage);
+        console.log(`🔒 Voice handler replied for ${sessionId}: ${String(voiceResp).slice(0,120)}`);
+        return voiceResp;
+      } catch (err) {
+        console.error('❌ Error routing to handleVoiceAIForm:', err);
+        return 'Sorry — something went wrong with the voice form. Please type "stop" and try again.';
+      }
+    }
+    // ---------- end voice lock ----------
+
     // -------------------------
     // Voice AI flow: Highest priority LOCK
     // - If user just asked to start voice AI, begin the voice form flow.
