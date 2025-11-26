@@ -1229,22 +1229,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   }
 }
 
-
-/* -------------------------
-   Seller onboarding helper
---------------------------
-function isSellerOnboardQuery(userMessage) {
-  if (!userMessage) return false;
-  const m = userMessage.toLowerCase();
-  const triggers = [
-    'sell on', 'sell with', 'become a seller', 'become seller', 'be a seller', 'how to join', 'how to onboard',
-    'onboard', 'onboarding', 'register as seller', 'register as a seller', 'join as seller', 'become a merchant',
-    'how to sell', 'partner with', 'partner with zulu', 'seller signup', 'seller sign up', 'how to become a seller',
-    'how to register', 'apply as seller', 'apply to sell', 'sell on zulu', 'seller onboarding'
-  ];
-  return triggers.some(t => m.includes(t));
-}*/
-
 async function generateInvestorResponse(userMessage) {
   const prompt = `
 You are an **Investor Relations Associate** for Zulu (MAD MIND TECH INNOVATIONS PVT LTD).
@@ -1403,14 +1387,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
-
-    // 0) quick onboarding detection (explicit phrase)
-   // if (isSellerOnboardQuery(userMessage)) {
-      // update session history / lastDetectedIntent
-     // session.lastDetectedIntent = 'seller';
-      //session.lastDetectedIntentTs = nowMs();
-      //return await generateSellerResponse(userMessage);
-    //}
 
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
