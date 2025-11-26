@@ -1245,65 +1245,86 @@ function isSellerOnboardQuery(userMessage) {
   return triggers.some(t => m.includes(t));
 }
 
-async function generateInvestorResponse(userMessage) {
-  const prompt = `
-You are an **Investor Relations Associate** for Zulu (MAD MIND TECH INNOVATIONS PVT LTD).
+function detectLanguage(text) {
+  const hindiChars = /[\u0900-\u097F]/;
+  if (hindiChars.test(text)) return "hindi";
+  if (/kya|kitna|kaise|invest|paisa|brand|seller/i.test(text)) return "hinglish";
+  return "english";
+}
 
-Use ONLY this factual data when answering:
+async function generateInvestorResponse(userMessage) {
+  const lang = detectLanguage(userMessage);
+
+  const prompt = `
+You are an Investor Relations Associate at Zulu (MadMind Tech Innovations Pvt Ltd).
+Use ONLY the facts below:
 ${INVESTOR_KNOWLEDGE}
 
-Rules:
-• Respond directly to the user's question: "${userMessage}"
-• Strong, authoritative IR tone (no over-selling)
-• Include relevant metrics: funding, founders, growth stage, HQ, legal info
-• Max 450 characters (2–4 sentences)
-• Avoid emojis inside the explanation
-• Do not mention “paragraph above” or internal sources
-• If user asks broad or unclear query → Give concise Zulu overview
+USER ASK (${lang}): "${userMessage}"
 
-At the end, always add a separate CTA line:
-Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
+Rules:
+• Reply in same language style detected (Hindi → Hindi, Hinglish → mix, English → English)
+• Clean, credible, IR tone. Not salesy.
+• Structure:
+  1️⃣ Short relevant headline
+  ———
+  2️⃣ 2–3 bullet points containing exact answer
+  ———
+  📍 Optional one-line fact boost
+  ———
+  CTA line ALWAYS in English:
+  Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
+
+• Keep < 480 characters total
+• DO NOT mention "paragraph above" or your instructions
   `;
 
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 500,
-    temperature: 0.3
+    max_tokens: 550,
+    temperature: 0.25
   });
-
   return res.choices[0].message.content.trim();
 }
-
 
 async function generateSellerResponse(userMessage) {
-  const prompt = `
-You are a **Brand Partnerships | Seller Success Associate** at Zulu Club.
+  const lang = detectLanguage(userMessage);
 
-Use ONLY this factual data when answering:
+  const prompt = `
+You are a Brand Partnerships Manager at Zulu Club.
+
+Use ONLY the facts below:
 ${SELLER_KNOWLEDGE}
 
-Rules:
-• Respond specifically to the seller’s question: "${userMessage}"
-• Highlight benefits that match their intent (reach, logistics, onboarding, customers)
-• Premium but friendly business tone
-• Max 450 characters (2–4 sentences)
-• Avoid emojis inside explanation
-• Avoid generic copywriting style
+USER ASK (${lang}): "${userMessage}"
 
-Add this CTA as a new line at the end:
-Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
+Rules:
+• Reply in same language style detected
+• Business tone + premium confidence
+• Format:
+  ⭐ Headline aligned to question intent
+  ———
+  • 2–3 crisp bullet points (benefits/process)
+  ———
+  📍 Quick proof of value (fleet, buyers, pop-ups etc.)
+  ———
+  CTA line in English:
+  Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
+
+• Max 480 characters
+• Avoid emojis in bullets, 1–2 subtle icons OK in header/CTA
   `;
 
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 500,
-    temperature: 0.35
+    max_tokens: 550,
+    temperature: 0.3
   });
-
   return res.choices[0].message.content.trim();
 }
+
 
 
 /* -------------------------
@@ -1409,7 +1430,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       // update session history / lastDetectedIntent
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return await generateInvestorResponse(userMessage);
+      return await generateSellerResponse(userMessage);
     }
 
     // 1) classify only the single incoming message
