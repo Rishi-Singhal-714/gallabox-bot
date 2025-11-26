@@ -1232,7 +1232,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
 
 /* -------------------------
    Seller onboarding helper
---------------------------*/
+--------------------------
 function isSellerOnboardQuery(userMessage) {
   if (!userMessage) return false;
   const m = userMessage.toLowerCase();
@@ -1243,7 +1243,7 @@ function isSellerOnboardQuery(userMessage) {
     'how to register', 'apply as seller', 'apply to sell', 'sell on zulu', 'seller onboarding'
   ];
   return triggers.some(t => m.includes(t));
-}
+}*/
 
 async function generateInvestorResponse(userMessage) {
   const prompt = `
@@ -1405,12 +1405,12 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     const session = conversations[sessionId];
 
     // 0) quick onboarding detection (explicit phrase)
-    if (isSellerOnboardQuery(userMessage)) {
+   // if (isSellerOnboardQuery(userMessage)) {
       // update session history / lastDetectedIntent
-      session.lastDetectedIntent = 'seller';
-      session.lastDetectedIntentTs = nowMs();
-      return await generateSellerResponse(userMessage);
-    }
+     // session.lastDetectedIntent = 'seller';
+      //session.lastDetectedIntentTs = nowMs();
+      //return await generateSellerResponse(userMessage);
+    //}
 
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
