@@ -168,15 +168,24 @@ Explore & shop on: zulu.club
 Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
 
-//Investors paragraph 
-const INVESTORS_PARAGRAPH = `
-Zulu, founded in 2024 by Adarsh Bhatia with co-founder Anubhav, operates under its legal entity MADMIND TECH INNOVATIONS PRIVATE LIMITED, incorporated on October 7, 2024 in Gurgaon, India. The company offers a personal shopping assistant platform providing real-time product browsing, interactive help, and rapid delivery for fashion retail. Zulu has raised $250K in seed funding on July 16, 2025, backed by TDV Partners, bringing its total funding to $250K. Its legal entity is registered with ROC Delhi under CIN U47710HR2024PTC125362, and has an authorized share capital of INR 6.5 lakh and paid-up capital of INR 5.57 lakh. Headquartered at D20-301, Ireo Victory Valley, Sector-67, Gurgaon, the company is active and growing in the seed stage, with 1 associated brand (Zulu) and 9 active competitors, including funded players like Slikk, Booon, and Blip.
+const INVESTOR_KNOWLEDGE = `
+Zulu, founded in 2024 by Adarsh Bhatia with co-founder Anubhav, operates under MADMIND TECH INNOVATIONS PRIVATE LIMITED, Gurgaon.
+Seed round: $250K raised on July 16, 2025 from TDV Partners.
+Legal: CIN U47710HR2024PTC125362, registered on October 7, 2024.
+HQ: D20-301, Ireo Victory Valley, Sector-67, Gurgaon.
+Authorized capital INR 6.5 lakh | Paid-up INR 5.57 lakh.
+1 brand (Zulu), 9 competitors (Inc: Slikk, Booon, Blip).
 `;
 
-//Seller paragraph
-const SELLER_INFO_PARAGRAPH = `
-Zulu Club is a lifestyle commerce platform built by MADMIND TECH INNOVATIONS PRIVATE LIMITED, founded by Adarsh Bhatia and Anubhav, offering brands a fast, modern way to reach high-intent customers in Gurgaon. Through Zulu’s personal shopping assistant experience, customers discover curated lifestyle products across fashion, beauty, home décor, footwear, accessories, kids’ items, and gifting — all delivered to their doorstep in just 100 minutes. Shoppers can try products at home, keep what they love, and return the rest instantly, creating a frictionless buying experience and higher conversion for partner brands. Zulu Club currently serves customers across Gurgaon and hosts regular pop-ups at AIPL Joy Street and AIPL Central, giving sellers both online visibility and offline discovery. Brands can showcase products on zulu.club and the Zulu Club app (Android & iOS), gaining access to a high-quality customer base, fast logistics, and a premium shopping environment.
+const SELLER_KNOWLEDGE = `
+Zulu Club is a lifestyle commerce platform by MADMIND TECH.
+Serve Gurgaon — 100-min delivery. Try at home. Instant returns.
+Works with fashion, beauty, home, footwear, accessories, kids & gifting.
+Online visibility + offline pop-ups at AIPL Joy Street & Central.
+High intent customers, fast logistics, frictionless onboarding.
+zulu.club + Zulu Club apps (Android + iOS).
 `;
+
 
 /* -------------------------
    CSV loaders: galleries + sellers
@@ -1236,50 +1245,66 @@ function isSellerOnboardQuery(userMessage) {
   return triggers.some(t => m.includes(t));
 }
 
-async function generateInvestorResponse() {
+async function generateInvestorResponse(userMessage) {
   const prompt = `
-Rewrite this for a WhatsApp investor reply (<250 characters).
-Keep professional tone. Must include: funding raised, founders, seed stage, Gurgaon presence.
-Use 🔹 bullets + few emojis. Keep crisp.
+You are an **Investor Relations Associate** for Zulu (MAD MIND TECH INNOVATIONS PVT LTD).
 
-${INVESTORS_PARAGRAPH}
+Use ONLY this factual data when answering:
+${INVESTOR_KNOWLEDGE}
 
-After rewriting the short message, add exactly this single CTA line at bottom:
+Rules:
+• Respond directly to the user's question: "${userMessage}"
+• Strong, authoritative IR tone (no over-selling)
+• Include relevant metrics: funding, founders, growth stage, HQ, legal info
+• Max 450 characters (2–4 sentences)
+• Avoid emojis inside the explanation
+• Do not mention “paragraph above” or internal sources
+• If user asks broad or unclear query → Give concise Zulu overview
 
-Apply to invest: https://forms.gle/5wwfYFB7gGs75pYq5
-  `;
-  
-  const res = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 200,
-    temperature: 0.5
-  });
-
-  return res.choices[0].message.content.trim();
-}
-
-async function generateSellerResponse() {
-  const prompt = `
-Rewrite this for merchant onboarding WhatsApp reply (<260 characters).
-Highlight: Sell fast, reach Gurgaon customers, 100-min delivery, pop-ups, easy onboarding. Use bullets + emojis.
-
-${SELLER_INFO_PARAGRAPH}
-
-After rewriting the short message, add exactly this CTA line at bottom:
-
-Sell on Zulu: https://forms.gle/tvkaKncQMs29dPrPA
+At the end, always add a separate CTA line:
+Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
   `;
 
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 200,
-    temperature: 0.5
+    max_tokens: 500,
+    temperature: 0.3
   });
 
   return res.choices[0].message.content.trim();
 }
+
+
+async function generateSellerResponse(userMessage) {
+  const prompt = `
+You are a **Brand Partnerships | Seller Success Associate** at Zulu Club.
+
+Use ONLY this factual data when answering:
+${SELLER_KNOWLEDGE}
+
+Rules:
+• Respond specifically to the seller’s question: "${userMessage}"
+• Highlight benefits that match their intent (reach, logistics, onboarding, customers)
+• Premium but friendly business tone
+• Max 450 characters (2–4 sentences)
+• Avoid emojis inside explanation
+• Avoid generic copywriting style
+
+Add this CTA as a new line at the end:
+Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
+  `;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 500,
+    temperature: 0.35
+  });
+
+  return res.choices[0].message.content.trim();
+}
+
 
 /* -------------------------
    Session/history helpers (ADDED)
@@ -1384,7 +1409,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       // update session history / lastDetectedIntent
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return generateSellerResponse();
+      return await generateInvestorResponse(userMessage);
     }
 
     // 1) classify only the single incoming message
@@ -1455,14 +1480,13 @@ ${VOICE_AI_FORM_LINK}`;
     if (intent === 'seller') {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return generateSellerResponse();
+      return await generateSellerResponse(userMessage);
     }
 
     if (intent === 'investors') {
       session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
-      return await generateInvestorResponse();
-
+      return await generateInvestorResponse(userMessage);
     }
 
     if (intent === 'product' && galleriesData.length > 0) {
