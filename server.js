@@ -1263,20 +1263,18 @@ ${INVESTOR_KNOWLEDGE}
 USER ASK (${lang}): "${userMessage}"
 
 Rules:
-• Reply in same language style detected (Hindi → Hindi, Hinglish → mix, English → English)
 • Clean, credible, IR tone. Not salesy.
 • Structure:
-  1️⃣ Short relevant headline
-  ———
-  2️⃣ 2–3 bullet points containing exact answer
+  1️⃣ very Short relevant headling
+  
+  2️⃣ 1–2 bullet points containing exact answer and use numbers too
   ———
   📍 Optional one-line fact boost
-  ———
+
   CTA line ALWAYS in English:
   Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
 
-• Keep < 480 characters total
-• DO NOT mention "paragraph above" or your instructions
+• Keep < 200 characters total
   `;
 
   const res = await openai.chat.completions.create({
@@ -1287,6 +1285,7 @@ Rules:
   });
   return res.choices[0].message.content.trim();
 }
+//• DO NOT mention "paragraph above" or your instructions
 
 async function generateSellerResponse(userMessage) {
   const lang = detectLanguage(userMessage);
@@ -1300,20 +1299,18 @@ ${SELLER_KNOWLEDGE}
 USER ASK (${lang}): "${userMessage}"
 
 Rules:
-• Reply in same language style detected
 • Business tone + premium confidence
 • Format:
   ⭐ Headline aligned to question intent
-  ———
+
   • 2–3 crisp bullet points (benefits/process)
-  ———
+
   📍 Quick proof of value (fleet, buyers, pop-ups etc.)
-  ———
+
   CTA line in English:
   Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
 
-• Max 480 characters
-• Avoid emojis in bullets, 1–2 subtle icons OK in header/CTA
+• Max 200 characters
   `;
 
   const res = await openai.chat.completions.create({
