@@ -168,9 +168,14 @@ Explore & shop on: zulu.club
 Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
 
-// INVESTORS paragraph placeholder (edit as required)
+//Investors paragraph 
 const INVESTORS_PARAGRAPH = `
-Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact (https://forms.gle/5wwfYFB7gGs75pYq5) and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
+Zulu, founded in 2024 by Adarsh Bhatia with co-founder Anubhav, operates under its legal entity MADMIND TECH INNOVATIONS PRIVATE LIMITED, incorporated on October 7, 2024 in Gurgaon, India. The company offers a personal shopping assistant platform providing real-time product browsing, interactive help, and rapid delivery for fashion retail. Zulu has raised $250K in seed funding on July 16, 2025, backed by TDV Partners, bringing its total funding to $250K. Its legal entity is registered with ROC Delhi under CIN U47710HR2024PTC125362, and has an authorized share capital of INR 6.5 lakh and paid-up capital of INR 5.57 lakh. Headquartered at D20-301, Ireo Victory Valley, Sector-67, Gurgaon, the company is active and growing in the seed stage, with 1 associated brand (Zulu) and 9 active competitors, including funded players like Slikk, Booon, and Blip.
+`;
+
+//Seller paragraph
+const SELLER_INFO_PARAGRAPH = `
+Zulu Club is a lifestyle commerce platform built by MADMIND TECH INNOVATIONS PRIVATE LIMITED, founded by Adarsh Bhatia and Anubhav, offering brands a fast, modern way to reach high-intent customers in Gurgaon. Through Zulu’s personal shopping assistant experience, customers discover curated lifestyle products across fashion, beauty, home décor, footwear, accessories, kids’ items, and gifting — all delivered to their doorstep in just 100 minutes. Shoppers can try products at home, keep what they love, and return the rest instantly, creating a frictionless buying experience and higher conversion for partner brands. Zulu Club currently serves customers across Gurgaon and hosts regular pop-ups at AIPL Joy Street and AIPL Central, giving sellers both online visibility and offline discovery. Brands can showcase products on zulu.club and the Zulu Club app (Android & iOS), gaining access to a high-quality customer base, fast logistics, and a premium shopping environment.
 `;
 
 /* -------------------------
@@ -1231,10 +1236,49 @@ function isSellerOnboardQuery(userMessage) {
   return triggers.some(t => m.includes(t));
 }
 
-function sellerOnboardMessage() {
-  const link = 'https://app.zulu.club/brand';
-  const fillform = 'https://forms.gle/tvkaKncQMs29dPrPA';
-  return "Want to sell on Zulu Club? Sign up here: https://app.zulu.club/brand\n\nQuick steps:\n• Fill the seller form at the link (https://forms.gle/tvkaKncQMs29dPrPA)\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers";
+async function generateInvestorResponse() {
+  const prompt = `
+Rewrite this for a WhatsApp investor reply (<250 characters).
+Keep professional tone. Must include: funding raised, founders, seed stage, Gurgaon presence.
+Use 🔹 bullets + few emojis. Keep crisp.
+
+${INVESTORS_PARAGRAPH}
+
+After rewriting the short message, add exactly this single CTA line at bottom:
+
+Apply to invest: https://forms.gle/5wwfYFB7gGs75pYq5
+  `;
+  
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 200,
+    temperature: 0.5
+  });
+
+  return res.choices[0].message.content.trim();
+}
+
+async function generateSellerResponse() {
+  const prompt = `
+Rewrite this for merchant onboarding WhatsApp reply (<260 characters).
+Highlight: Sell fast, reach Gurgaon customers, 100-min delivery, pop-ups, easy onboarding. Use bullets + emojis.
+
+${SELLER_INFO_PARAGRAPH}
+
+After rewriting the short message, add exactly this CTA line at bottom:
+
+Sell on Zulu: https://forms.gle/tvkaKncQMs29dPrPA
+  `;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 200,
+    temperature: 0.5
+  });
+
+  return res.choices[0].message.content.trim();
 }
 
 /* -------------------------
@@ -1340,7 +1384,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       // update session history / lastDetectedIntent
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
+      return generateSellerResponse();
     }
 
     // 1) classify only the single incoming message
@@ -1411,13 +1455,14 @@ ${VOICE_AI_FORM_LINK}`;
     if (intent === 'seller') {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
+      return generateSellerResponse();
     }
 
     if (intent === 'investors') {
       session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
-      return INVESTORS_PARAGRAPH.trim();
+      return await generateInvestorResponse();
+
     }
 
     if (intent === 'product' && galleriesData.length > 0) {
