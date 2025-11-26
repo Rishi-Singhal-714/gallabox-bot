@@ -1245,83 +1245,65 @@ function isSellerOnboardQuery(userMessage) {
   return triggers.some(t => m.includes(t));
 }
 
-function detectLanguage(text) {
-  const hindiChars = /[\u0900-\u097F]/;
-  if (hindiChars.test(text)) return "hindi";
-  if (/kya|kitna|kaise|invest|paisa|brand|seller/i.test(text)) return "hinglish";
-  return "english";
-}
-
 async function generateInvestorResponse(userMessage) {
-  const lang = detectLanguage(userMessage);
-
   const prompt = `
-You are an Investor Relations Associate at Zulu (MadMind Tech Innovations Pvt Ltd).
-Use ONLY the facts below:
+You are an **Investor Relations Associate** for Zulu (MAD MIND TECH INNOVATIONS PVT LTD).
+
+Use ONLY this factual data when answering:
 ${INVESTOR_KNOWLEDGE}
 
-USER ASK (${lang}): "${userMessage}"
-
 Rules:
-• Clean, credible, IR tone. Not salesy.
-• Structure:
-  1️⃣ very Short relevant headling
-  
-  2️⃣ 1–2 bullet points containing exact answer and use numbers too
-  ———
-  📍 Optional one-line fact boost
+• Respond directly to the user's question: "${userMessage}"
+• Strong, authoritative IR tone (no over-selling)
+• Include relevant metrics: funding, founders, growth stage, HQ, legal info according to user's question: "${userMessage}"
+• Max 200 characters (2–4 sentences)
+• Avoid emojis inside the explanation
+• Do not mention “paragraph above” or internal sources
+• If user asks broad or unclear query → Give concise Zulu overview
 
-  CTA line ALWAYS in English:
-  Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
-
-• Keep < 200 characters total
+At the end, always add a separate CTA line:
+Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
   `;
 
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 550,
-    temperature: 0.25
-  });
-  return res.choices[0].message.content.trim();
-}
-//• DO NOT mention "paragraph above" or your instructions
-
-async function generateSellerResponse(userMessage) {
-  const lang = detectLanguage(userMessage);
-
-  const prompt = `
-You are a Brand Partnerships Manager at Zulu Club.
-
-Use ONLY the facts below:
-${SELLER_KNOWLEDGE}
-
-USER ASK (${lang}): "${userMessage}"
-
-Rules:
-• Business tone + premium confidence
-• Format:
-  ⭐ Headline aligned to question intent
-
-  • 2–3 crisp bullet points (benefits/process)
-
-  📍 Quick proof of value (fleet, buyers, pop-ups etc.)
-
-  CTA line in English:
-  Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
-
-• Max 200 characters
-  `;
-
-  const res = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 550,
+    max_tokens: 500,
     temperature: 0.3
   });
+
   return res.choices[0].message.content.trim();
 }
 
+
+async function generateSellerResponse(userMessage) {
+  const prompt = `
+You are a **Brand Partnerships | Seller Success Associate** at Zulu Club.
+
+Use ONLY this factual data when answering:
+${SELLER_KNOWLEDGE}
+
+Rules:
+• Respond specifically to the seller’s question: "${userMessage}"
+• Highlight benefits that match their intent (reach, logistics, onboarding, customers) according to user's question: "${userMessage}"
+• Premium but friendly business tone
+• Max 200 characters (2–4 sentences)
+• Avoid emojis inside explanation
+• Avoid generic copywriting style
+
+Add this CTA as a new line at the end:
+Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
+  `;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 500,
+    temperature: 0.35
+  });
+
+  return res.choices[0].message.content.trim();
+}
 
 
 /* -------------------------
