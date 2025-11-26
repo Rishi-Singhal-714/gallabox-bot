@@ -168,9 +168,51 @@ Explore & shop on: zulu.club
 Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
 
-// INVESTORS paragraph placeholder (edit as required)
+// SELLER info (used by GPT to answer seller onboarding queries)
+const SELLER_INFO = `
+Zulu Club partners with premium lifestyle brands and sellers to deliver a 100-minute, try-at-home shopping experience in Gurgaon.
+
+Who can sell on Zulu Club:
+- Fashion, footwear, accessories, home decor, beauty, gifting & kids lifestyle brands
+- D2C brands, boutiques, curated multi-brand stores
+- Must be able to serve Gurgaon region (for now)
+
+What Zulu Club offers:
+- 100-minute delivery and try-at-home experience for customers
+- Centralised logistics, reverse pickups & instant returns
+- Online reach via app + WhatsApp, plus offline visibility via pop-ups
+- Curated placement instead of discount-focused marketplace
+
+Basic onboarding requirements:
+- GST-registered business (preferred)
+- Product catalog with images, pricing, and MOQs
+- Ability to maintain stock for quick fulfillment
+- Commercials decided post discussion (consignment / purchase / revenue share depending on category)
+
+Key links:
+- Seller Portal (onboarding & management):
+  https://app.zulu.club/brand
+- Seller interest form:
+  https://forms.gle/tvkaKncQMs29dPrPA
+`;
+
+// INVESTOR info (used by GPT to answer investor queries)
 const INVESTORS_PARAGRAPH = `
-Thanks for your interest in investing in Zulu Club. Please share your pitch deck or contact (https://forms.gle/5wwfYFB7gGs75pYq5) and our team will get back to you. (Edit this paragraph to include your funding history, pitch-deck link, and IR contact.)
+Zulu Club is building a new way to shop lifestyle products with 100-minute delivery, try-at-home and curated discovery for fashion, home decor, beauty, kids & gifting. We operate in Gurgaon with both digital and pop-up presence.
+
+Investor context:
+- Focus: lifestyle commerce + logistics + consumer brand building
+- Model: curated marketplace with fast fulfilment and try-at-home
+- Levers: high intent customers, better NPS vs traditional marketplaces, and experience-led commerce
+
+What we request from investors:
+- Short introduction and thesis
+- Indicative cheque size and stage preference
+- Any relevant portfolio synergies
+- A deck or one-pager
+
+Investor interest / contact form:
+https://forms.gle/5wwfYFB7gGs75pYq5
 `;
 
 /* -------------------------
@@ -331,6 +373,7 @@ async function sendMessage(to, name, message) {
     throw error;
   }
 }
+
 /* -------------------------
    Agent ticket helpers
    - Creates a ticket id and appends a row to your AGENT_TICKETS_SHEET
@@ -849,35 +892,35 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
     }
   }
 
-const sellers_by_gpt = [];
+  const sellers_by_gpt = [];
 
-const toCheck = candidateList.slice(0, MAX_GPT_SELLER_CHECK);
+  const toCheck = candidateList.slice(0, MAX_GPT_SELLER_CHECK);
 
-const gptPromises = toCheck.map(async (seller) => {
-  if (applyHomeFilter) {
-    const arr = seller.category_ids_array || [];
-    const isHome = arr.some(c => 
-      c.includes("home") || c.includes("decor") || 
-      c.includes("lamp") || c.includes("vase") || 
-      c.includes("clock") || c.includes("furnit")
-    );
-    if (!isHome) return null;
-  }
+  const gptPromises = toCheck.map(async (seller) => {
+    if (applyHomeFilter) {
+      const arr = seller.category_ids_array || [];
+      const isHome = arr.some(c => 
+        c.includes("home") || c.includes("decor") || 
+        c.includes("lamp") || c.includes("vase") || 
+        c.includes("clock") || c.includes("furnit")
+      );
+      if (!isHome) return null;
+    }
 
-  const result = await gptCheckSellerMaySell(userMessage, seller);
+    const result = await gptCheckSellerMaySell(userMessage, seller);
 
-  if (result.score > GPT_THRESHOLD) {
-    return { seller, score: result.score, reason: result.reason };
-  }
+    if (result.score > GPT_THRESHOLD) {
+      return { seller, score: result.score, reason: result.reason };
+    }
 
-  return null;
-});
+    return null;
+  });
 
-const gptResults = await Promise.all(gptPromises);
+  const gptResults = await Promise.all(gptPromises);
 
-gptResults.forEach(r => {
-  if (r) sellers_by_gpt.push(r);
-});
+  gptResults.forEach(r => {
+    if (r) sellers_by_gpt.push(r);
+  });
 
 
   const sellersType2Arr = Array.from(sellers_by_type2.values()).slice(0, 10);
@@ -1094,10 +1137,10 @@ USER MESSAGE:
       const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
       const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
 
-// DEBUG: log parsed classifier output so you can inspect what GPT returned
-console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
+      // DEBUG: log parsed classifier output so you can inspect what GPT returned
+      console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
 
-return { intent, confidence, reason, matches, reasoning };
+      return { intent, confidence, reason, matches, reasoning };
 
     } catch (e) {
       console.error('Error parsing classifyAndMatchWithGPT JSON:', e, 'raw:', raw);
@@ -1110,32 +1153,22 @@ return { intent, confidence, reason, matches, reasoning };
 }
 
 /* -------------------------
-   Company Response Generator (kept)
+   Company / Seller / Investor Response Generators
 --------------------------*/
-
-// -------------------------
 
 // Simple greeting detector - returns true if the message looks like a greeting
 function isGreeting(text) {
   if (!text || typeof text !== 'string') return false;
   const t = text.toLowerCase().trim();
-  // common short greetings; adjust if you want stricter detection
-  const greetings = ['hi', 'hello', 'hey', 'good morning', 'good evening', 'good afternoon', 'greetings', 'namaste', 'namaskar' , 'hola', 'hey there'];
-  // treat very short messages that are only a greeting or "hi!" etc.
+  const greetings = ['hi', 'hello', 'hey', 'good morning', 'good evening', 'good afternoon', 'greetings', 'namaste', 'namaskar', 'hola', 'hey there'];
   const cleaned = t.replace(/[^\w\s]/g, '').trim();
   if (greetings.includes(cleaned)) return true;
-  // also if text is just one or two characters like "hi" or "hii"
   if (/^hi+$/i.test(cleaned)) return true;
-  // one-word salutations
   if (greetings.some(g => cleaned === g)) return true;
   return false;
 }
 
-// -------------------------
-
-// -------------------------
-// Company Response Generator (removed app-links append logic)
-// -------------------------
+// Company Response Generator
 async function generateCompanyResponse(userMessage, conversationHistory, companyInfo) {
   const messages = [];
 
@@ -1143,18 +1176,18 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     role: "system",
     content: `You are a friendly and helpful customer service assistant for Zulu Club, a premium lifestyle shopping service. 
 
-    ZULU CLUB INFORMATION:
-    ${companyInfo}
+ZULU CLUB INFORMATION:
+${companyInfo}
 
-    IMPORTANT RESPONSE GUIDELINES:
-    1. Keep responses conversational and helpful
-    2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
-    3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
-    4. Use emojis to make it engaging but professional
-    5. Keep responses under 200 characters for WhatsApp compatibility
-    6. Be enthusiastic and helpful 
-    7. Direct users to our website zulu.club for more information and shopping
-    `
+IMPORTANT RESPONSE GUIDELINES:
+1. Keep responses conversational and helpful
+2. Highlight key benefits: 100-minute delivery, try-at-home, easy returns
+3. Mention availability: Currently in Gurgaon, pop-ups at AIPL Joy Street & AIPL Central
+4. Use emojis to make it engaging but professional
+5. Keep responses under 200 characters for WhatsApp compatibility
+6. Be enthusiastic and helpful 
+7. Direct users to our website zulu.club for more information and shopping
+`
   };
 
   messages.push(systemMessage);
@@ -1196,9 +1229,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
       ? completion.choices[0].message.content.trim()
       : "";
 
-    // If it's a greeting, do NOT append the links block
     if (!isGreeting(userMessage)) {
-      // ensure a clean separation (two newlines) before appending links
       if (assistantText.length > 0) assistantText = assistantText + "\n\n" + LINKS_BLOCK;
       else assistantText = LINKS_BLOCK;
     }
@@ -1206,7 +1237,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     return assistantText;
   } catch (e) {
     console.error('Error in generateCompanyResponse:', e);
-    // fallback message (concise, with links unless greeting)
     let fallback = `Hi! We're Zulu Club — shop at zulu.club or visit our pop-ups in Gurgaon.`;
     if (!isGreeting(userMessage)) {
       fallback = `${fallback}\n\n${LINKS_BLOCK}`;
@@ -1215,9 +1245,138 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
   }
 }
 
+// Seller Response Generator (GPT-based, uses SELLER_INFO)
+async function generateSellerResponse(userMessage, conversationHistory) {
+  const messages = [];
+
+  const systemMessage = {
+    role: "system",
+    content: `You are a friendly but professional seller onboarding assistant for Zulu Club.
+
+SELLER / PARTNER INFORMATION:
+${SELLER_INFO}
+
+GOAL:
+Explain how to sell on Zulu Club, what kind of sellers we work with, and how onboarding works. Always be clear, concise and business-friendly.
+
+IMPORTANT RESPONSE GUIDELINES:
+1. Reply in simple, clear English (can mix a little casual tone for WhatsApp).
+2. Keep responses under 250 characters.
+3. Always mention either the seller portal or the seller form when relevant.
+4. For first-time queries, ask for basic details like brand name, category and city.
+5. Use 1–2 emojis max (professional tone, not too playful).
+`
+  };
+
+  messages.push(systemMessage);
+
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recentHistory = conversationHistory.slice(-6);
+    recentHistory.forEach(msg => {
+      if (msg.role && msg.content) {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      }
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: userMessage
+  });
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      max_tokens: 260,
+      temperature: 0.5
+    });
+
+    let assistantText = (completion.choices[0].message && completion.choices[0].message.content)
+      ? completion.choices[0].message.content.trim()
+      : "";
+
+    if (!assistantText) {
+      assistantText = "You can apply to sell on Zulu Club here: https://app.zulu.club/brand or fill this form: https://forms.gle/tvkaKncQMs29dPrPA 🙌";
+    }
+
+    return assistantText;
+  } catch (e) {
+    console.error('Error in generateSellerResponse:', e);
+    return "Want to sell on Zulu Club? Apply here: https://app.zulu.club/brand or fill this form: https://forms.gle/tvkaKncQMs29dPrPA 🙌";
+  }
+}
+
+// Investor Response Generator (GPT-based, uses INVESTORS_PARAGRAPH)
+async function generateInvestorResponse(userMessage, conversationHistory) {
+  const messages = [];
+
+  const systemMessage = {
+    role: "system",
+    content: `You are an investor relations assistant for Zulu Club.
+
+INVESTOR INFORMATION:
+${INVESTORS_PARAGRAPH}
+
+GOAL:
+Respond to investors who are curious about Zulu Club. Give a crisp view of what we do and how they can share their interest. You don't invent metrics or funding details that are not in the info.
+
+IMPORTANT RESPONSE GUIDELINES:
+1. Keep the reply under 260 characters (for WhatsApp).
+2. Be warm but professional.
+3. Always share the investor interest form link at least once.
+4. Encourage them to share intro, cheque size and thesis.
+5. Use at most 1–2 emojis, optional.
+`
+  };
+
+  messages.push(systemMessage);
+
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recentHistory = conversationHistory.slice(-6);
+    recentHistory.forEach(msg => {
+      if (msg.role && msg.content) {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      }
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: userMessage
+  });
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      max_tokens: 260,
+      temperature: 0.4
+    });
+
+    let assistantText = (completion.choices[0].message && completion.choices[0].message.content)
+      ? completion.choices[0].message.content.trim()
+      : "";
+
+    if (!assistantText) {
+      assistantText = "Thanks for your interest in Zulu Club 🙏 Please share your intro, cheque size & thesis via this form: https://forms.gle/5wwfYFB7gGs75pYq5 and our team will reach out.";
+    }
+
+    return assistantText;
+  } catch (e) {
+    console.error('Error in generateInvestorResponse:', e);
+    return "Thanks for your interest in Zulu Club 🙏 Please share your details here: https://forms.gle/5wwfYFB7gGs75pYq5 and our team will get back to you.";
+  }
+}
 
 /* -------------------------
-   Seller onboarding helper
+   Seller onboarding helper (trigger detector)
 --------------------------*/
 function isSellerOnboardQuery(userMessage) {
   if (!userMessage) return false;
@@ -1229,12 +1388,6 @@ function isSellerOnboardQuery(userMessage) {
     'how to register', 'apply as seller', 'apply to sell', 'sell on zulu', 'seller onboarding'
   ];
   return triggers.some(t => m.includes(t));
-}
-
-function sellerOnboardMessage() {
-  const link = 'https://app.zulu.club/brand';
-  const fillform = 'https://forms.gle/tvkaKncQMs29dPrPA';
-  return "Want to sell on Zulu Club? Sign up here: https://app.zulu.club/brand\n\nQuick steps:\n• Fill the seller form at the link (https://forms.gle/tvkaKncQMs29dPrPA)\n• Our team will review & reach out\n• Start listing products & reach Gurgaon customers";
 }
 
 /* -------------------------
@@ -1320,10 +1473,7 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
 }
 
 /* -------------------------
-   Main product flow:
-   - Use classifyAndMatchWithGPT (GPT is the boss) -> single-message only
-   - AFTER intent detection, when intent === 'product', we call findGptMatchedCategories(userMessage, conversationHistory)
-   - history will not influence initial intent detection
+   Main product / seller / investor / agent flow
 --------------------------*/
 async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLUB_INFO) {
   if (!process.env.OPENAI_API_KEY) {
@@ -1335,12 +1485,12 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
 
-    // 0) quick onboarding detection (explicit phrase)
+    // 0) quick seller onboarding detection (explicit phrase)
     if (isSellerOnboardQuery(userMessage)) {
-      // update session history / lastDetectedIntent
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
+      const fullHistory = getFullSessionHistory(sessionId);
+      return await generateSellerResponse(userMessage, fullHistory);
     }
 
     // 1) classify only the single incoming message
@@ -1356,8 +1506,6 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       session.lastDetectedIntentTs = nowMs();
     }
 
-    // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
-    // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
     // handle agent intent (connect to human)
     if (intent === 'agent') {
       session.lastDetectedIntent = 'agent';
@@ -1387,11 +1535,11 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
       return reply;
     }
 
-if (intent === 'voice_ai') {
-  session.lastDetectedIntent = 'voice_ai';
-  session.lastDetectedIntentTs = nowMs();
+    if (intent === 'voice_ai') {
+      session.lastDetectedIntent = 'voice_ai';
+      session.lastDetectedIntentTs = nowMs();
 
-  const message = 
+      const message = 
 `🎵 *Custom AI Music Message (Premium Add-on)*
 
 For every gift above ₹1,000:
@@ -1403,25 +1551,27 @@ For every gift above ₹1,000:
 Fill this quick form to create your AI song:
 ${VOICE_AI_FORM_LINK}`;
 
-  return message;
-}
-
+      return message;
+    }
     
-    // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
+    // seller intent via classifier
     if (intent === 'seller') {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
-      return sellerOnboardMessage();
+      const fullHistory = getFullSessionHistory(sessionId);
+      return await generateSellerResponse(userMessage, fullHistory);
     }
 
+    // investors intent via classifier
     if (intent === 'investors') {
       session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
-      return INVESTORS_PARAGRAPH.trim();
+      const fullHistory = getFullSessionHistory(sessionId);
+      return await generateInvestorResponse(userMessage, fullHistory);
     }
 
+    // product flow
     if (intent === 'product' && galleriesData.length > 0) {
-      // mark session product timestamp if not already set
       if (session.lastDetectedIntent !== 'product') {
         session.lastDetectedIntent = 'product';
         session.lastDetectedIntentTs = nowMs();
@@ -1442,11 +1592,7 @@ ${VOICE_AI_FORM_LINK}`;
         const fullHistory = getFullSessionHistory(sessionId);
         matchedCategories = await findGptMatchedCategories(userMessage, fullHistory);
       } else {
-        // even if we have matches from classifier, we still allow a re-run using history if the message is a short qualifier
-        // e.g., user said "i need a tshirt" (classifier returned matches), then user says "men" (classifier won't return product matches),
-        // we will call findGptMatchedCategories with full history to refine.
         const fullHistory = getFullSessionHistory(sessionId);
-        // decide heuristically whether to refine: if current message is short/qualifier, refine
         const isShortOrQualifier = (msg) => {
           if (!msg) return false;
           const trimmed = String(msg).trim();
@@ -1482,7 +1628,7 @@ ${VOICE_AI_FORM_LINK}`;
       // 4e) Run seller matching using matchedCategories and detectedGender (this uses GPT-checks internally)
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
 
-      // Return concise response (unchanged format)
+      // Return concise response
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
 
@@ -1494,6 +1640,7 @@ ${VOICE_AI_FORM_LINK}`;
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
+
 /* -------------------------
    Updated handleMessage to call session-aware getChatGPTResponse
    - Save incoming user message, log to sheets, pass sessionId to getChatGPTResponse
@@ -1573,7 +1720,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
     service: 'Zulu Club WhatsApp AI Assistant',
-    version: '6.1 - Intent-first + session history & sheets logging (history used only after intent)',
+    version: '6.2 - Intent-first + session history & sheets logging + GPT seller/investor responses',
     stats: {
       product_categories_loaded: galleriesData.length,
       sellers_loaded: sellersData.length,
@@ -1602,7 +1749,17 @@ app.get('/test-keyword-matching', async (req, res) => {
     const detectedGender = inferGenderFromCategories(keywordMatches);
     const sellers = await findSellersForQuery(query, keywordMatches, detectedGender);
     const concise = buildConciseResponse(query, keywordMatches, sellers);
-    res.json({ query, is_clothing_query: isClothing, detected_gender: detectedGender, keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
+    res.json({ 
+      query, 
+      is_clothing_query: isClothing, 
+      detected_gender: detectedGender, 
+      keyword_matches: keywordMatches, 
+      sellers, 
+      homeCheck: sellers.homeCheck || {}, 
+      concise_preview: concise, 
+      categories_loaded: galleriesData.length, 
+      sellers_loaded: sellersData.length 
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
