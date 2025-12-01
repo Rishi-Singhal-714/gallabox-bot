@@ -450,43 +450,55 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] }
     });
-// >>> SEND ALERT TO INTERNAL TEAM <<<
+// >>> SEND ALERT TO INTERNAL TEAM ONLY <<<
 try {
-  // Format phone with +91 if missing country code
-  const formattedNumber = mobileNumber.startsWith('91') ? mobileNumber : `91${mobileNumber}`;
-
-  const adminNumbers = [
-    '918595254310',
-    '918595254310',
-    '918595254310'
+  const ADMIN_RECEIVERS = [
+    '918368127760',
+    '918368127760',
+    '918368127760'
   ];
 
-  // Extract name from conversation history if exists
+  // derive sheet link
+  const sheetLink = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=0`;
+
+  // Format phone number
+  const formattedNumber = mobileNumber.startsWith('91')
+    ? mobileNumber
+    : `91${mobileNumber}`;
+
+  // Extract customer name if available in session history
   let customerName = 'Customer';
-  if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-    const lastUserMsg = conversationHistory.slice().reverse().find(m => m.role === 'user');
-    if (lastUserMsg?.name) customerName = lastUserMsg.name;
+  const lastUserMsg = (conversationHistory || [])
+    .slice()
+    .reverse()
+    .find(m => m.role === 'user' && m.name);
+
+  if (lastUserMsg?.name) {
+    customerName = lastUserMsg.name;
   }
 
   const createdAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-  const adminAlertMsg = `📌 *New Agent Ticket Created* 📌
+  const adminMsg = `📌 *New Ticket Created*
+Ticket ID: *${ticketId}*
 Customer: ${formattedNumber}
 Name: ${customerName}
-Ticket ID: *${ticketId}*
-Created At: ${createdAt}`;
+Created At: ${createdAt}
 
-  // Send notification to all admins
-  for (const admin of adminNumbers) {
-    await sendMessage(admin, 'Admin', adminAlertMsg);
+🔗 Ticket Sheet:
+${sheetLink}`;
+
+  for (const adminPhone of ADMIN_RECEIVERS) {
+    if (adminPhone !== formattedNumber) {
+      await sendMessage(adminPhone, 'Admin', adminMsg);
+    }
   }
 
-  console.log(`📡 Admin alerts sent for Ticket ${ticketId}`);
+  console.log(`📡 Internal notification sent for ticket ${ticketId}`);
 } catch (e) {
-  console.error('⚠️ Failed to send admin ticket alert:', e.message);
+  console.error('⚠️ Failed sending admin alert:', e.message);
 }
 // <<< END ALERT >>>
-
     
     
     return ticketId;
