@@ -456,9 +456,9 @@ try {
   const formattedNumber = mobileNumber.startsWith('91') ? mobileNumber : `91${mobileNumber}`;
 
   const adminNumbers = [
-    '918368127760',
-    '918368127760',
-    '918368127760'
+    '918595254310',
+    '918595254310',
+    '918595254310'
   ];
 
   // Extract name from conversation history if exists
