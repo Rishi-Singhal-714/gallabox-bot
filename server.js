@@ -450,55 +450,45 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] }
     });
-// >>> SEND ALERT TO INTERNAL TEAM ONLY <<<
+// >>> INTERNAL ALERT WITHOUT SHEET <<<
 try {
   const ADMIN_RECEIVERS = [
-    '918368127760',
-    '918368127760',
-    '918368127760'
+    "918368127760",
+    "918368127760",
+    "918368127760"
   ];
 
-  // derive sheet link
-  const sheetLink = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit#gid=0`;
-
-  // Format phone number
   const formattedNumber = mobileNumber.startsWith('91')
     ? mobileNumber
     : `91${mobileNumber}`;
 
-  // Extract customer name if available in session history
-  let customerName = 'Customer';
-  const lastUserMsg = (conversationHistory || [])
-    .slice()
-    .reverse()
-    .find(m => m.role === 'user' && m.name);
+  const createdAt = new Date().toLocaleString('en-IN', {
+    timeZone: "Asia/Kolkata"
+  });
 
-  if (lastUserMsg?.name) {
-    customerName = lastUserMsg.name;
-  }
+  const customerName = (() => {
+    if (!conversationHistory) return "Customer";
+    const lastUser = conversationHistory.slice().reverse().find(m => m.role === 'user');
+    return lastUser?.name || "Customer";
+  })();
 
-  const createdAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-
-  const adminMsg = `📌 *New Ticket Created*
-Ticket ID: *${ticketId}*
-Customer: ${formattedNumber}
+  const adminMessage = `📌 *New Agent Ticket Created*
+Customer: +${formattedNumber}
 Name: ${customerName}
-Created At: ${createdAt}
+Ticket ID: *${ticketId}*
+Created At: ${createdAt}`;
 
-🔗 Ticket Sheet:
-${sheetLink}`;
-
-  for (const adminPhone of ADMIN_RECEIVERS) {
-    if (adminPhone !== formattedNumber) {
-      await sendMessage(adminPhone, 'Admin', adminMsg);
-    }
+  for (const admin of ADMIN_RECEIVERS) {
+    console.log(`📤 Sending internal alert to: ${admin}`);
+    await sendMessage(admin, "Admin", adminMessage);
   }
 
-  console.log(`📡 Internal notification sent for ticket ${ticketId}`);
-} catch (e) {
-  console.error('⚠️ Failed sending admin alert:', e.message);
+  console.log(`✔ Internal alerts sent for ticket: ${ticketId}`);
+} catch (err) {
+  console.error("❌ Failed sending internal alerts:", err.message);
 }
 // <<< END ALERT >>>
+
     
     
     return ticketId;
