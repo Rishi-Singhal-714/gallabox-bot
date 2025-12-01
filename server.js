@@ -351,11 +351,71 @@ async function sendMessage(to, name, message) {
    - Headers: mobile_number, last_5th_message, 4th_message, 3rd_message, 2nd_message, 1st_message, ticket_id, ts
 --------------------------*/
 
-function generateTicketId() {
-  const now = Date.now();
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `TKT-${now}-${rand}`;
+async function generateTicketId() {
+  const sheets = await getSheets();
+  if (!sheets) {
+    console.warn("Sheets not available — fallback random Ticket ID");
+    const now = Date.now();
+    return `TKT-${String(now).slice(-6)}`;
+  }
+
+  const COUNTER_CELL = `${AGENT_TICKETS_SHEET}!Z2`; // reserved for ticket counter
+
+  try {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: COUNTER_CELL
+    });
+
+    let current = resp.data.values?.[0]?.[0] ? Number(resp.data.values[0][0]) : 0;
+    const next = current + 1;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: COUNTER_CELL,
+      valueInputOption: "RAW",
+      requestBody: { values: [[next]] }
+    });
+
+    return `TKT-${String(next).padStart(6, "0")}`; // ex: TKT-000001
+  } catch (err) {
+    console.error("Ticket ID counter error:", err);
+    return `TKT-${String(Date.now()).slice(-6)}`;
+  }
 }
+
+async function generateVoiceAiId() {
+  const sheets = await getSheets();
+  if (!sheets) {
+    console.warn("Sheets not available — fallback Voice AI ID");
+    return `VA-${String(Date.now()).slice(-6)}`;
+  }
+
+  const COUNTER_CELL = `${AGENT_TICKETS_SHEET}!AA2`; // reserved for Voice AI counter
+
+  try {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: COUNTER_CELL
+    });
+
+    let current = resp.data.values?.[0]?.[0] ? Number(resp.data.values[0][0]) : 0;
+    const next = current + 1;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: COUNTER_CELL,
+      valueInputOption: "RAW",
+      requestBody: { values: [[next]] }
+    });
+
+    return `VA-${String(next).padStart(6, "0")}`; // ex: VA-000001
+  } catch (err) {
+    console.error("Voice AI ID counter error:", err);
+    return `VA-${String(Date.now()).slice(-6)}`;
+  }
+}
+
 
 async function ensureAgentTicketsHeader(sheets) {
   try {
@@ -401,8 +461,7 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
     const lastFive = userMsgs.slice(-5);
     const pad = Array(Math.max(0, 5 - lastFive.length)).fill('');
     const arranged = [...pad, ...lastFive]; // length 5: oldest -> newest
-
-    const ticketId = generateTicketId();
+    const ticketId = await generateTicketId();
     const ts = new Date().toISOString();
 
     const row = [
@@ -1448,7 +1507,16 @@ For every gift above ₹1,000:
 Fill this quick form to create your AI song:
 ${VOICE_AI_FORM_LINK}`;
 
-  return message;
+  let voiceId = await generateVoiceAiId();
+
+try {
+  await appendUnderColumn(sessionId, `VOICE_AI_ID: ${voiceId}`);
+} catch (e) {
+  console.error("Voice AI ID sheet log failed:", e);
+}
+
+return message + `\n\nYour Voice AI Request ID: ${voiceId}`;
+
 }
 
     
