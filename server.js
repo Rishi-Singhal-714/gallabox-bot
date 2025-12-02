@@ -1681,6 +1681,57 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// ===============================
+// Zulu Club - TOUR STATUS ALERTS
+// ===============================
+
+app.post('/tour/booked', async (req, res) => {
+  try {
+    const { customerPhone, customerName } = req.body;
+
+    const ADMINS = ["918368127760", "918368127760"]; // Your 2 fixed admin numbers
+
+    const msg = `🎉 *New Try-At-Home Booking*\n` +
+                `Customer: ${customerName || "Unknown"}\n` +
+                `Phone: +${customerPhone || "Not Provided"}\n` +
+                `📌 Please contact customer.`;
+
+    for (const admin of ADMINS) {
+      await sendMessage(admin, "Admin", msg);
+    }
+
+    return res.json({ success: true, message: "Tour booked alerts sent to admins" });
+
+  } catch (error) {
+    console.error("❌ Tour Booked Admin Alert - Error:", error.message);
+    return res.status(500).json({ success: false, error: "Alert failed" });
+  }
+});
+
+app.post('/tour/notbooked', async (req, res) => {
+  try {
+    const { customerPhone, customerName } = req.body;
+
+    const ADMINS = ["918368127760", "918368127760"];
+
+    const msg = `⚠️ *Try-At-Home Booking Failed*\n` +
+                `Customer: ${customerName || "Unknown"}\n` +
+                `Phone: +${customerPhone || "Not Provided"}\n` +
+                `📌 Please follow up.`;
+
+    for (const admin of ADMINS) {
+      await sendMessage(admin, "Admin", msg);
+    }
+
+    return res.json({ success: true, message: "Tour not-booked alerts sent to admins" });
+
+  } catch (error) {
+    console.error("❌ Tour NotBooked Admin Alert - Error:", error.message);
+    return res.status(500).json({ success: false, error: "Alert failed" });
+  }
+});
+
+
 app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
