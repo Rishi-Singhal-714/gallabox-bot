@@ -454,8 +454,9 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
 try {
   const ADMIN_RECEIVERS = [
     "918368127760",
-    "918368127760",
-    "918368127760"
+    "919717350080",
+    "918860924190",
+    "917483654620"
   ];
 
   const formattedNumber = mobileNumber.startsWith('91')
@@ -1689,7 +1690,7 @@ app.post('/tour/booked', async (req, res) => {
   try {
     const { customerPhone, customerName } = req.body;
 
-    const ADMINS = ["918368127760", "918368127760"]; // Your 2 fixed admin numbers
+    const ADMINS = ["918368127760", "919717350080", "918860924190","917483654620"]; // Your 2 fixed admin numbers
 
     const msg = `🎉 *New Try-At-Home Booking*\n` +
                 `Customer: ${customerName || "Unknown"}\n` +
