@@ -1694,7 +1694,7 @@ app.post('/tour/booked', async (req, res) => {
 
     const msg = `🎉 *New Try-At-Home Booking*\n` +
                 `Customer: ${customerName || "Unknown"}\n` +
-                `Phone: +${customerPhone || "Not Provided"}\n` +
+                `Phone: ${customerPhone || "Not Provided"}\n` +
                 `📌 Please contact customer.`;
 
     for (const admin of ADMINS) {
