@@ -1459,7 +1459,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 // SPECIAL PRE-INTENT FILTER (employee mode)
 // --------------------------------------
 const EMPLOYEE_NUMBERS = [
-  "919717350080",
+  "918368127760",
   "918860924190"
 ];
 
