@@ -41,10 +41,11 @@ let sellersData = []; // sellers CSV data
 // Google Sheets config (ADDED)
 // -------------------------
 // Name of the sheet/tab to store agent tickets — default to the tab you added (Sheet2)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
 // Override in production with env var AGENT_TICKETS_SHEET
 const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Sheet2';
-
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
+// Billing sheet/tab where employee billing issues must be stored
+const BILLING_SHEET_NAME = process.env.BILLING_SHEET_NAME || "Sheet3";
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
 
 if (!GOOGLE_SHEET_ID) {
@@ -1460,6 +1461,7 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 // --------------------------------------
 const EMPLOYEE_NUMBERS = [
   "918368127760",
+  "919717350080",
   "918860924190"
 ];
 
@@ -1505,10 +1507,11 @@ User message: "${userMessage}"
     // ------------------------------
     if (empIntent === "billing") {
       try {
-        await appendUnderColumn("BillingIssues", `PHONE: ${sessionId} | MSG: ${userMessage}`);
+        await appendUnderColumn(BILLING_SHEET_NAME, `PHONE: ${sessionId} | MSG: ${userMessage}`);
       } catch (err) {
-        console.error("❌ Failed saving to BillingIssues sheet:", err);
+        console.error("❌ Failed saving to Billing sheet:", err);
       }
+
 
       return "📄 Billing noted boss! Which Order / Invoice should I check?";
     }
