@@ -1453,16 +1453,15 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
 
   try {
     // ensure session exists
-// ensure session exists
-createOrTouchSession(sessionId);
-const session = conversations[sessionId];
-
-// --------------------------------------
+    createOrTouchSession(sessionId);
+    const session = conversations[sessionId];
+    // --------------------------------------
 // SPECIAL PRE-INTENT FILTER (employee mode)
 // --------------------------------------
 const EMPLOYEE_NUMBERS = [
   "918368127760",
-  "917483654620"
+  "919717350080",
+  "918860924190"
 ];
 
 if (EMPLOYEE_NUMBERS.includes(sessionId)) {
@@ -1495,16 +1494,23 @@ User message: "${userMessage}"
     session.lastDetectedIntent = empIntent;
     session.lastDetectedIntentTs = Date.now();
 
+    // ------------------------------
+    // **Handling empgreeting**
+    // ------------------------------
     if (empIntent === "empgreeting") {
       return "Hi Boss 👋 How can I help you?";
     }
 
+    // ------------------------------
+    // **Handling billing**
+    // ------------------------------
     if (empIntent === "billing") {
       try {
         await appendUnderColumn("BillingIssues", `PHONE: ${sessionId} | MSG: ${userMessage}`);
       } catch (err) {
         console.error("❌ Failed saving to BillingIssues sheet:", err);
       }
+
       return "📄 Billing noted boss! Which Order / Invoice should I check?";
     }
 
@@ -1514,13 +1520,6 @@ User message: "${userMessage}"
     return "Hi Boss 👋";
   }
 }
-
-// --------------------------------------
-// Continue with normal GPT intent flow
-// --------------------------------------
-
-// 1) classify only the single incoming message
-const classification = await classifyAndMatchWithGPT(userMessage);
 
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
