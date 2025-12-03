@@ -1505,16 +1505,29 @@ User message: "${userMessage}"
     // ------------------------------
     // **Handling billing**
     // ------------------------------
-    if (empIntent === "billing") {
-      try {
-        await appendUnderColumn(BILLING_SHEET_NAME, `PHONE: ${sessionId} | MSG: ${userMessage}`);
-      } catch (err) {
-        console.error("❌ Failed saving to Billing sheet:", err);
-      }
+if (empIntent === "billing") {
+  try {
+    const sheets = await getSheets();
+    if (sheets) {
+      const timestamp = new Date().toISOString();
 
-
-      return "📄 Billing noted boss! Which Order / Invoice should I check?";
+      // Write into Sheet3 explicitly
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: `Sheet3!A:Z`, // 👈 FORCE Sheet3
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[sessionId, userMessage, timestamp]]
+        }
+      });
     }
+  } catch (err) {
+    console.error("❌ Failed saving to Sheet3:", err);
+  }
+
+  return "📄 Billing noted boss! Which Order / Invoice should I check?";
+}
+
 
     return "Hi Boss 👋";
   } catch (err) {
