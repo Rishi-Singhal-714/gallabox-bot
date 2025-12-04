@@ -158,7 +158,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
   // 🔹 GREETING CHECK FIRST (do not log greets)
   if (isEmpGreeting(userMessage)) {
-    return `👋 Hello! How can I assist you today?`;
+    return `Hello boss! What would you like to do?`;
   }
 
   const detect = detectIntent(userMessage.toLowerCase());
