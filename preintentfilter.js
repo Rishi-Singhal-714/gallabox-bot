@@ -26,7 +26,7 @@ function matchProbability(str, keyword) {
   return Math.max(0, Math.min(prob, 1));
 }
 
-/* -------------------- INTENT KEYWORDS -------------------- */
+/* -------------------- MAIN BILLING CATEGORIES -------------------- */
 const BILLING_MAIN = {
   operation: ["operation", "ops", "opration"],
   logistics: ["logistics", "logistic", "logi"],
@@ -84,7 +84,7 @@ async function ensureSheet(sheets, sheetName, headers) {
   return true;
 }
 
-/* -------------------- GLOBAL DAILY COUNTER -------------------- */
+/* -------------------- DAILY ID COUNTER -------------------- */
 async function getNextBillingId(category, sheets) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const counterSheet = "Billing_Counter";
@@ -97,7 +97,7 @@ async function getNextBillingId(category, sheets) {
     range: `${counterSheet}!A2:I2`
   }).catch(() => ({ data: {} }));
 
-  let row = (res.data?.values?.[0]) || [];
+  let row = res.data?.values?.[0] || [];
   row = [...row, ...Array(9 - row.length).fill("0")];
 
   const now = new Date();
@@ -122,16 +122,14 @@ async function getNextBillingId(category, sheets) {
     requestBody: { values: [[todayStr, ...counters]] }
   });
 
-  const counterStr = String(counters[colIndex]).padStart(6, "0");
-  return `${prefix}${todayStr}${counterStr}`;
+  const num = String(counters[colIndex]).padStart(6, "0");
+  return `${prefix}${todayStr}${num}`;
 }
 
 /* ============================================================
    MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
-module.exports = async function preIntentFilter(
-  openai, session, sessionId, userMessage, getSheets
-) {
+module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
@@ -140,13 +138,25 @@ module.exports = async function preIntentFilter(
   let category = detect.prob >= 0.55 ? detect.key : "Unknown";
 
   const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+  const salesCats = ["SALES"];
+  const leadCats = ["Lead"];
+
+  if (!billingCats.includes(category) && !salesCats.includes(category) && !leadCats.includes(category)) {
+    category = "Unknown";
+  }
 
   const id = await getNextBillingId(category, sheets);
 
-  let cleanMsg = userMessage.replace(/^\w+\s*[-:]\s*/i, "").trim();
+  /* CLEAN MESSAGE: remove keyword only if at start */
+  let cleanMsg = userMessage.trim();
+  const allKeywords = Object.values(BILLING_MAIN).flat();
+  for (const kw of allKeywords) {
+    const regex = new RegExp(`^${kw}\\b[\\s:,-]*`, "i");
+    cleanMsg = cleanMsg.replace(regex, "").trim();
+  }
   if (!cleanMsg) cleanMsg = userMessage.trim();
 
-  /* ALWAYS STORE IN LOGS */
+  /* ALWAYS log */
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
   await sheets.spreadsheets.values.append({
@@ -156,7 +166,7 @@ module.exports = async function preIntentFilter(
     requestBody: { values: [[id, phn, cleanMsg, ts]] }
   });
 
-  /* BILLING CATEGORIES → Billing_Data */
+  /* BILLING DATA */
   if (billingCats.includes(category)) {
     const dataSheet = `${phn}Billing_Data`;
     await ensureSheet(sheets, dataSheet, billingCats);
@@ -164,20 +174,19 @@ module.exports = async function preIntentFilter(
     const colIndex = billingCats.indexOf(category) + 1;
     const colLetter = String.fromCharCode(64 + colIndex);
     const rowNumber = parseInt(id.slice(-6), 10) + 1;
-    const line = `${id},${cleanMsg},${ts}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${dataSheet}!${colLetter}${rowNumber}`,
       valueInputOption: "RAW",
-      requestBody: { values: [[line]] }
+      requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
     });
 
     return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
   }
 
   /* SALES */
-  if (category === "SALES") {
+  if (salesCats.includes(category)) {
     const sheet = `${phn}Sales_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
@@ -191,7 +200,7 @@ module.exports = async function preIntentFilter(
   }
 
   /* LEAD */
-  if (category === "Lead") {
+  if (leadCats.includes(category)) {
     const sheet = `${phn}Lead_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
@@ -205,7 +214,7 @@ module.exports = async function preIntentFilter(
   }
 
   /* UNKNOWN */
-  return `⚠️ Wrong category boss!  
+  return `⚠️ Category not recognized boss!  
 Logged as Unknown (ID: ${id}).  
 Valid: Operation / Logistics / Inventory / Market / Fixed / Sales / Lead`;
 };
