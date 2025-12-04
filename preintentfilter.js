@@ -60,6 +60,28 @@ function detectIntent(text) {
   return best;
 }
 
+/* -------------------- EMPLOYEE GREETING CHECK -------------------- */
+function isEmpGreeting(text) {
+  if (!text) return false;
+  text = text.toLowerCase().trim();
+
+  const greetWords = [
+    "hi",
+    "hello",
+    "hey",
+    "gm",
+    "good morning",
+    "good evening",
+    "good night",
+    "gn",
+    "good afternoon"
+  ];
+
+  return greetWords.some(g =>
+    text === g || text.startsWith(g + " ")
+  );
+}
+
 /* -------------------- ENSURE SHEET EXISTS -------------------- */
 async function ensureSheet(sheets, sheetName, headers) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -133,6 +155,11 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
+
+  // 🔹 GREETING CHECK FIRST (do not log greets)
+  if (isEmpGreeting(userMessage)) {
+    return `👋 Hello! How can I assist you today?`;
+  }
 
   const detect = detectIntent(userMessage.toLowerCase());
   let category = detect.prob >= 0.55 ? detect.key : "Unknown";
@@ -214,17 +241,16 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   }
 
   /* UNKNOWN */
-/* 🔴 UNKNOWN */
-return `⚠️ Category not recognized boss!
+  return `⚠️ Category not recognized boss!
 📝 Logged as Unknown (ID: ${id})
 
 Please send like any of these formats 👇:
 
-Operation – message
-Logistics – message
-Inventory – message
-Market – message
-Fixed – message
-Sales – message
+Operation – message  
+Logistics – message  
+Inventory – message  
+Market – message  
+Fixed – message  
+Sales – message  
 Lead – message`;
 };
