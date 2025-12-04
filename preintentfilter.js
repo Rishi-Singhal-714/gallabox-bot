@@ -174,8 +174,7 @@ module.exports = async function preIntentFilter(
       valueInputOption: "RAW",
       requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
-
-    /* Billing Category? → Billing_Data */
+/* Billing Category? → Billing_Data */
 const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
 
 if (billingCats.includes(category)) {
@@ -184,39 +183,52 @@ if (billingCats.includes(category)) {
   await ensureSheet(sheets, dataSheet, headers);
 
   const line = `${id}, ${cleanMsg}, ${ts}`;
-  const colIndex = headers.indexOf(category); // 0-based
+  const colIndex = headers.indexOf(category); // 0-based index
+  const colLetter = String.fromCharCode(65 + colIndex); // A, B, C, D, E
 
-  // Fetch all rows
-  const existing = await sheets.spreadsheets.values.get({
+  // Read full table under header
+  const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${dataSheet}!A2:E`
+    range: `${dataSheet}!A2:E`,
   }).catch(() => ({ data: {} }));
 
-  const rows = existing?.data?.values || [];
-  let targetRow = rows.length - 1; // last row index in values array
+  let rows = res.data.values || [];
 
-  // Check if last row already has any category filled
-  if (targetRow >= 0) {
-    const lastRow = rows[targetRow];
-    const hasFilled = lastRow.some((v) => v && v.trim() !== "");
-    if (!hasFilled) targetRow = -1;
-  }
-
-  if (targetRow < 0) {
-    // Create new row
+  // If sheet empty → create first row
+  if (rows.length === 0) {
     const newRow = ["", "", "", "", ""];
     newRow[colIndex] = line;
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${dataSheet}!A:Z`,
+      range: `${dataSheet}!A2:E`,
+      valueInputOption: "RAW",
+      requestBody: { values: [newRow] }
+    });
+
+    return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
+  }
+
+  // Find last non-empty row index inside rows array
+  let lastIndex = rows.length - 1;
+
+  // If last row is completely filled → new row
+  if (rows[lastIndex].every(c => c && c.trim() !== "")) {
+    const newRow = ["", "", "", "", ""];
+    newRow[colIndex] = line;
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${dataSheet}!A2:E`,
       valueInputOption: "RAW",
       requestBody: { values: [newRow] }
     });
 
   } else {
-    // Update existing latest row
-    const updateRange = `${dataSheet}!${String.fromCharCode(65 + colIndex)}${targetRow + 2}`;
+    // Update existing last row in correct column
+    const updateRowNumber = lastIndex + 2; // +2 because A1 header, A2=first row
+    const updateRange = `${dataSheet}!${colLetter}${updateRowNumber}`;
+
     await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: updateRange,
@@ -225,8 +237,7 @@ if (billingCats.includes(category)) {
     });
   }
 
-  return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
-Provide invoice number boss?`;
+  return `📌 Updated **${category.toUpperCase()}** (ID: ${id}).`;
 }
 
 
@@ -259,3 +270,4 @@ Provide invoice number boss?`;
 
   return "Hi Boss 👋 How can I assist?";
 };
+
