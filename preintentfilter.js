@@ -84,22 +84,31 @@ async function ensureSheet(sheets, sheetName, headers) {
 }
 
 /* -------------------- CATEGORY-WISE GLOBAL DAILY COUNTER -------------------- */
+/* Billing_Counter Sheet Layout:
+A:Date (041225)
+B:OPS
+C:LOG
+D:INV
+E:MKT
+F:FIX
+G:SAL
+H:LED
+*/
 async function getNextBillingId(category, sheets) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const counterSheet = "Billing_Counter";
-
-  const headers = ["date", "OPS", "LOG", "INV", "MKT", "FIX", "SAL", "LED", "UNK"];
-  const colCount = headers.length;
+  const headers = ["date", "OPS", "LOG", "INV", "MKT", "FIX", "SAL", "LED"];
 
   await ensureSheet(sheets, counterSheet, headers);
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${counterSheet}!A2:I2`
+    range: `${counterSheet}!A2:H2`
   }).catch(() => ({ data: {} }));
 
-  let row = res.data?.values?.[0] || [];
-  row = [...row, ...Array(colCount - row.length).fill("0")];
+  // Always build full row safely
+  let row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
+  row = [...row, ...Array(8 - row.length).fill("0")]; // force 8 columns
 
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -108,122 +117,122 @@ async function getNextBillingId(category, sheets) {
   const todayStr = `${dd}${mm}${yy}`;
 
   const lastDate = row[0] || "";
-  let counters = row.slice(1).map(v => parseInt(v || "0", 10));
+  let counters = row.slice(1).map(n => parseInt(n || "0", 10));
 
-  if (lastDate !== todayStr) counters = counters.map(() => 0);
+  if (lastDate !== todayStr) {
+    counters = counters.map(() => 0); // reset all
+  }
 
-  const prefix = CODE_MAP[category] || "UNK";
-  const idx = headers.indexOf(prefix) - 1;
+  const prefix = CODE_MAP[category];
+  const colIndex = headers.indexOf(prefix) - 1; // index in counters array
 
-  counters[idx]++;
+  if (colIndex < 0) throw new Error("Invalid billing category mapping!");
 
+  counters[colIndex]++;
+
+  // Save update
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${counterSheet}!A2:I2`,
+    range: `${counterSheet}!A2:H2`,
     valueInputOption: "RAW",
-    requestBody: { values: [[todayStr, ...counters]] }
+    requestBody: {
+      values: [[todayStr, ...counters]]
+    }
   });
 
-  const serial = String(counters[idx]).padStart(6, "0");
-  return `${prefix}${todayStr}${serial}`;
+  const counterStr = String(counters[colIndex]).padStart(6, "0");
+  return `${prefix}${todayStr}${counterStr}`;
 }
 
 /* ============================================================
-   MAIN HANDLER
+   MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
-module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
+module.exports = async function preIntentFilter(
+  openai, session, sessionId, userMessage, getSheets
+) {
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
-
   const detect = detectIntent(userMessage.toLowerCase());
-  const category = detect.key;
-  const isValid = category && detect.prob >= 0.55;
 
-  /* Clean message */
-  let cleanMsg = userMessage;
-  if (category) {
-    const rg = new RegExp(`^(${category})\\s*[-: ]+`, "i");
-    cleanMsg = cleanMsg.replace(rg, "").trim();
+  if (detect.prob >= 0.55) {
+    const category = detect.key;
+    const id = await getNextBillingId(category, sheets);
+
+    /* 🔹 MESSAGE CLEANING */
+    const categoryRegex = new RegExp(`^(${category})\\s*[-: ]+`, "i");
+    let cleanMsg = userMessage.replace(categoryRegex, "").trim();
     cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
-  }
-  if (!cleanMsg) cleanMsg = userMessage.trim();
+    if (!cleanMsg) cleanMsg = userMessage.trim();
 
-  /* Always Logging Sheet */
-  const logsSheet = `${phn}Billing_Logs`;
-  await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
-
-  /* NOT VALID */
-  if (!isValid) {
-    const id = await getNextBillingId("UNK", sheets);
+    /* 1️⃣ Billing Logs ALWAYS */
+    const logsSheet = `${phn}Billing_Logs`;
+    await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${logsSheet}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[id, phn, userMessage, ts]] }
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
 
-    return `⚠️ Unknown category boss.\nSend like 👇\noperation - msg\nlogistics - msg\ninventory - msg\nmarket - msg\nfixed - msg\nsales - msg\nlead - msg`;
-  }
+    /* Billing Category? → Billing_Data */
+    const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
 
-  /* VALID → GET Billing ID */
-  const id = await getNextBillingId(category, sheets);
+    if (billingCats.includes(category)) {
+      const dataSheet = `${phn}Billing_Data`;
+      const headers = ["operation", "logistics", "inventory", "market", "fixed"];
+      await ensureSheet(sheets, dataSheet, headers);
 
-  /* Always store in LOGS */
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${logsSheet}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, cleanMsg, ts]] }
-  });
+      const colIndex = headers.indexOf(category) + 1;
+      const colLetter = String.fromCharCode(64 + colIndex);
 
-  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+      const line = `${id},${cleanMsg},${ts}`;
 
-  /* Billing Data Sheet */
-  if (billingCats.includes(category)) {
-    const dataSheet = `${phn}Billing_Data`;
-    const headers = ["operation", "logistics", "inventory", "market", "fixed"];
-    await ensureSheet(sheets, dataSheet, headers);
+      const existing = await sheets.spreadsheets.values
+        .get({
+          spreadsheetId: process.env.GOOGLE_SHEET_ID,
+          range: `${dataSheet}!${colLetter}2:${colLetter}`
+        }).catch(() => ({ data: {} }));
 
-    const idx = headers.indexOf(category) + 1;
-    const column = String.fromCharCode(64 + idx);
+      const prev = existing?.data?.values?.flat().join("\n") || "";
+      const finalValue = prev ? `${prev}\n${line}` : line;
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${dataSheet}!${column}:${column}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[`${id},${cleanMsg},${ts}`]]
-      }
-    });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${dataSheet}!${colLetter}2`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[finalValue]] }
+      });
 
-    return `📌 Saved in **${category.toUpperCase()}** ✓\n(ID: ${id})\nSend Invoice No.?`;
-  }
+      return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
+Provide invoice number boss?`;
+    }
 
-  /* Sales */
-  if (category === "SALES") {
-    const sheet = `${phn}Sales_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:A`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
-    });
-    return `📌 Saved in SALES ✓\n(ID: ${id})`;
-  }
+    /* SALES */
+    if (category === "SALES") {
+      const sheet = `${phn}Sales_Data`;
+      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${sheet}!A:Z`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[phn, cleanMsg, ts]] }
+      });
+      return `📌 Saved under **SALES** (ID: ${id}) boss!`;
+    }
 
-  /* Lead */
-  if (category === "Lead") {
-    const sheet = `${phn}Lead_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:A`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
-    });
-    return `🎯 Lead captured ✓\n(ID: ${id})`;
+    /* LEAD */
+    if (category === "Lead") {
+      const sheet = `${phn}Lead_Data`;
+      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${sheet}!A:Z`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[phn, cleanMsg, ts]] }
+      });
+      return `🎯 Lead captured (ID: ${id}) boss!`;
+    }
   }
 
   return "Hi Boss 👋 How can I assist?";
