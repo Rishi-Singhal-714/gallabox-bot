@@ -8,6 +8,8 @@ const csv = require('csv-parser');
 const { Readable } = require('stream');
 const preIntentFilter = require('./preintentfilter'); 
 const { google } = require('googleapis'); // ADDED: for Google Sheets logging
+// Tracks disabled employees (true = disabled → normal mode)
+const EMPLOYEE_DISABLED = {};
 
 const app = express();
 const VOICE_AI_FORM_LINK = 'https://forms.gle/CiPAk6RqWxkd8uSKA';
@@ -344,7 +346,44 @@ async function sendMessage(to, name, message) {
    Agent ticket helpers
    - Creates a ticket id and appends a row to your AGENT_TICKETS_SHEET
    - Headers: mobile_number, last_5th_message, 4th_message, 3rd_message, 2nd_message, 1st_message, ticket_id, ts
---------------------------*/
+   --------------------------*/
+const EMPLOYEE_STATUS_PASS = process.env.EMPLOYEE_STATUS_PASS || "";
+
+function handleEmployeeToggle(sessionId, userMessage) {
+  const cmd = userMessage.trim();
+  
+  // Format:
+  // Change <phone> to Normal, Pass 1234
+  // Change <phone> to Employee, Pass 1234
+  const regex = /^change\s+(\d+)\s+to\s+(normal|employee)\s*,?\s*pass\s+(\S+)/i;
+  const match = cmd.match(regex);
+  if (!match) return null;
+
+  const [, rawPhone, role, pass] = match;
+  const phone = rawPhone.replace(/\D/g, "");
+
+  if (!EMPLOYEE_NUMBERS.includes(sessionId)) {
+    return "❌ You are not authorized to change roles.";
+  }
+
+  if (pass !== EMPLOYEE_STATUS_PASS) {
+    return "❌ Incorrect password.";
+  }
+
+  if (!EMPLOYEE_NUMBERS.includes(phone)) {
+    return `⚠️ ${phone} is not in employee access list.`;
+  }
+
+  if (role.toLowerCase() === "normal") {
+    EMPLOYEE_DISABLED[phone] = true;
+    return `✔ ${phone} is now in *NORMAL mode*`;
+  }
+
+  // role === "employee"
+  delete EMPLOYEE_DISABLED[phone];
+  return `✔ ${phone} is now in *EMPLOYEE mode*`;
+}
+
 
 async function generateTicketId() {
   const sheets = await getSheets();
@@ -1458,7 +1497,15 @@ const EMPLOYEE_NUMBERS = [
   "919717350080",
   "918860924190"
 ];
-if (EMPLOYEE_NUMBERS.includes(sessionId)) {
+// First check command
+const adminCmd = handleEmployeeToggle(sessionId, userMessage);
+if (adminCmd) return adminCmd;
+
+// Employee logic => only if in list and not disabled
+if (
+  EMPLOYEE_NUMBERS.includes(sessionId) &&
+  !EMPLOYEE_DISABLED[sessionId]
+) {
   const employeeHandled = await preIntentFilter(
     openai,
     session,
@@ -1469,6 +1516,8 @@ if (EMPLOYEE_NUMBERS.includes(sessionId)) {
     appendUnderColumn
   );
   if (employeeHandled) return employeeHandled;
+}
+
 }
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
