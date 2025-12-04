@@ -1,4 +1,5 @@
 const { OpenAI } = require("openai");
+
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
   if (!str || !keyword) return 0;
@@ -47,19 +48,6 @@ const CODE_MAP = {
   Lead: "LED"
 };
 
-/* -------------------- BILLING ID GENERATOR -------------------- */
-function generateBillingID(category) {
-  const now = new Date();
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yyyy = now.getFullYear();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
-  const ss = String(now.getSeconds()).padStart(2, "0");
-
-  return `${CODE_MAP[category]}${dd}${mm}${yyyy}${hh}${min}${ss}`;
-}
-
 /* -------------------- INTENT DETECTOR -------------------- */
 function detectIntent(text) {
   let best = { key: null, prob: 0 };
@@ -72,13 +60,11 @@ function detectIntent(text) {
   return best;
 }
 
-/* -------------------- ENSURE SHEET EXISTS -------------------- */
+/* -------------------- ENSURE SHEET EXISTS WITH HEADERS -------------------- */
 async function ensureSheet(sheets, sheetName, headers) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId
-  });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
 
   const sheet = meta.data.sheets.find(s => s.properties.title === sheetName);
   if (sheet) return sheet.properties.sheetId;
@@ -90,8 +76,7 @@ async function ensureSheet(sheets, sheetName, headers) {
     }
   });
 
-  const newSheetId =
-    addRes.data.replies[0].addSheet.properties.sheetId;
+  const newSheetId = addRes.data.replies[0].addSheet.properties.sheetId;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -101,6 +86,63 @@ async function ensureSheet(sheets, sheetName, headers) {
   });
 
   return newSheetId;
+}
+
+/* -------------------- GLOBAL DAILY COUNTER (Billing_Counter sheet) -------------------- */
+// Sheet structure:
+// Billing_Counter!A1:B1 = ["date", "counter"]
+// Billing_Counter!A2:B2 = ["DDMMYY", "123"]
+
+async function getNextBillingId(category, sheets) {
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const counterSheet = "Billing_Counter";
+
+  // Ensure counter sheet exists
+  await ensureSheet(sheets, counterSheet, ["date", "counter"]);
+
+  // Read current stored date + counter
+  const res = await sheets.spreadsheets.values
+    .get({
+      spreadsheetId,
+      range: `${counterSheet}!A2:B2`
+    })
+    .catch(() => ({ data: {} }));
+
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, "0");
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yy = String(now.getFullYear()).slice(-2);
+  const todayStr = `${dd}${mm}${yy}`;
+
+  let lastDate = "";
+  let lastCounter = 0;
+
+  if (res.data && res.data.values && res.data.values[0]) {
+    lastDate = res.data.values[0][0] || "";
+    lastCounter = parseInt(res.data.values[0][1] || "0", 10) || 0;
+  }
+
+  let newCounter;
+  if (lastDate === todayStr) {
+    newCounter = lastCounter + 1;
+  } else {
+    newCounter = 1;
+  }
+
+  // Save updated date + counter
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${counterSheet}!A2:B2`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[todayStr, String(newCounter)]]
+    }
+  });
+
+  const code = CODE_MAP[category] || "BIL";
+  const counterStr = String(newCounter).padStart(6, "0");
+  const id = `${code}${todayStr}${counterStr}`; // e.g. OPS041225000001
+  return id;
 }
 
 /* ============================================================
@@ -117,15 +159,19 @@ module.exports = async function preIntentFilter(
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
-  let detect = detectIntent(text);
+  const detect = detectIntent(text);
 
+  // Confidence threshold for billing detection
   if (detect.prob >= 0.55) {
     const category = detect.key;
-    const isBilling = ["operation", "logistics", "inventory", "market", "fixed"].includes(category);
+    const isBilling = ["operation", "logistics", "inventory", "market", "fixed"].includes(
+      category
+    );
 
-    const id = generateBillingID(category);
+    // Generate global daily ID
+    const id = await getNextBillingId(category, sheets);
 
-    /* ---------- 1️⃣ Billing Logs: ALWAYS ---------- */
+    /* ---------- 1️⃣ Billing Logs: ALWAYS for any billing (incl SALES, Lead) ---------- */
     const logsSheet = `${phn}Billing_Logs`;
     await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
 
@@ -138,35 +184,44 @@ module.exports = async function preIntentFilter(
       }
     });
 
-    /* ---------- 2️⃣ Billing_Data (category only) ---------- */
+    /* ---------- 2️⃣ Billing_Data (only for operation/logistics/inventory/market/fixed) ---------- */
     if (isBilling) {
       const dataSheet = `${phn}Billing_Data`;
       const headers = ["operation", "logistics", "inventory", "market", "fixed"];
       await ensureSheet(sheets, dataSheet, headers);
 
+      // Clean message → remove leading "keyword -" or "keyword:" etc.
       let cleanMsg = userMessage.replace(/^\w+\s*[-:]\s*/i, "").trim();
-      const updateLine = `${id},${cleanMsg},${ts}`;
+      if (!cleanMsg) cleanMsg = userMessage.trim();
 
-      const colIndex = headers.indexOf(category) + 1;
-      const col = String.fromCharCode(64 + colIndex);
-      const range = `${dataSheet}!${col}2:${col}`;
+      // Cell line format: id,message,time
+      const line = `${id},${cleanMsg},${ts}`;
 
-      const existing = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range
-      }).catch(() => ({ data: {} }));
+      const colIndex = headers.indexOf(category) + 1; // 1-based
+      const colLetter = String.fromCharCode(64 + colIndex);
+      const range = `${dataSheet}!${colLetter}2:${colLetter}`;
+
+      const existing = await sheets.spreadsheets.values
+        .get({
+          spreadsheetId: process.env.GOOGLE_SHEET_ID,
+          range
+        })
+        .catch(() => ({ data: {} }));
 
       const prev = existing?.data?.values?.flat().join("\n") || "";
-      const finalData = prev ? `${prev}\n${updateLine}` : updateLine;
+      const finalValue = prev ? `${prev}\n${line}` : line;
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: `${dataSheet}!${col}2`,
+        range: `${dataSheet}!${colLetter}2`,
         valueInputOption: "RAW",
-        requestBody: { values: [[finalData]] }
+        requestBody: {
+          values: [[finalValue]]
+        }
       });
 
-      return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
+      return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
+What invoice should I check boss?`;
     }
 
     /* ---------- 3️⃣ SALES ---------- */
@@ -183,8 +238,8 @@ module.exports = async function preIntentFilter(
         }
       });
 
-      return `📌 Saved under **SALES** ★  
-Invoice number boss?`;
+      return `📌 Saved under **SALES** (ID: ${id}).  
+Invoice number, boss?`;
     }
 
     /* ---------- 4️⃣ LEAD ---------- */
