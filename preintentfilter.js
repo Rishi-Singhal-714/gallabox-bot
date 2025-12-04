@@ -138,7 +138,7 @@ module.exports = async function preIntentFilter(
   const phn = sessionId;
   const detect = detectIntent(userMessage.toLowerCase());
 
-  const validBilling = ["operation", "logistics", "inventory", "market", "fixed", "SALES", "Lead"];
+  const validBilling = ["operation", "logistics", "inventory", "market", "fixed"];
 
   let category = detect.key;
   if (!validBilling.includes(category)) category = "Unknown";
