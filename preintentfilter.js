@@ -103,7 +103,7 @@ module.exports = async function preIntentFilter(
 
     // 1️⃣ Billing Logs Storage
     const logsSheet = `${phn}Billing_Logs`;
-    await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+    const sheetId = await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${logsSheet}!A:Z`,
@@ -117,7 +117,7 @@ module.exports = async function preIntentFilter(
     if (isBilling) {
       const dataSheet = `${phn}Billing_Data`;
       const headers = ["operation", "logistics", "inventory", "market", "fixed"];
-      await ensureSheet(sheets, dataSheet, headers);
+      const sheetId = await ensureSheet(sheets, dataSheet, headers);
 
       const colIndex = headers.indexOf(category) + 1;
       const range = `${dataSheet}!${String.fromCharCode(64 + colIndex)}2:${String.fromCharCode(64 + colIndex)}`;
@@ -143,7 +143,7 @@ What invoice should I check boss?`;
     // 3️⃣ Sales Data
     if (category === "SALES") {
       const sheet = `${phn}Sales_Data`;
-      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      const sheetId = await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
@@ -156,7 +156,7 @@ What invoice should I check boss?`;
     // 4️⃣ Lead Data
     if (category === "Lead") {
       const sheet = `${phn}Lead_Data`;
-      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      const sheetId = await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
