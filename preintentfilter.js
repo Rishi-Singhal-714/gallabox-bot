@@ -101,11 +101,14 @@ async function getNextBillingId(category, sheets) {
 
   await ensureSheet(sheets, counterSheet, headers);
 
-  // Read counters
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${counterSheet}!A2:H2`
   }).catch(() => ({ data: {} }));
+
+  // Always build full row safely
+  let row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
+  row = [...row, ...Array(8 - row.length).fill("0")]; // force 8 columns
 
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -113,20 +116,21 @@ async function getNextBillingId(category, sheets) {
   const yy = String(now.getFullYear()).slice(-2);
   const todayStr = `${dd}${mm}${yy}`;
 
-  const row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
-
-  let lastDate = row[0] || "";
-  let counters = row.slice(1).map(c => parseInt(c || "0", 10) || 0);
-
-  const index = headers.indexOf(CODE_MAP[category]); // column index for this category
+  const lastDate = row[0] || "";
+  let counters = row.slice(1).map(n => parseInt(n || "0", 10));
 
   if (lastDate !== todayStr) {
-    counters = counters.map(() => 0);
+    counters = counters.map(() => 0); // reset all
   }
 
-  counters[index - 1] += 1;
+  const prefix = CODE_MAP[category];
+  const colIndex = headers.indexOf(prefix) - 1; // index in counters array
 
-  // Update the sheet with new counter
+  if (colIndex < 0) throw new Error("Invalid billing category mapping!");
+
+  counters[colIndex]++;
+
+  // Save update
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${counterSheet}!A2:H2`,
@@ -136,8 +140,8 @@ async function getNextBillingId(category, sheets) {
     }
   });
 
-  const counterStr = String(counters[index - 1]).padStart(6, "0");
-  return `${CODE_MAP[category]}${todayStr}${counterStr}`;
+  const counterStr = String(counters[colIndex]).padStart(6, "0");
+  return `${prefix}${todayStr}${counterStr}`;
 }
 
 /* ============================================================
