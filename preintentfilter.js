@@ -97,7 +97,7 @@ async function getNextBillingId(category, sheets) {
     range: `${counterSheet}!A2:I2`
   }).catch(() => ({ data: {} }));
 
-  let row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
+  let row = (res.data?.values?.[0]) || [];
   row = [...row, ...Array(9 - row.length).fill("0")];
 
   const now = new Date();
@@ -108,7 +108,6 @@ async function getNextBillingId(category, sheets) {
 
   const lastDate = row[0] || "";
   let counters = row.slice(1).map(n => parseInt(n || "0", 10));
-
   if (lastDate !== todayStr) counters = counters.map(() => 0);
 
   const prefix = CODE_MAP[category];
@@ -136,18 +135,15 @@ module.exports = async function preIntentFilter(
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
+
   const detect = detectIntent(userMessage.toLowerCase());
+  let category = detect.prob >= 0.55 ? detect.key : "Unknown";
 
-  const validBilling = ["operation", "logistics", "inventory", "market", "fixed"];
-
-  let category = detect.key;
-  if (!validBilling.includes(category)) category = "Unknown";
+  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
 
   const id = await getNextBillingId(category, sheets);
 
-  /* Clean message */
-  let cleanMsg = userMessage;
-  cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
+  let cleanMsg = userMessage.replace(/^\w+\s*[-:]\s*/i, "").trim();
   if (!cleanMsg) cleanMsg = userMessage.trim();
 
   /* ALWAYS STORE IN LOGS */
@@ -160,18 +156,14 @@ module.exports = async function preIntentFilter(
     requestBody: { values: [[id, phn, cleanMsg, ts]] }
   });
 
-  /* VALID CATEGORY → Insert into Billing_Data */
-  if (validBilling.includes(category)) {
+  /* BILLING CATEGORIES → Billing_Data */
+  if (billingCats.includes(category)) {
     const dataSheet = `${phn}Billing_Data`;
-    const headers = ["operation", "logistics", "inventory", "market", "fixed"];
-    await ensureSheet(sheets, dataSheet, headers);
+    await ensureSheet(sheets, dataSheet, billingCats);
 
-    const colIndex = headers.indexOf(category) + 1;
+    const colIndex = billingCats.indexOf(category) + 1;
     const colLetter = String.fromCharCode(64 + colIndex);
-
-    const numericId = id.slice(-6);
-    const rowNumber = parseInt(numericId, 10) + 1;
-
+    const rowNumber = parseInt(id.slice(-6), 10) + 1;
     const line = `${id},${cleanMsg},${ts}`;
 
     await sheets.spreadsheets.values.update({
@@ -181,13 +173,39 @@ module.exports = async function preIntentFilter(
       requestBody: { values: [[line]] }
     });
 
-    return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
-Provide invoice number boss?`;
+    return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
   }
 
-  /* ❌ Unknown category → Help reply */
-  return `⚠️ Wrong category given!  
-📝 Logged as Unknown (ID: ${id})  
-Please use one of these categories:  
-👉 Operation / Logistics / Inventory / Market / Fixed / Sales / Lead`;
+  /* SALES */
+  if (category === "SALES") {
+    const sheet = `${phn}Sales_Data`;
+    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${sheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[phn, cleanMsg, ts]] }
+    });
+
+    return `📌 Saved under **SALES** (ID: ${id}).`;
+  }
+
+  /* LEAD */
+  if (category === "Lead") {
+    const sheet = `${phn}Lead_Data`;
+    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${sheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[phn, cleanMsg, ts]] }
+    });
+
+    return `🎯 Lead captured (ID: ${id}).`;
+  }
+
+  /* UNKNOWN */
+  return `⚠️ Wrong category boss!  
+Logged as Unknown (ID: ${id}).  
+Valid: Operation / Logistics / Inventory / Market / Fixed / Sales / Lead`;
 };
