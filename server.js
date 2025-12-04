@@ -1518,7 +1518,6 @@ if (
   if (employeeHandled) return employeeHandled;
 }
 
-}
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
