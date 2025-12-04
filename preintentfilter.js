@@ -83,17 +83,7 @@ async function ensureSheet(sheets, sheetName, headers) {
   return true;
 }
 
-/* -------------------- CATEGORY-WISE GLOBAL DAILY COUNTER -------------------- */
-/* Billing_Counter Sheet Layout:
-A:Date (041225)
-B:OPS
-C:LOG
-D:INV
-E:MKT
-F:FIX
-G:SAL
-H:LED
-*/
+/* -------------------- GLOBAL DAILY COUNTER -------------------- */
 async function getNextBillingId(category, sheets) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const counterSheet = "Billing_Counter";
@@ -106,9 +96,8 @@ async function getNextBillingId(category, sheets) {
     range: `${counterSheet}!A2:H2`
   }).catch(() => ({ data: {} }));
 
-  // Always build full row safely
   let row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
-  row = [...row, ...Array(8 - row.length).fill("0")]; // force 8 columns
+  row = [...row, ...Array(8 - row.length).fill("0")];
 
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -119,25 +108,18 @@ async function getNextBillingId(category, sheets) {
   const lastDate = row[0] || "";
   let counters = row.slice(1).map(n => parseInt(n || "0", 10));
 
-  if (lastDate !== todayStr) {
-    counters = counters.map(() => 0); // reset all
-  }
+  if (lastDate !== todayStr) counters = counters.map(() => 0);
 
   const prefix = CODE_MAP[category];
-  const colIndex = headers.indexOf(prefix) - 1; // index in counters array
-
-  if (colIndex < 0) throw new Error("Invalid billing category mapping!");
+  const colIndex = headers.indexOf(prefix) - 1;
 
   counters[colIndex]++;
 
-  // Save update
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${counterSheet}!A2:H2`,
     valueInputOption: "RAW",
-    requestBody: {
-      values: [[todayStr, ...counters]]
-    }
+    requestBody: { values: [[todayStr, ...counters]] }
   });
 
   const counterStr = String(counters[colIndex]).padStart(6, "0");
@@ -159,13 +141,12 @@ module.exports = async function preIntentFilter(
     const category = detect.key;
     const id = await getNextBillingId(category, sheets);
 
-    /* 🔹 MESSAGE CLEANING */
     const categoryRegex = new RegExp(`^(${category})\\s*[-: ]+`, "i");
     let cleanMsg = userMessage.replace(categoryRegex, "").trim();
     cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
     if (!cleanMsg) cleanMsg = userMessage.trim();
 
-    /* 1️⃣ Billing Logs ALWAYS */
+    /* ALWAYS STORE IN LOGS */
     const logsSheet = `${phn}Billing_Logs`;
     await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
@@ -175,9 +156,8 @@ module.exports = async function preIntentFilter(
       requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
 
-    /* Billing Category? → Billing_Data */
+    /* BILLING DATA TABLE */
     const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
-
     if (billingCats.includes(category)) {
       const dataSheet = `${phn}Billing_Data`;
       const headers = ["operation", "logistics", "inventory", "market", "fixed"];
@@ -188,20 +168,14 @@ module.exports = async function preIntentFilter(
 
       const line = `${id},${cleanMsg},${ts}`;
 
-      const existing = await sheets.spreadsheets.values
-        .get({
-          spreadsheetId: process.env.GOOGLE_SHEET_ID,
-          range: `${dataSheet}!${colLetter}2:${colLetter}`
-        }).catch(() => ({ data: {} }));
-
-      const prev = existing?.data?.values?.flat().join("\n") || "";
-      const finalValue = prev ? `${prev}\n${line}` : line;
+      const numericId = id.slice(-6);
+      const rowNumber = parseInt(numericId, 10) + 1;
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: `${dataSheet}!${colLetter}2`,
+        range: `${dataSheet}!${colLetter}${rowNumber}`,
         valueInputOption: "RAW",
-        requestBody: { values: [[finalValue]] }
+        requestBody: { values: [[line]] }
       });
 
       return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
