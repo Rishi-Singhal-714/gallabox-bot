@@ -45,30 +45,44 @@ function detectIntent(text) {
 }
 
 async function ensureSheet(sheets, sheetName, headers) {
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID
-  });
-  const exists = meta.data.sheets.some(s => s.properties.title === sheetName);
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
-  if (!exists) {
-    console.log(`📄 Creating sheet: ${sheetName}`);
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      requestBody: {
-        requests: [
-          { addSheet: { properties: { title: sheetName } } },
-          {
-            updateCells: {
-              range: { sheetId: meta.data.sheets.length, startRowIndex: 0, endRowIndex: 1 },
-              rows: [{ values: headers.map(h => ({ userEnteredValue: { stringValue: h } })) }],
-              fields: "*"
-            }
-          }
-        ]
-      }
-    });
-  }
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId
+  });
+
+  // Check if sheet already exists
+  const sheet = meta.data.sheets.find(s => s.properties.title === sheetName);
+
+  if (sheet) return sheet.properties.sheetId; // RETURN sheetId
+
+  // Create new sheet
+  const addRes = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        { addSheet: { properties: { title: sheetName } } }
+      ]
+    }
+  });
+
+  // Get the actual created sheetId
+  const sheetId =
+    addRes.data.replies[0].addSheet.properties.sheetId;
+
+  // Set header row using update, not updateCells
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A1:${String.fromCharCode(65 + headers.length - 1)}1`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [headers]
+    }
+  });
+
+  return sheetId; // important return
 }
+
 
 module.exports = async function preIntentFilter(
   openai,
