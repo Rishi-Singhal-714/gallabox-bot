@@ -37,7 +37,6 @@ const BILLING_MAIN = {
   Lead: ["lead", "leeds", "leed"]
 };
 
-/* -------------------- CATEGORY CODES FOR BILLING IDS -------------------- */
 const CODE_MAP = {
   operation: "OPS",
   logistics: "LOG",
@@ -48,7 +47,7 @@ const CODE_MAP = {
   Lead: "LED"
 };
 
-/* -------------------- INTENT DETECTOR -------------------- */
+/* -------------------- DETECT INTENT -------------------- */
 function detectIntent(text) {
   let best = { key: null, prob: 0 };
   for (const key in BILLING_MAIN) {
@@ -63,20 +62,16 @@ function detectIntent(text) {
 /* -------------------- ENSURE SHEET EXISTS -------------------- */
 async function ensureSheet(sheets, sheetName, headers) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
-  const sheet = meta.data.sheets.find(s => s.properties.title === sheetName);
+  const found = meta.data.sheets.find(s => s.properties.title === sheetName);
+  if (found) return found.properties.sheetId;
 
-  if (sheet) return sheet.properties.sheetId;
-
-  const addRes = await sheets.spreadsheets.batchUpdate({
+  await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [{ addSheet: { properties: { title: sheetName } } }]
     }
   });
-
-  const newSheetId = addRes.data.replies[0].addSheet.properties.sheetId;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -85,19 +80,31 @@ async function ensureSheet(sheets, sheetName, headers) {
     requestBody: { values: [headers] }
   });
 
-  return newSheetId;
+  return true;
 }
 
-/* -------------------- GLOBAL DAILY COUNTER -------------------- */
+/* -------------------- CATEGORY-WISE GLOBAL DAILY COUNTER -------------------- */
+/* Billing_Counter Sheet Layout:
+A:Date (041225)
+B:OPS
+C:LOG
+D:INV
+E:MKT
+F:FIX
+G:SAL
+H:LED
+*/
 async function getNextBillingId(category, sheets) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const counterSheet = "Billing_Counter";
+  const headers = ["date", "OPS", "LOG", "INV", "MKT", "FIX", "SAL", "LED"];
 
-  await ensureSheet(sheets, counterSheet, ["date", "counter"]);
+  await ensureSheet(sheets, counterSheet, headers);
 
+  // Read counters
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${counterSheet}!A2:B2`
+    range: `${counterSheet}!A2:H2`
   }).catch(() => ({ data: {} }));
 
   const now = new Date();
@@ -106,36 +113,38 @@ async function getNextBillingId(category, sheets) {
   const yy = String(now.getFullYear()).slice(-2);
   const todayStr = `${dd}${mm}${yy}`;
 
-  let lastDate = "";
-  let lastCounter = 0;
+  const row = (res.data && res.data.values && res.data.values[0]) ? res.data.values[0] : [];
 
-  if (res.data?.values?.[0]) {
-    lastDate = res.data.values[0][0] || "";
-    lastCounter = parseInt(res.data.values[0][1] || "0", 10) || 0;
+  let lastDate = row[0] || "";
+  let counters = row.slice(1).map(c => parseInt(c || "0", 10) || 0);
+
+  const index = headers.indexOf(CODE_MAP[category]); // column index for this category
+
+  if (lastDate !== todayStr) {
+    counters = counters.map(() => 0);
   }
 
-  const newCounter = (lastDate === todayStr) ? lastCounter + 1 : 1;
+  counters[index - 1] += 1;
 
+  // Update the sheet with new counter
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${counterSheet}!A2:B2`,
+    range: `${counterSheet}!A2:H2`,
     valueInputOption: "RAW",
-    requestBody: { values: [[todayStr, String(newCounter)]] }
+    requestBody: {
+      values: [[todayStr, ...counters]]
+    }
   });
 
-  const counterStr = String(newCounter).padStart(6, "0");
+  const counterStr = String(counters[index - 1]).padStart(6, "0");
   return `${CODE_MAP[category]}${todayStr}${counterStr}`;
 }
 
 /* ============================================================
-   MAIN LOGIC
+   MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
 module.exports = async function preIntentFilter(
-  openai,
-  session,
-  sessionId,
-  userMessage,
-  getSheets
+  openai, session, sessionId, userMessage, getSheets
 ) {
   const sheets = await getSheets();
   const ts = new Date().toISOString();
@@ -145,28 +154,27 @@ module.exports = async function preIntentFilter(
   if (detect.prob >= 0.55) {
     const category = detect.key;
     const id = await getNextBillingId(category, sheets);
-    const isBilling = ["operation", "logistics", "inventory", "market", "fixed"]
-      .includes(category);
 
-    /* -------- CLEAN MESSAGE (Remove Keyword) -------- */
+    /* 🔹 MESSAGE CLEANING */
     const categoryRegex = new RegExp(`^(${category})\\s*[-: ]+`, "i");
     let cleanMsg = userMessage.replace(categoryRegex, "").trim();
     cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
     if (!cleanMsg) cleanMsg = userMessage.trim();
 
-    /* ---------- 1️⃣ Billing Logs ALWAYS ---------- */
+    /* 1️⃣ Billing Logs ALWAYS */
     const logsSheet = `${phn}Billing_Logs`;
     await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
-
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${logsSheet}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[id, phn, cleanMsg, ts]] }  // 👈 Keyword removed
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
 
-    /* ---------- 2️⃣ Billing_Data (Ops/Logi/Inv/Mkt/Fix) ---------- */
-    if (isBilling) {
+    /* Billing Category? → Billing_Data */
+    const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+
+    if (billingCats.includes(category)) {
       const dataSheet = `${phn}Billing_Data`;
       const headers = ["operation", "logistics", "inventory", "market", "fixed"];
       await ensureSheet(sheets, dataSheet, headers);
@@ -176,10 +184,11 @@ module.exports = async function preIntentFilter(
 
       const line = `${id},${cleanMsg},${ts}`;
 
-      const existing = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: `${dataSheet}!${colLetter}2:${colLetter}`
-      }).catch(() => ({ data: {} }));
+      const existing = await sheets.spreadsheets.values
+        .get({
+          spreadsheetId: process.env.GOOGLE_SHEET_ID,
+          range: `${dataSheet}!${colLetter}2:${colLetter}`
+        }).catch(() => ({ data: {} }));
 
       const prev = existing?.data?.values?.flat().join("\n") || "";
       const finalValue = prev ? `${prev}\n${line}` : line;
@@ -191,11 +200,11 @@ module.exports = async function preIntentFilter(
         requestBody: { values: [[finalValue]] }
       });
 
-      return `📌 Saved under **${category.toUpperCase()}** (ID: ${id}).  
+      return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
 Provide invoice number boss?`;
     }
 
-    /* ---------- SALES ---------- */
+    /* SALES */
     if (category === "SALES") {
       const sheet = `${phn}Sales_Data`;
       await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -208,7 +217,7 @@ Provide invoice number boss?`;
       return `📌 Saved under **SALES** (ID: ${id}) boss!`;
     }
 
-    /* ---------- LEAD ---------- */
+    /* LEAD */
     if (category === "Lead") {
       const sheet = `${phn}Lead_Data`;
       await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -222,6 +231,5 @@ Provide invoice number boss?`;
     }
   }
 
-  /* ---------- NON-BILLING FALLBACK ---------- */
   return "Hi Boss 👋 How can I assist?";
 };
