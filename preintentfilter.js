@@ -214,7 +214,17 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   }
 
   /* UNKNOWN */
-  return `⚠️ Category not recognized boss!  
-Logged as Unknown (ID: ${id}).  
-Valid: Operation / Logistics / Inventory / Market / Fixed / Sales / Lead`;
+/* 🔴 UNKNOWN */
+return `⚠️ Category not recognized boss!
+📝 Logged as Unknown (ID: ${id})
+
+Please send like any of these formats 👇:
+
+Operation – message
+Logistics – message
+Inventory – message
+Market – message
+Fixed – message
+Sales – message
+Lead – message`;
 };
