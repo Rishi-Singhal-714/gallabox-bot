@@ -95,7 +95,6 @@ async function getNextBillingId(category, sheets) {
 
   await ensureSheet(sheets, counterSheet, ["date", "counter"]);
 
-  // Fetch A2:B2
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${counterSheet}!A2:B2`
@@ -138,11 +137,10 @@ module.exports = async function preIntentFilter(
   userMessage,
   getSheets
 ) {
-  const text = userMessage.toLowerCase();
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
-  const detect = detectIntent(text);
+  const detect = detectIntent(userMessage.toLowerCase());
 
   if (detect.prob >= 0.55) {
     const category = detect.key;
@@ -150,7 +148,13 @@ module.exports = async function preIntentFilter(
     const isBilling = ["operation", "logistics", "inventory", "market", "fixed"]
       .includes(category);
 
-    /* ---------- 1️⃣ Billing Logs: ALWAYS ---------- */
+    /* -------- CLEAN MESSAGE (Remove Keyword) -------- */
+    const categoryRegex = new RegExp(`^(${category})\\s*[-: ]+`, "i");
+    let cleanMsg = userMessage.replace(categoryRegex, "").trim();
+    cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
+    if (!cleanMsg) cleanMsg = userMessage.trim();
+
+    /* ---------- 1️⃣ Billing Logs ALWAYS ---------- */
     const logsSheet = `${phn}Billing_Logs`;
     await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
 
@@ -158,25 +162,19 @@ module.exports = async function preIntentFilter(
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${logsSheet}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[id, phn, userMessage, ts]] }
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }  // 👈 Keyword removed
     });
 
-    /* ---------- 2️⃣ Billing_Data ---------- */
+    /* ---------- 2️⃣ Billing_Data (Ops/Logi/Inv/Mkt/Fix) ---------- */
     if (isBilling) {
       const dataSheet = `${phn}Billing_Data`;
       const headers = ["operation", "logistics", "inventory", "market", "fixed"];
       await ensureSheet(sheets, dataSheet, headers);
 
-      // 100% ensure keyword is removed before storing
-      const categoryRegex = new RegExp(`^(${category})\\s*[-: ]+`, "i");
-      let cleanMsg = userMessage.replace(categoryRegex, "").trim();
-      cleanMsg = cleanMsg.replace(/^\w+\s*[-:]\s*/i, "").trim();
-      if (!cleanMsg) cleanMsg = userMessage.trim();
-
-      const line = `${id},${cleanMsg},${ts}`;
-
       const colIndex = headers.indexOf(category) + 1;
       const colLetter = String.fromCharCode(64 + colIndex);
+
+      const line = `${id},${cleanMsg},${ts}`;
 
       const existing = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -193,8 +191,8 @@ module.exports = async function preIntentFilter(
         requestBody: { values: [[finalValue]] }
       });
 
-      return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).  
-Provide invoice / order number boss?`;
+      return `📌 Saved under **${category.toUpperCase()}** (ID: ${id}).  
+Provide invoice number boss?`;
     }
 
     /* ---------- SALES ---------- */
@@ -205,9 +203,9 @@ Provide invoice / order number boss?`;
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, userMessage, ts]] }
+        requestBody: { values: [[phn, cleanMsg, ts]] }
       });
-      return `📌 Saved under **SALES** (ID: ${id}).`;
+      return `📌 Saved under **SALES** (ID: ${id}) boss!`;
     }
 
     /* ---------- LEAD ---------- */
@@ -218,7 +216,7 @@ Provide invoice / order number boss?`;
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, userMessage, ts]] }
+        requestBody: { values: [[phn, cleanMsg, ts]] }
       });
       return `🎯 Lead captured (ID: ${id}) boss!`;
     }
