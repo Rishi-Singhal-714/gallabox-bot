@@ -146,11 +146,8 @@ async function appendUnderColumn(headerName, text) {
 // -------------------------
 const ZULU_CLUB_INFO = `
 We're building a new way to shop and discover lifestyle products online.
-
 Introducing Zulu Club — your personalized lifestyle shopping experience, delivered right to your doorstep.
-
 Browse and shop high-quality lifestyle products across categories you love:
-
 - Women's Fashion — dresses, tops, co-ords, winterwear, loungewear & more
 - Men's Fashion — shirts, tees, jackets, athleisure & more
 - Kids — clothing, toys, learning kits & accessories
@@ -159,12 +156,9 @@ Browse and shop high-quality lifestyle products across categories you love:
 - Beauty & Self-Care — skincare, bodycare, fragrances & grooming essentials
 - Fashion Accessories — bags, jewelry, watches, sunglasses & belts
 - Lifestyle Gifting — curated gift sets & décor-based gifting
-
 And the best part? No waiting days for delivery. With Zulu Club, your selection arrives in just 100 minutes. Try products at home, keep what you love, return instantly — it's smooth, personal, and stress-free.
-
 Now live in Gurgaon
 Experience us at our pop-ups: AIPL Joy Street & AIPL Central
-
 Explore & shop on: zulu.club
 Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
@@ -1464,78 +1458,18 @@ const EMPLOYEE_NUMBERS = [
   "919717350080",
   "918860924190"
 ];
-
 if (EMPLOYEE_NUMBERS.includes(sessionId)) {
-  console.log("⚡ Employee mode active for:", sessionId);
-
-  const empPrompt = `
-Classify internal employee WhatsApp message into exactly one intent:
-- "empgreeting" → hello / hi / casual small talk
-- "billing" → invoice, GST, payment related queries
-
-Respond ONLY JSON:
-{ "intent": "billing", "reason": "short why" }
-User message: "${userMessage}"
-`;
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "Internal employee intent classifier" },
-        { role: "user", content: empPrompt }
-      ],
-      max_tokens: 200,
-      temperature: 0
-    });
-
-    const parsed = JSON.parse(completion.choices[0].message.content.trim());
-    const empIntent = parsed.intent || "empgreeting";
-
-    session.lastDetectedIntent = empIntent;
-    session.lastDetectedIntentTs = Date.now();
-
-    // ------------------------------
-    // **Handling empgreeting**
-    // ------------------------------
-    if (empIntent === "empgreeting") {
-      return "Hi Boss 👋 How can I help you?";
-    }
-
-    // ------------------------------
-    // **Handling billing**
-    // ------------------------------
-if (empIntent === "billing") {
-  try {
-    const sheets = await getSheets();
-    if (sheets) {
-      const timestamp = new Date().toISOString();
-
-      // Write into Sheet3 explicitly
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: `Sheet3!A:Z`, // 👈 FORCE Sheet3
-        valueInputOption: "RAW",
-        requestBody: {
-          values: [[sessionId, userMessage, timestamp]]
-        }
-      });
-    }
-  } catch (err) {
-    console.error("❌ Failed saving to Sheet3:", err);
-  }
-
-  return "📄 Billing noted boss! Which Order / Invoice should I check?";
+  const employeeHandled = await preIntentFilter(
+    openai,
+    session,
+    sessionId,
+    userMessage,
+    getSheets,
+    createAgentTicket,
+    appendUnderColumn
+  );
+  if (employeeHandled) return employeeHandled;
 }
-
-
-    return "Hi Boss 👋";
-  } catch (err) {
-    console.error("❌ Employee GPT filter error:", err);
-    return "Hi Boss 👋";
-  }
-}
-
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
@@ -1836,7 +1770,6 @@ app.get('/refresh-csv', async (req, res) => {
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
-
 app.get('/test-keyword-matching', async (req, res) => {
   const { query } = req.query;
   if (!query) return res.status(400).json({ error: 'Missing query parameter' });
