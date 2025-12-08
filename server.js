@@ -1442,7 +1442,7 @@ return message;
     return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
   } catch (error) {
     console.error('❌ getChatGPTResponse error (session-aware):', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
+    return `⚠️ Not able to note, please resend the message`;
   }
 }
 /* -------------------------
@@ -1481,7 +1481,7 @@ async function handleMessage(sessionId, userMessage) {
     return aiResponse;
   } catch (error) {
     console.error('❌ Error handling message (session-aware):', error);
-    return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
+    return `⚠️ Not able to note, please resend the message`;
   }
 }
 /* -------------------------
