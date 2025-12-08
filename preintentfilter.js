@@ -1,18 +1,5 @@
 const { OpenAI } = require("openai");
 
-/* -------------------- SMALL BULK DELAY TO PREVENT OVERLOAD -------------------- */
-let lastProcessTime = 0;
-const MIN_DELAY = 2000; // 0.6 sec gap between logs (adjust 400-1000ms if needed)
-
-async function safeDelay() {
-  const now = Date.now();
-  const diff = now - lastProcessTime;
-  if (diff < MIN_DELAY) {
-    await new Promise(res => setTimeout(res, MIN_DELAY - diff));
-  }
-  lastProcessTime = Date.now();
-}
-
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
   if (!str || !keyword) return 0;
@@ -105,7 +92,7 @@ async function ensureSheet(sheets, sheetName, headers) {
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
-      requests: [{ addSheet: { properties: { title: sheetName } } } ]
+      requests: [{ addSheet: { properties: { title: sheetName } } }]
     }
   });
 
@@ -121,8 +108,6 @@ async function ensureSheet(sheets, sheetName, headers) {
 
 /* -------------------- DAILY ID COUNTER -------------------- */
 async function getNextBillingId(category, sheets) {
-  await safeDelay(); // ⭐ Important fix: avoid sheet write conflict
-
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const counterSheet = "Billing_Counter";
   const headers = ["date", "OPS", "LOG", "INV", "MKT", "FIX", "SAL", "LED", "UNK"];
@@ -167,13 +152,11 @@ async function getNextBillingId(category, sheets) {
    MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
 module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
-
-  await safeDelay(); // ⭐ Rate limit bulk bursts
-
   const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
 
+  // 🔹 GREETING CHECK FIRST (do not log greets)
   if (isEmpGreeting(userMessage)) {
     return `Hello boss! What would you like to do?`;
   }
@@ -191,6 +174,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
   const id = await getNextBillingId(category, sheets);
 
+  /* CLEAN MESSAGE: remove keyword only if at start */
   let cleanMsg = userMessage.trim();
   const allKeywords = Object.values(BILLING_MAIN).flat();
   for (const kw of allKeywords) {
@@ -199,6 +183,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   }
   if (!cleanMsg) cleanMsg = userMessage.trim();
 
+  /* ALWAYS log */
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
   await sheets.spreadsheets.values.append({
@@ -208,6 +193,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     requestBody: { values: [[id, phn, cleanMsg, ts]] }
   });
 
+  /* BILLING DATA */
   if (billingCats.includes(category)) {
     const dataSheet = `${phn}Billing_Data`;
     await ensureSheet(sheets, dataSheet, billingCats);
@@ -226,6 +212,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
   }
 
+  /* SALES */
   if (salesCats.includes(category)) {
     const sheet = `${phn}Sales_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -239,6 +226,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `📌 Saved under **SALES** (ID: ${id}).`;
   }
 
+  /* LEAD */
   if (leadCats.includes(category)) {
     const sheet = `${phn}Lead_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -252,6 +240,17 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `🎯 Lead captured (ID: ${id}).`;
   }
 
+  /* UNKNOWN */
   return `⚠️ Category not recognized boss!
-📝 Logged as Unknown (ID: ${id})`;
+📝 Logged as Unknown (ID: ${id})
+
+Please send like any of these formats 👇:
+
+Operation – message  
+Logistics – message  
+Inventory – message  
+Market – message  
+Fixed – message  
+Sales – message  
+Lead – message`;
 };
