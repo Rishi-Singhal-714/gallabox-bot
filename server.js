@@ -1497,36 +1497,34 @@ app.post('/webhook', async (req, res) => {
 
     let userMessage = webhookData.whatsapp?.text?.body?.trim() || "";
     const userPhone = webhookData.whatsapp?.from;
-    const userName = webhookData.contact?.name || 'Customer';
+    const userName = webhookData.contact?.name || "Customer";
 
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
 
     if (!userPhone) {
-      console.log('❓ No valid phone number found in webhook');
-      return res.status(400).json({ status: 'error', message: 'No phone number found', processed: false });
+      return res.status(400).json({
+        status: 'error',
+        message: "No phone number found",
+        processed: false
+      });
     }
 
     const sessionId = userPhone;
     createOrTouchSession(sessionId);
 
-    // 🔹 IMAGE CHECK
-    if (webhookData.whatsapp?.image?.id) {
-      const mediaId = webhookData.whatsapp.image.id;
-      console.log(`🖼️ Image received: ${mediaId}`);
+    // 🔹 IMAGE CHECK (prefer caption for category detection)
+    if (webhookData.whatsapp?.image?.path) {
+      const mediaPath = webhookData.whatsapp.image.path;
+      const caption = webhookData.whatsapp.image.caption?.trim() || "";
+
+      console.log(`🖼️ Image received (path): ${mediaPath}`);
+      console.log(`📝 Caption: ${caption}`);
 
       try {
-        const mediaResp = await axios.get(
-          `${gallaboxConfig.baseUrl}/media/${mediaId}`,
-          {
-            headers: {
-              apiKey: gallaboxConfig.apiKey,
-              apiSecret: gallaboxConfig.apiSecret
-            },
-            responseType: "arraybuffer"
-          }
-        );
+        const mediaResp = await axios.get(mediaPath, {
+          responseType: "arraybuffer"
+        });
 
-        // Store Base64 temporarily for preIntentFilter to upload to Drive
         const base64Img = Buffer.from(mediaResp.data, "binary").toString("base64");
 
         conversations[sessionId].lastMedia = {
@@ -1534,10 +1532,13 @@ app.post('/webhook', async (req, res) => {
           data: base64Img
         };
 
-        userMessage = "[IMAGE]"; // placeholder to trigger preIntentFilter logic
+        // 📌 If caption exists, use that for category detection
+        // Else use placeholder
+        userMessage = caption || "[IMAGE]";
+
         console.log("📌 Base64 stored in session.lastMedia");
       } catch (err) {
-        console.error("❌ Failed to download media:", err.message);
+        console.error("❌ Failed to download media from path:", err.message);
       }
     }
 
@@ -1547,22 +1548,21 @@ app.post('/webhook', async (req, res) => {
     await sendMessage(userPhone, userName, aiResponse);
     console.log(`✅ AI response sent to ${userPhone}`);
 
-    res.status(200).json({
+    return res.status(200).json({
       status: 'success',
       message: 'Webhook processed successfully',
       processed: true
     });
 
   } catch (error) {
-    console.error('💥 Webhook error:', error.message);
-    res.status(500).json({
+    console.error("💥 Webhook error:", error.message);
+    return res.status(500).json({
       status: 'error',
       message: error.message,
       processed: false
     });
   }
 });
-
 // ===============================
 // Zulu Club - TOUR STATUS ALERTS
 // ===============================
