@@ -2,7 +2,7 @@ const { OpenAI } = require("openai");
 
 /* -------------------- SMALL BULK DELAY TO PREVENT OVERLOAD -------------------- */
 let lastProcessTime = 0;
-const MIN_DELAY = 600; // 0.6 sec gap between logs (adjust 400-1000ms if needed)
+const MIN_DELAY = 2000; // 0.6 sec gap between logs (adjust 400-1000ms if needed)
 
 async function safeDelay() {
   const now = Date.now();
