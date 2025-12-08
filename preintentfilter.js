@@ -1,7 +1,8 @@
 const { OpenAI } = require("openai");
 const { google } = require("googleapis");
+const { Readable } = require("stream");
 
-/* 🔹 GOOGLE DRIVE UPLOAD HELPER — FIXED */
+/* 🔹 FINAL GOOGLE DRIVE UPLOAD FUNCTION (NO PIPE ERROR EVER) */
 async function uploadImageToDrive(base64Data, fileName) {
   try {
     const keyJson = JSON.parse(
@@ -15,34 +16,44 @@ async function uploadImageToDrive(base64Data, fileName) {
 
     const drive = google.drive({ version: "v3", auth });
 
+    // Convert base64 → Buffer → Stream
     const buffer = Buffer.from(base64Data, "base64");
+    const stream = Readable.from(buffer);
 
-    const uploaded = await drive.files.create({
+    console.log("📤 Uploading to Drive...");
+
+    const uploadResp = await drive.files.create({
       requestBody: {
         name: fileName,
         parents: [process.env.GOOGLE_DRIVE_PARENT_FOLDER_ID]
       },
       media: {
         mimeType: "image/jpeg",
-        body: buffer
+        body: stream  // 👉 Readable stream = NO pipe error
       },
       fields: "id"
     });
 
-    const fileId = uploaded.data.id;
+    const fileId = uploadResp.data.id;
+    console.log("📌 File uploaded with ID:", fileId);
 
+    // Make file public
     await drive.permissions.create({
       fileId,
       requestBody: { role: "reader", type: "anyone" }
     });
 
-    return `https://drive.google.com/uc?id=${fileId}`;
+    const publicUrl = `https://drive.google.com/uc?id=${fileId}`;
+
+    console.log("🔗 Public Link:", publicUrl);
+    return publicUrl;
 
   } catch (err) {
-    console.error("❌ Drive Upload Error (FIXED):", err.message);
+    console.error("❌ Google Drive Upload Failed:", err.message);
     return null;
   }
 }
+
 
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
