@@ -1,7 +1,7 @@
 const { OpenAI } = require("openai");
 const { google } = require("googleapis");
 
-/* 🔹 GOOGLE DRIVE UPLOAD HELPER */
+/* 🔹 GOOGLE DRIVE UPLOAD HELPER — FIXED */
 async function uploadImageToDrive(base64Data, fileName) {
   try {
     const keyJson = JSON.parse(
@@ -15,19 +15,17 @@ async function uploadImageToDrive(base64Data, fileName) {
 
     const drive = google.drive({ version: "v3", auth });
 
-    const fileMetaData = {
-      name: fileName,
-      parents: [process.env.GOOGLE_DRIVE_PARENT_FOLDER_ID]
-    };
-
-    const media = {
-      mimeType: "image/jpeg",
-      body: Buffer.from(base64Data, "base64")
-    };
+    const buffer = Buffer.from(base64Data, "base64");
 
     const uploaded = await drive.files.create({
-      resource: fileMetaData,
-      media,
+      requestBody: {
+        name: fileName,
+        parents: [process.env.GOOGLE_DRIVE_PARENT_FOLDER_ID]
+      },
+      media: {
+        mimeType: "image/jpeg",
+        body: buffer
+      },
       fields: "id"
     });
 
@@ -39,8 +37,9 @@ async function uploadImageToDrive(base64Data, fileName) {
     });
 
     return `https://drive.google.com/uc?id=${fileId}`;
+
   } catch (err) {
-    console.error("❌ Drive Upload Error:", err.message);
+    console.error("❌ Drive Upload Error (FIXED):", err.message);
     return null;
   }
 }
