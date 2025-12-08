@@ -1,5 +1,20 @@
 const { OpenAI } = require("openai");
 
+/* -------------------- GLOBAL QUEUE SYSTEM -------------------- */
+const pendingQueue = [];
+let workerStarted = false;
+
+function startWorker(handler) {
+  if (workerStarted) return;
+  workerStarted = true;
+
+  setInterval(async () => {
+    if (pendingQueue.length === 0) return;
+    const task = pendingQueue.shift();
+    await handler(task);
+  }, 3000); // 3 sec delay processing
+}
+
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
   if (!str || !keyword) return 0;
@@ -149,108 +164,108 @@ async function getNextBillingId(category, sheets) {
 }
 
 /* ============================================================
-   MAIN: EMPLOYEE MESSAGE FILTER
+   QUEUED PROCESSING OF BILLING
+============================================================ */
+async function processBilling({ openai, session, sessionId, userMessage, getSheets }) {
+  try {
+    const sheets = await getSheets();
+    const ts = new Date().toISOString();
+    const phn = sessionId;
+
+    if (isEmpGreeting(userMessage)) return;
+
+    const detect = detectIntent(userMessage.toLowerCase());
+    let category = detect.prob >= 0.55 ? detect.key : "Unknown";
+
+    const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+    const salesCats = ["SALES"];
+    const leadCats = ["Lead"];
+    if (![...billingCats, ...salesCats, ...leadCats].includes(category)) {
+      category = "Unknown";
+    }
+
+    const id = await getNextBillingId(category, sheets);
+
+    let cleanMsg = userMessage.trim();
+    const allKeywords = Object.values(BILLING_MAIN).flat();
+    for (const kw of allKeywords) {
+      const regex = new RegExp(`^${kw}\\b[\\s:,-]*`, "i");
+      cleanMsg = cleanMsg.replace(regex, "").trim();
+    }
+    if (!cleanMsg) cleanMsg = userMessage.trim();
+
+    const logsSheet = `${phn}Billing_Logs`;
+    await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${logsSheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }
+    });
+
+    if (billingCats.includes(category)) {
+      const dataSheet = `${phn}Billing_Data`;
+      await ensureSheet(sheets, dataSheet, billingCats);
+      const colIndex = billingCats.indexOf(category) + 1;
+      const colLetter = String.fromCharCode(64 + colIndex);
+      const rowNumber = parseInt(id.slice(-6), 10) + 1;
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${dataSheet}!${colLetter}${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
+      });
+
+      console.log("✔ Saved Billing:", id);
+      return;
+    }
+
+    if (salesCats.includes(category)) {
+      const sheet = `${phn}Sales_Data`;
+      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${sheet}!A:Z`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[phn, cleanMsg, ts]] }
+      });
+      console.log("✔ Saved Sales:", id);
+      return;
+    }
+
+    if (leadCats.includes(category)) {
+      const sheet = `${phn}Lead_Data`;
+      await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: `${sheet}!A:Z`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[phn, cleanMsg, ts]] }
+      });
+      console.log("✔ Lead Captured:", id);
+      return;
+    }
+
+    console.log("⚠ Unknown Saved:", id);
+
+  } catch (err) {
+    console.error("❌ Worker Failed:", err.message || err);
+  }
+}
+
+
+/* ============================================================
+   MAIN EXPORT — ADD TO QUEUE
 ============================================================ */
 module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
-  const sheets = await getSheets();
-  const ts = new Date().toISOString();
-  const phn = sessionId;
 
-  // 🔹 GREETING CHECK FIRST (do not log greets)
   if (isEmpGreeting(userMessage)) {
     return `Hello boss! What would you like to do?`;
   }
 
-  const detect = detectIntent(userMessage.toLowerCase());
-  let category = detect.prob >= 0.55 ? detect.key : "Unknown";
+  pendingQueue.push({ openai, session, sessionId, userMessage, getSheets });
+  startWorker(processBilling);
 
-  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
-  const salesCats = ["SALES"];
-  const leadCats = ["Lead"];
-
-  if (!billingCats.includes(category) && !salesCats.includes(category) && !leadCats.includes(category)) {
-    category = "Unknown";
-  }
-
-  const id = await getNextBillingId(category, sheets);
-
-  /* CLEAN MESSAGE: remove keyword only if at start */
-  let cleanMsg = userMessage.trim();
-  const allKeywords = Object.values(BILLING_MAIN).flat();
-  for (const kw of allKeywords) {
-    const regex = new RegExp(`^${kw}\\b[\\s:,-]*`, "i");
-    cleanMsg = cleanMsg.replace(regex, "").trim();
-  }
-  if (!cleanMsg) cleanMsg = userMessage.trim();
-
-  /* ALWAYS log */
-  const logsSheet = `${phn}Billing_Logs`;
-  await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${logsSheet}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, cleanMsg, ts]] }
-  });
-
-  /* BILLING DATA */
-  if (billingCats.includes(category)) {
-    const dataSheet = `${phn}Billing_Data`;
-    await ensureSheet(sheets, dataSheet, billingCats);
-
-    const colIndex = billingCats.indexOf(category) + 1;
-    const colLetter = String.fromCharCode(64 + colIndex);
-    const rowNumber = parseInt(id.slice(-6), 10) + 1;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${dataSheet}!${colLetter}${rowNumber}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
-    });
-
-    return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
-  }
-
-  /* SALES */
-  if (salesCats.includes(category)) {
-    const sheet = `${phn}Sales_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
-    });
-
-    return `📌 Saved under **SALES** (ID: ${id}).`;
-  }
-
-  /* LEAD */
-  if (leadCats.includes(category)) {
-    const sheet = `${phn}Lead_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
-    });
-
-    return `🎯 Lead captured (ID: ${id}).`;
-  }
-
-  /* UNKNOWN */
-  return `⚠️ Category not recognized boss!
-📝 Logged as Unknown (ID: ${id})
-
-Please send like any of these formats 👇:
-
-Operation – message  
-Logistics – message  
-Inventory – message  
-Market – message  
-Fixed – message  
-Sales – message  
-Lead – message`;
+  return `⏳ Processing… Stored under queue. I’ll handle it boss!`;
 };
