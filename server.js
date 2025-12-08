@@ -1,33 +1,18 @@
-// server.js - GPT-first intent + category matcher (AI is the boss)
-// Gender detection now uses category data (cat_id / cat1) as the source of truth.
-
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 const preIntentFilter = require('./preintentfilter'); 
-const { google } = require('googleapis'); // ADDED: for Google Sheets logging
-
+const { google } = require('googleapis'); 
 const app = express();
 const VOICE_AI_FORM_LINK = 'https://forms.gle/CiPAk6RqWxkd8uSKA';
-// GLOBAL — OUTSIDE ANY FUNCTION
 const EMPLOYEE_NUMBERS = [
-  "918368127760",
-  "919717350080",
-  "918860924190"
+  "918368127760"
 ];
-
-// override state — GLOBAL
-const EMPLOYEE_FLAGS = {}; // false → normal, undefined → employee
-const EMPLOYEE_STATUS_PASS = process.env.EMPLOYEE_STATUS_PASS || "";
-
-
-
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 // Gallabox API configuration - use environment variables
 const gallaboxConfig = {
   accountId: process.env.GALLABOX_ACCOUNT_ID,
@@ -36,19 +21,16 @@ const gallaboxConfig = {
   channelId: process.env.GALLABOX_CHANNEL_ID,
   baseUrl: 'https://server.gallabox.com/devapi'
 };
-
 // OpenAI configuration
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
-
 // -------------------------
 // PERSISTED DATA: conversations, csvs
 // -------------------------
 let conversations = {}; // sessionId -> { history: [{role, content, ts}], lastActive }
 let galleriesData = [];
 let sellersData = []; // sellers CSV data
-
 // -------------------------
 // Google Sheets config (ADDED)
 // -------------------------
@@ -66,7 +48,6 @@ if (!GOOGLE_SHEET_ID) {
 if (!SA_JSON_B64) {
   console.log('⚠️ GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 not set — sheet logging disabled');
 }
-
 async function getSheets() {
   if (!GOOGLE_SHEET_ID || !SA_JSON_B64) return null;
   try {
@@ -84,7 +65,6 @@ async function getSheets() {
     return null;
   }
 }
-
 function colLetter(n) {
   let s = '';
   while (n > 0) {
@@ -94,7 +74,6 @@ function colLetter(n) {
   }
   return s;
 }
-
 async function writeCell(colNum, rowNum, value) {
   const sheets = await getSheets();
   if (!sheets) return;
@@ -110,7 +89,6 @@ async function writeCell(colNum, rowNum, value) {
     console.error('❌ writeCell error', e);
   }
 }
-
 async function appendUnderColumn(headerName, text) {
   const sheets = await getSheets();
   if (!sheets) return;
@@ -152,7 +130,6 @@ async function appendUnderColumn(headerName, text) {
     console.error('❌ appendUnderColumn error', e);
   }
 }
-
 // -------------------------
 // ZULU CLUB INFORMATION
 // -------------------------
@@ -174,7 +151,6 @@ Experience us at our pop-ups: AIPL Joy Street & AIPL Central
 Explore & shop on: zulu.club
 Get the Zulu Club app: Android-> Playstore iOS-> Appstore
 `;
-
 const INVESTOR_KNOWLEDGE = `
 Zulu, founded in 2024 by Adarsh Bhatia with co-founder Anubhav, operates under MADMIND TECH INNOVATIONS PRIVATE LIMITED, Gurgaon.
 Seed round: $250K raised on July 16, 2025 from TDV Partners.
@@ -183,7 +159,6 @@ HQ: D20-301, Ireo Victory Valley, Sector-67, Gurgaon.
 Authorized capital INR 6.5 lakh | Paid-up INR 5.57 lakh.
 1 brand (Zulu), 9 competitors (Inc: Slikk, Booon, Blip).
 `;
-
 const SELLER_KNOWLEDGE = `
 Zulu Club is a lifestyle commerce platform by MADMIND TECH.
 Serve Gurgaon — 100-min delivery. Try at home. Instant returns.
@@ -192,8 +167,6 @@ Online visibility + offline pop-ups at AIPL Joy Street & Central.
 High intent customers, fast logistics, frictionless onboarding.
 zulu.club + Zulu Club apps (Android + iOS).
 `;
-
-
 /* -------------------------
    CSV loaders: galleries + sellers
 --------------------------*/
@@ -203,18 +176,14 @@ async function loadGalleriesData() {
     const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/galleries.csv', {
       timeout: 60000 
     });
-    
     return new Promise((resolve, reject) => {
       const results = [];
-      
       if (!response.data || response.data.trim().length === 0) {
         console.log('❌ Empty CSV data received');
         resolve([]);
         return;
       }
-      
-      const stream = Readable.from(response.data);
-      
+      const stream = Readable.from(response.data);  
       stream
         .pipe(csv())
         .on('data', (data) => {
@@ -223,8 +192,7 @@ async function loadGalleriesData() {
             cat_id: data.cat_id || data.CAT_ID || '',
             cat1: data.cat1 || data.Cat1 || data.CAT1 || '',
             seller_id: data.seller_id || data.SELLER_ID || data.Seller_ID || data.SellerId || data.sellerId || ''
-          };
-          
+          };      
           if (mappedData.type2 && mappedData.cat1) {
             results.push(mappedData);
           }
@@ -243,14 +211,12 @@ async function loadGalleriesData() {
     return [];
   }
 }
-
 async function loadSellersData() {
   try {
     console.log('📥 Loading sellers CSV data...');
     const response = await axios.get('https://raw.githubusercontent.com/Rishi-Singhal-714/gallabox-bot/main/sellers.csv', {
       timeout: 60000
     });
-
     return new Promise((resolve, reject) => {
       const results = [];
       if (!response.data || response.data.trim().length === 0) {
@@ -289,7 +255,6 @@ async function loadSellersData() {
     return [];
   }
 }
-
 // initialize both CSVs
 (async () => {
   try {
@@ -305,14 +270,12 @@ async function loadSellersData() {
     sellersData = [];
   }
 })();
-
 /* -------------------------
    sendMessage (unchanged)
 --------------------------*/
 async function sendMessage(to, name, message) {
   try {
-    console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);
-    
+    console.log(`📤 Attempting to send message to ${to} (${name}): ${message}`);    
     const payload = {
       channelId: gallaboxConfig.channelId,
       channelType: "whatsapp",
@@ -326,8 +289,7 @@ async function sendMessage(to, name, message) {
           body: message
         }
       }
-    };
-    
+    };  
     const response = await axios.post(
       `${gallaboxConfig.baseUrl}/messages/whatsapp`,
       payload,
@@ -339,8 +301,7 @@ async function sendMessage(to, name, message) {
         },
         timeout: 10000
       }
-    );
-    
+    ); 
     console.log('✅ Message sent successfully');
     return response.data;
   } catch (error) {
@@ -357,7 +318,6 @@ async function sendMessage(to, name, message) {
    - Creates a ticket id and appends a row to your AGENT_TICKETS_SHEET
    - Headers: mobile_number, last_5th_message, 4th_message, 3rd_message, 2nd_message, 1st_message, ticket_id, ts
 --------------------------*/
-
 async function generateTicketId() {
   const sheets = await getSheets();
   if (!sheets) {
@@ -365,33 +325,26 @@ async function generateTicketId() {
     const now = Date.now();
     return `TKT-${String(now).slice(-6)}`;
   }
-
   const COUNTER_CELL = `${AGENT_TICKETS_SHEET}!Z2`; // reserved for ticket counter
-
   try {
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: COUNTER_CELL
     });
-
     let current = resp.data.values?.[0]?.[0] ? Number(resp.data.values[0][0]) : 0;
     const next = current + 1;
-
     await sheets.spreadsheets.values.update({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: COUNTER_CELL,
       valueInputOption: "RAW",
       requestBody: { values: [[next]] }
     });
-
     return `TKT-${String(next).padStart(6, "0")}`; // ex: TKT-000001
   } catch (err) {
     console.error("Ticket ID counter error:", err);
     return `TKT-${String(Date.now()).slice(-6)}`;
   }
 }
-
-
 async function ensureAgentTicketsHeader(sheets) {
   try {
     const sheetName = AGENT_TICKETS_SHEET;
@@ -400,7 +353,6 @@ async function ensureAgentTicketsHeader(sheets) {
       spreadsheetId: GOOGLE_SHEET_ID,
       range: `${sheetName}!1:1`
     }).catch(() => null);
-
     const existing = (resp && resp.data && resp.data.values && resp.data.values[0]) || [];
     const required = ['mobile_number', 'last_5th_message', '4th_message', '3rd_message', '2nd_message', '1st_message', 'ticket_id', 'ts'];
     // If header not present or doesn't match, write header row
@@ -418,7 +370,6 @@ async function ensureAgentTicketsHeader(sheets) {
     return AGENT_TICKETS_SHEET;
   }
 }
-
 async function createAgentTicket(mobileNumber, conversationHistory = []) {
   const sheets = await getSheets();
   if (!sheets) {
@@ -427,18 +378,15 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
   }
   try {
     const sheetName = await ensureAgentTicketsHeader(sheets);
-
     // Extract last 5 user messages (oldest -> newest)
     const userMsgs = (Array.isArray(conversationHistory) ? conversationHistory : [])
       .filter(m => m.role === 'user')
       .map(m => (m.content || ''));
-
     const lastFive = userMsgs.slice(-5);
     const pad = Array(Math.max(0, 5 - lastFive.length)).fill('');
     const arranged = [...pad, ...lastFive]; // length 5: oldest -> newest
     const ticketId = await generateTicketId();
     const ts = new Date().toISOString();
-
     const row = [
       mobileNumber || '',
       arranged[0] || '', // last_5th_message (older)
@@ -449,7 +397,6 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
       ticketId,
       ts
     ];
-
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: `${sheetName}!A:Z`,
@@ -459,54 +406,37 @@ async function createAgentTicket(mobileNumber, conversationHistory = []) {
     });
 // >>> INTERNAL ALERT WITHOUT SHEET <<<
 try {
-  const ADMIN_RECEIVERS = [
-    "918368127760",
-    "919717350080",
-    "918860924190",
-    "917483654620"
-  ];
-
   const formattedNumber = mobileNumber.startsWith('91')
     ? mobileNumber
     : `91${mobileNumber}`;
-
   const createdAt = new Date().toLocaleString('en-IN', {
     timeZone: "Asia/Kolkata"
   });
-
   const customerName = (() => {
     if (!conversationHistory) return "Customer";
     const lastUser = conversationHistory.slice().reverse().find(m => m.role === 'user');
     return lastUser?.name || "Customer";
   })();
-
   const adminMessage = `📌 *New Agent Ticket Created*
 Customer: +${formattedNumber}
 Name: ${customerName}
 Ticket ID: *${ticketId}*
 Created At: ${createdAt}`;
-
-  for (const admin of ADMIN_RECEIVERS) {
+  for (const admin of EMPLOYEE_NUMBERS) {
     console.log(`📤 Sending internal alert to: ${admin}`);
     await sendMessage(admin, "Admin", adminMessage);
   }
-
   console.log(`✔ Internal alerts sent for ticket: ${ticketId}`);
 } catch (err) {
   console.error("❌ Failed sending internal alerts:", err.message);
 }
-// <<< END ALERT >>>
-
-    
-    
+// <<< END ALERT >>>   
     return ticketId;
   } catch (e) {
     console.error('createAgentTicket error', e);
     return generateTicketId();
   }
 }
-
-
 /* -------------------------
    Matching helpers (kept + gender-from-cat_id)
 --------------------------*/
@@ -519,7 +449,6 @@ function normalizeToken(t) {
     .replace(/\s+/g, ' ')
     .trim();
 }
-
 function singularize(word) {
   if (!word) return '';
   if (word.endsWith('ies') && word.length > 3) return word.slice(0, -3) + 'y';
@@ -528,7 +457,6 @@ function singularize(word) {
   if (word.endsWith('s') && word.length > 2) return word.slice(0, -1);
   return word;
 }
-
 function editDistance(a, b) {
   const s = a || '', t = b || '';
   const m = s.length, n = t.length;
@@ -543,7 +471,6 @@ function editDistance(a, b) {
   }
   return dp[m][n];
 }
-
 function calculateSimilarity(str1, str2) {
   const longer = str1.length > str2.length ? str1 : str2;
   const shorter = str1.length > str2.length ? str2 : str1;
@@ -552,7 +479,6 @@ function calculateSimilarity(str1, str2) {
   const commonChars = [...shorter].filter(char => longer.includes(char)).length;
   return commonChars / longer.length;
 }
-
 function smartSimilarity(a, b) {
   const A = singularize(normalizeToken(a));
   const B = singularize(normalizeToken(b));
@@ -565,7 +491,6 @@ function smartSimilarity(a, b) {
   const charOverlap = calculateSimilarity(A, B);
   return Math.max(edScore, charOverlap);
 }
-
 function expandCategoryVariants(category) {
   const norm = normalizeToken(category);
   const variants = new Set();
@@ -576,32 +501,26 @@ function expandCategoryVariants(category) {
   }
   return Array.from(variants);
 }
-
 const STOPWORDS = new Set(['and','the','for','a','an','of','in','on','to','with','from','shop','buy','category','categories']);
-
 function containsClothingKeywords(userMessage) {
   const clothingTerms = ['men', 'women', 'kids', 'kid', 'child', 'children', 'man', 'woman', 'boy', 'girl'];
   const message = (userMessage || '').toLowerCase();
   return clothingTerms.some(term => message.includes(term));
 }
-
 /* -------------------------
    Gallery keyword matching (kept)
    NOTE: This function remains focused on the whole query (no first-pass gendering).
 --------------------------*/
 function findKeywordMatchesInCat1(userMessage) {
   if (!userMessage || !galleriesData.length) return [];
-  
   const rawTerms = userMessage
     .toLowerCase()
     .replace(/&/g, ' and ')
     .split(/\s+/)
     .filter(term => term.length > 1 && !STOPWORDS.has(term));
-
   const searchTerms = rawTerms
     .map(t => singularize(normalizeToken(t)))
     .filter(t => t.length > 1);
-
   const matches = [];
   const clothingKeywords = ['clothing', 'apparel', 'wear', 'shirt', 'pant', 'dress', 'top', 'bottom', 'jacket', 'sweater'];
   
@@ -613,7 +532,6 @@ function findKeywordMatchesInCat1(userMessage) {
       const variants = expandCategoryVariants(category);
       expanded.push(...variants);
     }
-
     for (const searchTerm of searchTerms) {
       for (const variant of expanded) {
         const isClothing = clothingKeywords.some(clothing => variant.includes(clothing));
@@ -632,10 +550,8 @@ function findKeywordMatchesInCat1(userMessage) {
       }
     }
   });
-  
   return matches.sort((a, b) => b.score - a.score).slice(0, 5);
 }
-
 /* -------------------------
    Seller matching (kept but uses explicit gender from categories)
 --------------------------*/
@@ -643,7 +559,6 @@ const MAX_GPT_SELLER_CHECK = 20;
 const GPT_THRESHOLD = 0.7;
 const GPT_HOME_THRESHOLD = 0.6;
 const CLOTHING_IGNORE_WORDS = ['men','women','kid','kids','child','children','man','woman','boys','girls','mens','womens'];
-
 function stripClothingFromType2(type2) {
   if (!type2) return type2;
   let tokens = type2.split(/\s+/);
@@ -652,20 +567,17 @@ function stripClothingFromType2(type2) {
   }
   return tokens.join(' ').trim();
 }
-
 // matchSellersByStoreName now accepts detectedGender (derived from categories' cat_id or cat1)
 function matchSellersByStoreName(type2Value, detectedGender = null) {
   if (!type2Value || !sellersData.length) return [];
   const stripped = stripClothingFromType2(type2Value);
   const norm = normalizeToken(stripped);
   if (!norm) return [];
-
   const matches = [];
   sellersData.forEach(seller => {
     const store = seller.store_name || '';
     const sim = smartSimilarity(store, norm);
     if (sim < 0.82) return;
-
     // If detectedGender present and seller has explicit gender categories, require match
     if (detectedGender) {
       const sellerGenders = new Set();
@@ -678,12 +590,10 @@ function matchSellersByStoreName(type2Value, detectedGender = null) {
         return; // skip seller: explicit gender doesn't match derived gender
       }
     }
-
     matches.push({ seller, score: sim });
   });
   return matches.sort((a,b) => b.score - a.score).map(m => ({ ...m.seller, score: m.score })).slice(0, 10);
 }
-
 // matchSellersByCategoryIds accepts detectedGender
 function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   if (!userMessage || !sellersData.length) return [];
@@ -691,7 +601,6 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   const matches = [];
   sellersData.forEach(seller => {
     const categories = seller.category_ids_array || [];
-
     // If detectedGender and seller has explicit gender tags that don't match, skip
     if (detectedGender) {
       const sellerHasGender = categories.some(c => /\bmen\b|\bman\b|\bmens\b|\bwomen\b|\bwoman\b|\bwomens\b|\bkid\b|\bkids\b|\bchild\b|\bchildren\b/.test(c));
@@ -705,7 +614,6 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
         if (!sellerGenderMatch) return; // seller explicit gender doesn't match derived gender
       }
     }
-
     const common = categories.filter(c => terms.some(t => t.includes(c) || c.includes(t)));
     if (common.length > 0) {
       matches.push({ seller, matches: common.length });
@@ -713,7 +621,6 @@ function matchSellersByCategoryIds(userMessage, detectedGender = null) {
   });
   return matches.sort((a,b) => b.matches - a.matches).map(m => m.seller).slice(0, 10);
 }
-
 // New minimal GPT helper: only decide "is this a home query?" and return score (0..1)
 async function isQueryHome(userMessage) {
   if (!openai || !process.env.OPENAI_API_KEY) return { isHome: false, score: 0 };
@@ -752,7 +659,6 @@ Do not include any text outside the JSON.
     return { isHome: false, score: 0, reasoning: '' };
   }
 }
-
 async function gptCheckSellerMaySell(userMessage, seller) {
   if (!openai || !process.env.OPENAI_API_KEY) return { score: 0, reason: 'OpenAI not configured', reasoning: '' };
 
@@ -774,7 +680,6 @@ Return ONLY valid JSON in this format:
 
 Do not return anything else.
   `;
-
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -785,7 +690,6 @@ Do not return anything else.
       max_tokens: 180,
       temperature: 0.0
     });
-
     const content = completion.choices[0].message.content.trim();
     try {
       const parsed = JSON.parse(content);
@@ -803,7 +707,6 @@ Do not return anything else.
     return { score: 0, reason: 'GPT error', reasoning: '' };
   }
 }
-
 // helper: given a galleries.csv seller_id, try to find sellers.csv entry and return user_id or fallback to seller_id
 function getUserIdForSellerId(sellerId) {
   if (!sellerId) return '';
@@ -811,7 +714,6 @@ function getUserIdForSellerId(sellerId) {
   if (s && s.user_id && String(s.user_id).trim().length > 0) return String(s.user_id).trim();
   return String(sellerId).trim();
 }
-
 /* -------------------------
    Utility: infer gender from matched categories (cat_id / cat1)
    - If any matched category's cat_id or cat1 contains 'men'/'women'/'kid' -> return it.
@@ -837,7 +739,6 @@ function inferGenderFromCategories(matchedCategories = []) {
   // tie => null (don't force)
   return null;
 }
-
 /* -------------------------
    master function to find sellers for a user query (combines three methods)
    Now integrates minimal home-only GPT check + gender-from-categories awareness
@@ -846,12 +747,10 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
   // 0) minimal GPT: is this a home query?
   const homeCheck = await isQueryHome(userMessage);
   const applyHomeFilter = homeCheck.isHome; // boolean
-
   // If detectedGender wasn't provided, try to infer from galleryMatches
   if (!detectedGender) {
     detectedGender = inferGenderFromCategories(galleryMatches);
   }
-
   // 1) If we already have gallery type2 matches, use those type2 -> store_name mapping as first source
   const sellers_by_type2 = new Map();
   for (const gm of galleryMatches) {
@@ -859,12 +758,10 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
     const found = matchSellersByStoreName(type2, detectedGender);
     found.forEach(s => sellers_by_type2.set(s.seller_id || (s.store_name+'#'), s));
   }
-
   // 2) category_ids-based matches (based on raw userMessage)
   const catMatches = matchSellersByCategoryIds(userMessage, detectedGender);
   const sellers_by_category = new Map();
   catMatches.forEach(s => sellers_by_category.set(s.seller_id || (s.store_name+'#'), s));
-
   // If home filter should be applied, remove sellers that don't have home-related categories
   if (applyHomeFilter) {
     const homeSyns = ['home','decor','home decor','home-decor','home_decor','furniture','homeaccessories','home-accessories','home_accessories','decoratives','showpiece','showpieces','lamp','lamps','vase','vases','clock','clocks','cushion','cushions'];
@@ -882,7 +779,6 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
       if (!keepIfHome(s)) sellers_by_category.delete(k);
     }
   }
-
   // 3) GPT-based predictions: run GPT checks on a candidate pool
   const candidateIds = new Set([...sellers_by_type2.keys(), ...sellers_by_category.keys()]);
   const candidateList = [];
@@ -937,11 +833,8 @@ async function findSellersForQuery(userMessage, galleryMatches = [], detectedGen
       }
     }
   }
-
 const sellers_by_gpt = [];
-
 const toCheck = candidateList.slice(0, MAX_GPT_SELLER_CHECK);
-
 const gptPromises = toCheck.map(async (seller) => {
   if (applyHomeFilter) {
     const arr = seller.category_ids_array || [];
@@ -952,26 +845,18 @@ const gptPromises = toCheck.map(async (seller) => {
     );
     if (!isHome) return null;
   }
-
   const result = await gptCheckSellerMaySell(userMessage, seller);
-
   if (result.score > GPT_THRESHOLD) {
     return { seller, score: result.score, reason: result.reason };
   }
-
   return null;
 });
-
 const gptResults = await Promise.all(gptPromises);
-
 gptResults.forEach(r => {
   if (r) sellers_by_gpt.push(r);
 });
-
-
   const sellersType2Arr = Array.from(sellers_by_type2.values()).slice(0, 10);
   const sellersCategoryArr = Array.from(sellers_by_category.values()).slice(0, 10);
-
   return {
     by_type2: sellersType2Arr,
     by_category: sellersCategoryArr,
@@ -979,7 +864,6 @@ gptResults.forEach(r => {
     homeCheck // include for debugging if needed { isHome, score }
   };
 }
-
 /* -------------------------
    Small/concise response builder
 --------------------------*/
@@ -987,7 +871,6 @@ function urlEncodeType2(t) {
   if (!t) return '';
   return encodeURIComponent(t.trim().replace(/\s+/g, ' ')).replace(/%20/g, '%20');
 }
-
 function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {}) {
   const galleries = (galleryMatches && galleryMatches.length) ? galleryMatches.slice(0,5) : galleriesData.slice(0,5);
   const sellersList = [];
@@ -1014,7 +897,6 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
   } else {
     msg += `\nGalleries:\nNone\n`;
   }
-
   msg += `\nSellers:\n`;
   if (sellersToShow.length) {
     sellersToShow.forEach((s, i) => {
@@ -1029,7 +911,6 @@ function buildConciseResponse(userMessage, galleryMatches = [], sellersObj = {})
 
   return msg.trim();
 }
-
 /* -------------------------
    findGptMatchedCategories (UPDATED)
    - now accepts conversationHistory so it can use history when matching categories
@@ -1042,16 +923,13 @@ async function findGptMatchedCategories(userMessage, conversationHistory = []) {
       cat1: item.cat1,
       cat_id: item.cat_id
     }));
-
     const systemContent = "You are a product matching expert for Zulu Club. Use the conversation history to understand what the user wants, and return only JSON with top matches and a compact reasoning field.";
     const messagesForGPT = [{ role: 'system', content: systemContent }];
-
     const historyToInclude = Array.isArray(conversationHistory) ? conversationHistory.slice(-30) : [];
     for (const h of historyToInclude) {
       const role = (h.role === 'assistant') ? 'assistant' : 'user';
       messagesForGPT.push({ role, content: h.content });
     }
-
     const userPrompt = `
 Using the conversation above and the user's latest message, return the top 5 matching categories from the AVAILABLE PRODUCT CATEGORIES (use the "type2" field). For each match return a short reason and a relevance score 0.0-1.0.
 
@@ -1069,9 +947,7 @@ RESPONSE FORMAT (JSON ONLY):
 }
     `;
     messagesForGPT.push({ role: 'user', content: userPrompt });
-
     console.log(`🧾 findGptMatchedCategories -> sending ${messagesForGPT.length} messages to OpenAI (session history included).`);
-
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: messagesForGPT,
@@ -1092,7 +968,6 @@ RESPONSE FORMAT (JSON ONLY):
       matches = [];
       reasoning = responseText.slice(0, 300);
     }
-
     const matchedCategories = matches
       .map(match => galleriesData.find(item => String(item.type2).trim() === String(match.type2).trim()))
       .filter(Boolean)
@@ -1106,7 +981,6 @@ RESPONSE FORMAT (JSON ONLY):
     return [];
   }
 }
-
 /* -------------------------
    GPT-first classifier + category matcher (single call)
    Returns: { intent, confidence, reason, matches }
@@ -1119,13 +993,10 @@ async function classifyAndMatchWithGPT(userMessage) {
   if (!text) {
     return { intent: 'company', confidence: 1.0, reason: 'empty message', matches: [], reasoning: '' };
   }
-
   if (!openai || !process.env.OPENAI_API_KEY) {
     return { intent: 'company', confidence: 0.0, reason: 'OpenAI not configured', matches: [], reasoning: '' };
   }
-
   const csvDataForGPT = galleriesData.map(item => ({ type2: item.type2, cat1: item.cat1, cat_id: item.cat_id }));
-
   const prompt = `
 You are an assistant for Zulu Club (a lifestyle shopping service).
 
@@ -1160,7 +1031,6 @@ USER MESSAGE:
 """${String(userMessage).replace(/"/g, '\\"')}
 """
   `;
-
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -1171,7 +1041,6 @@ USER MESSAGE:
       max_tokens: 900,
       temperature: 0.12
     });
-
     const raw = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content) ? completion.choices[0].message.content.trim() : '';
     try {
       const parsed = JSON.parse(raw);
@@ -1182,10 +1051,8 @@ USER MESSAGE:
       const reason = parsed.reason || '';
       const matches = Array.isArray(parsed.matches) ? parsed.matches.map(m => ({ type2: m.type2, reason: m.reason, score: Number(m.score) || 0 })) : [];
       const reasoning = parsed.reasoning || parsed.debug_reasoning || '';
-
 // DEBUG: log parsed classifier output so you can inspect what GPT returned
 console.log('🧾 classifyAndMatchWithGPT parsed:', { raw, parsed, intent, confidence });
-
 return { intent, confidence, reason, matches, reasoning };
 
     } catch (e) {
@@ -1197,13 +1064,9 @@ return { intent, confidence, reason, matches, reasoning };
     return { intent: 'company', confidence: 0.0, reason: 'gpt error', matches: [], reasoning: '' };
   }
 }
-
 /* -------------------------
    Company Response Generator (kept)
 --------------------------*/
-
-// -------------------------
-
 // Simple greeting detector - returns true if the message looks like a greeting
 function isGreeting(text) {
   if (!text || typeof text !== 'string') return false;
@@ -1219,9 +1082,6 @@ function isGreeting(text) {
   if (greetings.some(g => cleaned === g)) return true;
   return false;
 }
-
-// -------------------------
-
 // -------------------------
 // Company Response Generator (removed app-links append logic)
 // -------------------------
@@ -1245,9 +1105,7 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     7. Direct users to our website zulu.club for more information and shopping
     `
   };
-
   messages.push(systemMessage);
-
   if (conversationHistory && conversationHistory.length > 0) {
     const recentHistory = conversationHistory.slice(-6);
     recentHistory.forEach(msg => {
@@ -1259,12 +1117,10 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
       }
     });
   }
-
   messages.push({
     role: "user",
     content: userMessage
   });
-
   // Links block to always append (for non-greetings)
   const LINKS_BLOCK = [
     "*iOS:*",
@@ -1272,7 +1128,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     "*Android:*",
     "https://play.google.com/store/apps/details?id=com.zulu.consumer.zulu_consumer"
   ].join("\n");
-
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -1280,18 +1135,15 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
       max_tokens: 300,
       temperature: 0.6
     });
-
     let assistantText = (completion.choices[0].message && completion.choices[0].message.content)
       ? completion.choices[0].message.content.trim()
       : "";
-
     // If it's a greeting, do NOT append the links block
     if (!isGreeting(userMessage)) {
       // ensure a clean separation (two newlines) before appending links
       if (assistantText.length > 0) assistantText = assistantText + "\n\n" + LINKS_BLOCK;
       else assistantText = LINKS_BLOCK;
     }
-
     return assistantText;
   } catch (e) {
     console.error('Error in generateCompanyResponse:', e);
@@ -1303,7 +1155,6 @@ async function generateCompanyResponse(userMessage, conversationHistory, company
     return fallback;
   }
 }
-
 async function generateInvestorResponse(userMessage) {
   const prompt = `
 You are an **Investor Relations Associate** for Zulu (MAD MIND TECH INNOVATIONS PVT LTD).
@@ -1323,18 +1174,14 @@ Rules:
 At the end, always add a separate CTA line:
 Apply to invest 👉 https://forms.gle/5wwfYFB7gGs75pYq5
   `;
-
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     max_tokens: 500,
     temperature: 0.3
   });
-
   return res.choices[0].message.content.trim();
 }
-
-
 async function generateSellerResponse(userMessage) {
   const prompt = `
 You are a **Brand Partnerships | Seller Success Associate** at Zulu Club.
@@ -1353,18 +1200,14 @@ Rules:
 Add this CTA as a new line at the end:
 Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
   `;
-
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     max_tokens: 500,
     temperature: 0.35
   });
-
   return res.choices[0].message.content.trim();
 }
-
-
 /* -------------------------
    Session/history helpers (ADDED)
    - createOrTouchSession, appendToSessionHistory, getFullSessionHistory, purgeExpiredSessions
@@ -1372,10 +1215,8 @@ Join as partner 👉 https://forms.gle/tvkaKncQMs29dPrPA
 const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour (unchanged)
 const SESSION_CLEANUP_MS = 1000 * 60 * 5; // cleanup every 5 minutes
 const MAX_HISTORY_MESSAGES = 2000; // keep more messages for 1 hour (adjustable)
-
 // helper for timestamps
 function nowMs() { return Date.now(); }
-
 // create/touch session; initialize lastDetectedIntent fields
 function createOrTouchSession(sessionId) {
   if (!conversations[sessionId]) {
@@ -1390,7 +1231,6 @@ function createOrTouchSession(sessionId) {
   }
   return conversations[sessionId];
 }
-
 // append message to session history and keep it (no cleanup under 1 hour)
 function appendToSessionHistory(sessionId, role, content) {
   createOrTouchSession(sessionId);
@@ -1402,14 +1242,12 @@ function appendToSessionHistory(sessionId, role, content) {
   }
   conversations[sessionId].lastActive = nowMs();
 }
-
 // return full session history (copy)
 function getFullSessionHistory(sessionId) {
   const s = conversations[sessionId];
   if (!s || !s.history) return [];
   return s.history.slice();
 }
-
 // purge expired sessions older than TTL
 function purgeExpiredSessions() {
   const cutoff = nowMs() - SESSION_TTL_MS;
@@ -1423,7 +1261,6 @@ function purgeExpiredSessions() {
   if (before !== after) console.log(`🧹 Purged ${before - after} expired sessions`);
 }
 setInterval(purgeExpiredSessions, SESSION_CLEANUP_MS);
-
 // optional debug endpoint for sessions
 app.get('/session/:id', (req, res) => {
   const id = req.params.id;
@@ -1431,32 +1268,6 @@ app.get('/session/:id', (req, res) => {
   if (!s) return res.status(404).json({ error: 'No session found' });
   res.json({ sessionId: id, lastActive: s.lastActive, historyLen: s.history.length, history: s.history });
 });
-/* -------------------------
-   PhnNumber Mode Changer helper
---------------------------*/
-function handleEmployeeCommand(sessionId, userMessage) {
-  const cmd = (userMessage || "").trim();
-  const regex = /^change\s+(\d+)\s+to\s+(normal|employee)\s*,?\s*pass\s+(\S+)/i;
-  const match = cmd.match(regex);
-  if (!match) return null;
-
-  const [, phoneRaw, role, pass] = match;
-  const phone = phoneRaw.replace(/\D/g, "");
-
-  if (pass !== EMPLOYEE_STATUS_PASS) return "❌ Incorrect password.";
-
-  if (!EMPLOYEE_NUMBERS.includes(phone)) {
-    return `⚠️ ${phone} is not in employee list.`;
-  }
-
-  if (role.toLowerCase() === "normal") {
-    EMPLOYEE_FLAGS[phone] = false;
-    return `✔ ${phone} switched to *Normal Mode*`;
-  }
-
-  delete EMPLOYEE_FLAGS[phone];
-  return `✔ ${phone} switched to *Employee Mode*`;
-}
 /* -------------------------
    Heuristic helper - detect product words in history (kept)
 --------------------------*/
@@ -1471,7 +1282,6 @@ function recentHistoryContainsProductSignal(conversationHistory = []) {
   }
   return false;
 }
-
 /* -------------------------
    Main product flow:
    - Use classifyAndMatchWithGPT (GPT is the boss) -> single-message only
@@ -1482,22 +1292,13 @@ async function getChatGPTResponse(sessionId, userMessage, companyInfo = ZULU_CLU
   if (!process.env.OPENAI_API_KEY) {
     return "Hello! I'm here to help you with Zulu Club. Currently, I'm experiencing technical difficulties. Please visit zulu.club or contact our support team for assistance.";
   }
-
   try {
     // ensure session exists
     createOrTouchSession(sessionId);
     const session = conversations[sessionId];
-// --------------------------------------
-// SPECIAL PRE-INTENT FILTER (EMPLOYEE MODE - WITH TOGGLE)
-// --------------------------------------
-const cmdReply = handleEmployeeCommand(sessionId, userMessage);
-if (cmdReply) return cmdReply;
-
-// Check employee mode
-const isInList = EMPLOYEE_NUMBERS.includes(sessionId);
-const isDisabled = EMPLOYEE_FLAGS[sessionId] === false;
-
-if (isInList && !isDisabled) {
+    // Check employee mode
+const isEmployee = EMPLOYEE_NUMBERS.includes(sessionId);
+if (isEmployee) {
   console.log("⚡ Employee mode active", sessionId);
   const employeeHandled = await preIntentFilter(
     openai,
@@ -1508,31 +1309,31 @@ if (isInList && !isDisabled) {
     createAgentTicket,
     appendUnderColumn
   );
-  if (employeeHandled) return employeeHandled;
+  // Only accept valid response from employee flow
+  if (employeeHandled && employeeHandled.trim().length > 0) {
+    return employeeHandled;
+  }
+  // Guaranteed fallback — never let employee go into product/company flow
+  return "⚠️ Not able to note, please resend the message boss.";
 }
     // 1) classify only the single incoming message
     const classification = await classifyAndMatchWithGPT(userMessage);
     let intent = classification.intent || 'company';
     let confidence = classification.confidence || 0;
-
     console.log('🧠 GPT classification (single-message):', { intent, confidence, reason: classification.reason });
-
     // 2) If classifier returned 'product' -> set session.lastDetectedIntent = 'product'
     if (intent === 'product') {
       session.lastDetectedIntent = 'product';
       session.lastDetectedIntentTs = nowMs();
     }
-
     // NOTE: Removed the FOLLOW-UP override rule that forced non-product -> product
     // (The override that checked recent product intent + short qualifier has been intentionally deleted.)
     // handle agent intent (connect to human)
     if (intent === 'agent') {
       session.lastDetectedIntent = 'agent';
       session.lastDetectedIntentTs = nowMs();
-
       // full session history to capture last 5 user messages
       const fullHistory = getFullSessionHistory(sessionId);
-
       // create ticket (best-effort)
       let ticketId = '';
       try {
@@ -1541,23 +1342,19 @@ if (isInList && !isDisabled) {
         console.error('Error creating agent ticket:', e);
         ticketId = generateTicketId();
       }
-
       // Log the ticket creation in the session-specific sheet column as well
       try {
         await appendUnderColumn(sessionId, `AGENT_TICKET_CREATED: ${ticketId}`);
       } catch (e) {
         console.error('Failed to log agent ticket into column:', e);
       }
-
       // reply to user
       const reply = `Our representative will connect with you soon (within 30 mins). Your ticket id: ${ticketId}`;
       return reply;
     }
-
 if (intent === 'voice_ai') {
   session.lastDetectedIntent = 'voice_ai';
   session.lastDetectedIntentTs = nowMs();
-
   const message = 
 `🎵 *Custom AI Music Message (Premium Add-on)*
 
@@ -1569,31 +1366,25 @@ For every gift above ₹1,000:
 
 Fill this quick form to create your AI song:
 ${VOICE_AI_FORM_LINK}`;
-
 return message;
-}
-
-    
+}   
     // 4) Now handle intents as before, but when product chosen we ALWAYS call findGptMatchedCategories with full history
     if (intent === 'seller') {
       session.lastDetectedIntent = 'seller';
       session.lastDetectedIntentTs = nowMs();
       return await generateSellerResponse(userMessage);
     }
-
     if (intent === 'investors') {
       session.lastDetectedIntent = 'investors';
       session.lastDetectedIntentTs = nowMs();
       return await generateInvestorResponse(userMessage);
     }
-
     if (intent === 'product' && galleriesData.length > 0) {
       // mark session product timestamp if not already set
       if (session.lastDetectedIntent !== 'product') {
         session.lastDetectedIntent = 'product';
         session.lastDetectedIntentTs = nowMs();
       }
-
       // 4a) Try to use classifier-provided matches first (if any)
       const matchedType2s = (classification.matches || []).map(m => m.type2).filter(Boolean);
       let matchedCategories = [];
@@ -1603,7 +1394,6 @@ return message;
           .filter(Boolean)
           .slice(0,5);
       }
-
       // 4b) If classifier didn't provide good matches, or we want refinement, call findGptMatchedCategories WITH full session history
       if (matchedCategories.length === 0) {
         const fullHistory = getFullSessionHistory(sessionId);
@@ -1626,7 +1416,6 @@ return message;
           if (refined && refined.length > 0) matchedCategories = refined;
         }
       }
-
       // 4c) fallback local keyword matching if still empty
       if (matchedCategories.length === 0) {
         if (containsClothingKeywords(userMessage)) {
@@ -1642,20 +1431,15 @@ return message;
           }
         }
       }
-
       // 4d) Determine gender from matched categories (cat_id / cat1)
       const detectedGender = inferGenderFromCategories(matchedCategories);
-
       // 4e) Run seller matching using matchedCategories and detectedGender (this uses GPT-checks internally)
       const sellers = await findSellersForQuery(userMessage, matchedCategories, detectedGender);
-
       // Return concise response (unchanged format)
       return buildConciseResponse(userMessage, matchedCategories, sellers);
     }
-
     // Default: company response — still pass full session history so assistant can use it for conversational answers
     return await generateCompanyResponse(userMessage, getFullSessionHistory(sessionId), companyInfo);
-
   } catch (error) {
     console.error('❌ getChatGPTResponse error (session-aware):', error);
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
@@ -1669,37 +1453,30 @@ async function handleMessage(sessionId, userMessage) {
   try {
     // 1) Save incoming user message to session
     appendToSessionHistory(sessionId, 'user', userMessage);
-
     // 2) Log user message to Google Sheet (column = phone/sessionId) — best-effort
     try {
       await appendUnderColumn(sessionId, `USER: ${userMessage}`);
     } catch (e) {
       console.error('sheet log user failed', e);
     }
-
     // 3) Debug print compact history
     const fullHistory = getFullSessionHistory(sessionId);
     console.log(`🔁 Session ${sessionId} history length: ${fullHistory.length}`);
     fullHistory.forEach((h, idx) => {
       console.log(`   ${idx + 1}. [${h.role}] ${h.content}`);
     });
-
     // 4) Get response using session-aware function (this will set/override session.lastDetectedIntent as needed)
     const aiResponse = await getChatGPTResponse(sessionId, userMessage);
-
     // 5) Save AI response back into session history
     appendToSessionHistory(sessionId, 'assistant', aiResponse);
-
     // 6) Log assistant response to Google Sheet (same column) — best-effort
     try {
       await appendUnderColumn(sessionId, `ASSISTANT: ${aiResponse}`);
     } catch (e) {
       console.error('sheet log assistant failed', e);
     }
-
     // 7) update lastActive (appendToSessionHistory already did this)
     if (conversations[sessionId]) conversations[sessionId].lastActive = nowMs();
-
     // 8) return the assistant reply
     return aiResponse;
   } catch (error) {
@@ -1707,7 +1484,6 @@ async function handleMessage(sessionId, userMessage) {
     return `Based on your interest in "${userMessage}":\nGalleries: None\nSellers: None`;
   }
 }
-
 /* -------------------------
    Webhook + endpoints
 --------------------------*/
@@ -1735,58 +1511,44 @@ app.post('/webhook', async (req, res) => {
     res.status(500).json({ status: 'error', message: error.message, processed: false });
   }
 });
-
 // ===============================
 // Zulu Club - TOUR STATUS ALERTS
 // ===============================
-
 app.post('/tour/booked', async (req, res) => {
   try {
     const { customerPhone, customerName } = req.body;
-
-    const ADMINS = ["918368127760", "919717350080", "918860924190","917483654620"]; // Your 2 fixed admin numbers
-
     const msg = `🎉 *New Try-At-Home Booking*\n` +
                 `Customer: ${customerName || "Unknown"}\n` +
                 `Phone: ${customerPhone || "Not Provided"}\n` +
                 `📌 Please contact customer.`;
-
-    for (const admin of ADMINS) {
+    for (const admin of EMPLOYEE_NUMBERS) {
       await sendMessage(admin, "Admin", msg);
     }
 
-    return res.json({ success: true, message: "Tour booked alerts sent to admins" });
+    return res.json({ success: true, message: "Tour booked alerts sent to EMPLOYEE_NUMBERS" });
 
   } catch (error) {
     console.error("❌ Tour Booked Admin Alert - Error:", error.message);
     return res.status(500).json({ success: false, error: "Alert failed" });
   }
 });
-
 app.post('/tour/notbooked', async (req, res) => {
   try {
     const { customerPhone, customerName } = req.body;
-
-    const ADMINS = ["918368127760", "918368127760"];
-
     const msg = `⚠️ *Try-At-Home Booking Failed*\n` +
                 `Customer: ${customerName || "Unknown"}\n` +
                 `Phone: +${customerPhone || "Not Provided"}\n` +
                 `📌 Please follow up.`;
 
-    for (const admin of ADMINS) {
+    for (const admin of EMPLOYEE_NUMBERS) {
       await sendMessage(admin, "Admin", msg);
     }
-
-    return res.json({ success: true, message: "Tour not-booked alerts sent to admins" });
-
+    return res.json({ success: true, message: "Tour not-booked alerts sent to EMPLOYEE_NUMBERS" });
   } catch (error) {
     console.error("❌ Tour NotBooked Admin Alert - Error:", error.message);
     return res.status(500).json({ success: false, error: "Alert failed" });
   }
 });
-
-
 app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running on Vercel', 
@@ -1800,7 +1562,6 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
 app.get('/refresh-csv', async (req, res) => {
   try {
     galleriesData = await loadGalleriesData();
@@ -1810,45 +1571,5 @@ app.get('/refresh-csv', async (req, res) => {
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
-app.get('/test-keyword-matching', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.status(400).json({ error: 'Missing query parameter' });
-  try {
-    const isClothing = containsClothingKeywords(query);
-    const keywordMatches = findKeywordMatchesInCat1(query);
-    const detectedGender = inferGenderFromCategories(keywordMatches);
-    const sellers = await findSellersForQuery(query, keywordMatches, detectedGender);
-    const concise = buildConciseResponse(query, keywordMatches, sellers);
-    res.json({ query, is_clothing_query: isClothing, detected_gender: detectedGender, keyword_matches: keywordMatches, sellers, homeCheck: sellers.homeCheck || {}, concise_preview: concise, categories_loaded: galleriesData.length, sellers_loaded: sellersData.length });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/test-gpt-matching', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.status(400).json({ error: 'Missing query parameter' });
-  try {
-    // For debugging: include a dummy history sample to test history-aware matching
-    const dummyHistory = [{ role: 'user', content: 'Earlier I asked about lamps' }, { role: 'assistant', content: 'Would you like modern floor lamps?' }];
-    const matched = await findGptMatchedCategories(query, dummyHistory);
-    const detectedGender = inferGenderFromCategories(matched);
-    res.json({ query, matched_categories: matched, categories_loaded: galleriesData.length, detected_gender: detectedGender });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/send-test-message', async (req, res) => {
-  try {
-    const { to, name, message } = req.body;
-    if (!to) return res.status(400).json({ error: 'Missing "to" in request body', example: { "to": "918368127760", "name": "Rishi", "message": "What products do you have?" } });
-    const result = await sendMessage(to, name || 'Test User', message || 'Hello! This is a test message from Zulu Club AI Assistant. 🚀');
-    res.json({ status: 'success', message: 'Test message sent successfully', data: result });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to send test message', details: error.message });
-  }
-});
-
 // Export for Vercel
 module.exports = app;
