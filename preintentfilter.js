@@ -1,4 +1,49 @@
 const { OpenAI } = require("openai");
+const { google } = require("googleapis");
+
+/* 🔹 GOOGLE DRIVE UPLOAD HELPER */
+async function uploadImageToDrive(base64Data, fileName) {
+  try {
+    const keyJson = JSON.parse(
+      Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString()
+    );
+
+    const auth = new google.auth.GoogleAuth({
+      credentials: keyJson,
+      scopes: ["https://www.googleapis.com/auth/drive"]
+    });
+
+    const drive = google.drive({ version: "v3", auth });
+
+    const fileMetaData = {
+      name: fileName,
+      parents: [process.env.GOOGLE_DRIVE_PARENT_FOLDER_ID]
+    };
+
+    const media = {
+      mimeType: "image/jpeg",
+      body: Buffer.from(base64Data, "base64")
+    };
+
+    const uploaded = await drive.files.create({
+      resource: fileMetaData,
+      media,
+      fields: "id"
+    });
+
+    const fileId = uploaded.data.id;
+
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role: "reader", type: "anyone" }
+    });
+
+    return `https://drive.google.com/uc?id=${fileId}`;
+  } catch (err) {
+    console.error("❌ Drive Upload Error:", err.message);
+    return null;
+  }
+}
 
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
@@ -152,11 +197,36 @@ async function getNextBillingId(category, sheets) {
    MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
 module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
-  const sheets = await getSheets();
   const ts = new Date().toISOString();
   const phn = sessionId;
+  const sheets = await getSheets();
 
-  // 🔹 GREETING CHECK FIRST (do not log greets)
+  /* ----------------------------------
+     🔥 PROCESS IMAGE IF AVAILABLE
+  ---------------------------------- */
+  if (session.lastMedia && session.lastMedia.type === "image") {
+    const base64 = session.lastMedia.data;
+    session.lastMedia = null; // clear after log
+
+    const fileName = `IMG_${Date.now()}.jpg`;
+    const driveLink = await uploadImageToDrive(base64, fileName);
+
+    const logsSheet = `${phn}Billing_Logs`;
+    await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+
+    const id = `IMG${Date.now()}`;
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${logsSheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[id, phn, driveLink, ts]] }
+    });
+
+    return `🖼️ Image saved successfully!\n🔗 File: ${driveLink}\n📌 ID: ${id}`;
+  }
+
+  // 🔹 GREETING CHECK
   if (isEmpGreeting(userMessage)) {
     return `Hello boss! What would you like to do?`;
   }
@@ -174,7 +244,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
   const id = await getNextBillingId(category, sheets);
 
-  /* CLEAN MESSAGE: remove keyword only if at start */
+  /* CLEAN MESSAGE */
   let cleanMsg = userMessage.trim();
   const allKeywords = Object.values(BILLING_MAIN).flat();
   for (const kw of allKeywords) {
@@ -183,9 +253,10 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   }
   if (!cleanMsg) cleanMsg = userMessage.trim();
 
-  /* ALWAYS log */
+  /* ALWAYS LOG MESSAGE */
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: `${logsSheet}!A:Z`,
@@ -193,7 +264,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     requestBody: { values: [[id, phn, cleanMsg, ts]] }
   });
 
-  /* BILLING DATA */
+  /* SAME BEHAVIOR FOR CATEGORY BUSINESS LOGIC */
   if (billingCats.includes(category)) {
     const dataSheet = `${phn}Billing_Data`;
     await ensureSheet(sheets, dataSheet, billingCats);
@@ -212,7 +283,6 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
   }
 
-  /* SALES */
   if (salesCats.includes(category)) {
     const sheet = `${phn}Sales_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -226,7 +296,6 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `📌 Saved under **SALES** (ID: ${id}).`;
   }
 
-  /* LEAD */
   if (leadCats.includes(category)) {
     const sheet = `${phn}Lead_Data`;
     await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
@@ -240,7 +309,6 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
     return `🎯 Lead captured (ID: ${id}).`;
   }
 
-  /* UNKNOWN */
   return `⚠️ Category not recognized boss!
 📝 Logged as Unknown (ID: ${id})
 
