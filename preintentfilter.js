@@ -212,26 +212,34 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   const sheets = await getSheets();
 
 /* ----------------------------------
-   🔥 PROCESS IMAGE IF AVAILABLE
+   🔥 PROCESS IMAGE IF AVAILABLE (URL ONLY)
 ---------------------------------- */
-if (session.lastMedia && session.lastMedia.type === "image") {
-  const base64 = session.lastMedia.data; // full base64 string
-  session.lastMedia = null; // clear after use
+if (webhookData.whatsapp?.image?.path) {
+  const imageUrl = webhookData.whatsapp.image.path;
+  const caption = webhookData.whatsapp.image.caption || "";
+  const ts = new Date().toISOString();
+  const phn = sessionId;
+
+  session.lastMedia = null; // Clear old base64 logic
 
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
 
   const id = `IMG${Date.now()}`;
 
-  // Insert Base64 directly as message
+  // Store Image URL + Caption as message
+  const messageData = `${caption} | ${imageUrl}`;
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: `${logsSheet}!A:Z`,
     valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, base64, ts]] }
+    requestBody: { values: [[id, phn, messageData, ts]] }
   });
 
-  return `🖼️ Image saved in logs sheet!\n📌 ID: ${id}`;
+  return `🖼️ Image logged successfully!
+🔗 Saved: URL
+📌 ID: ${id}`;
 }
 
   // 🔹 GREETING CHECK
