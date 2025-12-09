@@ -116,13 +116,13 @@ async function getNextBillingId(category, sheets) {
 
   await ensureSheet(sheets, counterSheet, headers);
 
+  // Load all rows from counter sheet
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${counterSheet}!A2:I2`
+    range: `${counterSheet}!A2:I`
   }).catch(() => ({ data: {} }));
 
-  let row = res.data?.values?.[0] || [];
-  row = [...row, ...Array(9 - row.length).fill("0")];
+  const rows = res.data?.values || [];
 
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -130,20 +130,28 @@ async function getNextBillingId(category, sheets) {
   const yy = String(now.getFullYear()).slice(-2);
   const todayStr = `${dd}${mm}${yy}`;
 
-  const lastDate = row[0] || "";
-  let counters = row.slice(1).map(n => parseInt(n || "0", 10));
-  if (lastDate !== todayStr) counters = counters.map(() => 0);
+  let counters = Array(headers.length - 1).fill(0);
+
+  if (rows.length > 0 && rows[0][0] === todayStr) {
+    // Same day → continue increment
+    counters = rows[0].slice(1).map(n => parseInt(n || "0", 10));
+  } else {
+    // New day → Insert a NEW row at Row2 (push history down)
+    rows.unshift([todayStr, ...counters.map(() => "0")]);
+  }
 
   const prefix = CODE_MAP[category];
-  const colIndex = headers.indexOf(prefix) - 1;
-
+  const colIndex = headers.indexOf(prefix) - 1; 
   counters[colIndex]++;
 
+  rows[0] = [todayStr, ...counters];
+
+  // Write full sheet back (with history)
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${counterSheet}!A2:I2`,
+    range: `${counterSheet}!A2:I`,
     valueInputOption: "RAW",
-    requestBody: { values: [[todayStr, ...counters]] }
+    requestBody: { values: rows }
   });
 
   const num = String(counters[colIndex]).padStart(6, "0");
