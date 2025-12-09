@@ -211,30 +211,28 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   const phn = sessionId;
   const sheets = await getSheets();
 
-  /* ----------------------------------
-     🔥 PROCESS IMAGE IF AVAILABLE
-  ---------------------------------- */
-  if (session.lastMedia && session.lastMedia.type === "image") {
-    const base64 = session.lastMedia.data;
-    session.lastMedia = null; // clear after log
+/* ----------------------------------
+   🔥 PROCESS IMAGE IF AVAILABLE
+---------------------------------- */
+if (session.lastMedia && session.lastMedia.type === "image") {
+  const base64 = session.lastMedia.data; // full base64 string
+  session.lastMedia = null; // clear after use
 
-    const fileName = `IMG_${Date.now()}.jpg`;
-    const driveLink = await uploadImageToDrive(base64, fileName);
+  const logsSheet = `${phn}Billing_Logs`;
+  await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
 
-    const logsSheet = `${phn}Billing_Logs`;
-    await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+  const id = `IMG${Date.now()}`;
 
-    const id = `IMG${Date.now()}`;
+  // Insert Base64 directly as message
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${logsSheet}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[id, phn, base64, ts]] }
+  });
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${logsSheet}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[id, phn, driveLink, ts]] }
-    });
-
-    return `🖼️ Image saved successfully!\n🔗 File: ${driveLink}\n📌 ID: ${id}`;
-  }
+  return `🖼️ Image saved in logs sheet!\n📌 ID: ${id}`;
+}
 
   // 🔹 GREETING CHECK
   if (isEmpGreeting(userMessage)) {
