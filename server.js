@@ -1513,34 +1513,19 @@ app.post('/webhook', async (req, res) => {
     createOrTouchSession(sessionId);
 
     // 🔹 IMAGE CHECK (prefer caption for category detection)
-    if (webhookData.whatsapp?.image?.path) {
-      const mediaPath = webhookData.whatsapp.image.path;
-      const caption = webhookData.whatsapp.image.caption?.trim() || "";
+if (webhookData.whatsapp?.image?.path) {
+  const imageUrl = webhookData.whatsapp.image.path;
+  const caption = webhookData.whatsapp.image.caption || "";
 
-      console.log(`🖼️ Image received (path): ${mediaPath}`);
-      console.log(`📝 Caption: ${caption}`);
+  conversations[sessionId].lastMedia = {
+    type: "imageUrl",
+    data: imageUrl,
+    caption
+  };
 
-      try {
-        const mediaResp = await axios.get(mediaPath, {
-          responseType: "arraybuffer"
-        });
-
-        const base64Img = Buffer.from(mediaResp.data, "binary").toString("base64");
-
-        conversations[sessionId].lastMedia = {
-          type: "image",
-          data: base64Img
-        };
-
-        // 📌 If caption exists, use that for category detection
-        // Else use placeholder
-        userMessage = caption || "[IMAGE]";
-
-        console.log("📌 Base64 stored in session.lastMedia");
-      } catch (err) {
-        console.error("❌ Failed to download media from path:", err.message);
-      }
-    }
+  userMessage = caption || "[IMAGE]";
+  console.log("📌 Image URL stored in session.lastMedia");
+}
 
     console.log(`➡️ Handling message for session ${sessionId}`);
     const aiResponse = await handleMessage(sessionId, userMessage);
