@@ -2,59 +2,6 @@ const { OpenAI } = require("openai");
 const { google } = require("googleapis");
 const { Readable } = require("stream");
 
-/* 🔹 FINAL GOOGLE DRIVE UPLOAD FUNCTION (NO PIPE ERROR EVER) */
-async function uploadImageToDrive(base64Data, fileName) {
-  try {
-    const keyJson = JSON.parse(
-      Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString()
-    );
-
-    const auth = new google.auth.GoogleAuth({
-      credentials: keyJson,
-      scopes: ["https://www.googleapis.com/auth/drive"]
-    });
-
-    const drive = google.drive({ version: "v3", auth });
-
-    // Convert base64 → Buffer → Stream
-    const buffer = Buffer.from(base64Data, "base64");
-    const stream = Readable.from(buffer);
-
-    console.log("📤 Uploading to Drive...");
-
-    const uploadResp = await drive.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [process.env.GOOGLE_DRIVE_PARENT_FOLDER_ID]
-      },
-      media: {
-        mimeType: "image/jpeg",
-        body: stream  // 👉 Readable stream = NO pipe error
-      },
-      fields: "id"
-    });
-
-    const fileId = uploadResp.data.id;
-    console.log("📌 File uploaded with ID:", fileId);
-
-    // Make file public
-    await drive.permissions.create({
-      fileId,
-      requestBody: { role: "reader", type: "anyone" }
-    });
-
-    const publicUrl = `https://drive.google.com/uc?id=${fileId}`;
-
-    console.log("🔗 Public Link:", publicUrl);
-    return publicUrl;
-
-  } catch (err) {
-    console.error("❌ Google Drive Upload Failed:", err.message);
-    return null;
-  }
-}
-
-
 /* -------------------- FUZZY MATCH HELPER -------------------- */
 function matchProbability(str, keyword) {
   if (!str || !keyword) return 0;
@@ -212,34 +159,87 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   const sheets = await getSheets();
 
 /* ----------------------------------
-   🔥 PROCESS IMAGE IF AVAILABLE (URL FROM SESSION)
+   📸 PROCESS IMAGE FROM WHATSAPP
 ---------------------------------- */
 if (session.lastMedia && session.lastMedia.type === "imageUrl") {
   const imageUrl = session.lastMedia.data || "";
-  const caption = session.lastMedia.caption || "";
+  const caption = (session.lastMedia.caption || "").trim();
+  session.lastMedia = null;
+
   const ts = new Date().toISOString();
   const phn = sessionId;
 
-  session.lastMedia = null; // clear after use
+  // Detect category from caption text
+  const detect = detectIntent(caption.toLowerCase());
+  let category = detect.prob >= 0.55 ? detect.key : "Unknown";
 
+  // valid groups
+  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+  const salesCats = ["SALES"];
+  const leadCats = ["Lead"];
+  if (!billingCats.includes(category) && !salesCats.includes(category) && !leadCats.includes(category)) {
+    category = "Unknown";
+  }
+
+  // Generate correct Image Billing ID
+  const id = await getNextBillingId(category, sheets);
+  const messageValue = caption ? `${caption} | ${imageUrl}` : imageUrl;
+
+  // Always log image in LOGS
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
-
-  const id = `IMG${Date.now()}`;
-
-  const msg = caption ? `${caption} | ${imageUrl}` : imageUrl;
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: `${logsSheet}!A:Z`,
     valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, msg, ts]] }
+    requestBody: { values: [[id, phn, messageValue, ts]] }
   });
 
+  // Also log category-specific
+  if (billingCats.includes(category)) {
+    const dataSheet = `${phn}Billing_Data`;
+    await ensureSheet(sheets, dataSheet, billingCats);
+
+    const colIndex = billingCats.indexOf(category) + 1;
+    const colLetter = String.fromCharCode(64 + colIndex);
+    const rowNumber = parseInt(id.slice(-6), 10) + 1;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${dataSheet}!${colLetter}${rowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[`${id},${messageValue},${ts}`]] }
+    });
+  }
+
+  if (salesCats.includes(category)) {
+    const sheet = `${phn}Sales_Data`;
+    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${sheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[phn, messageValue, ts]] }
+    });
+  }
+
+  if (leadCats.includes(category)) {
+    const sheet = `${phn}Lead_Data`;
+    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${sheet}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[phn, messageValue, ts]] }
+    });
+  }
+
   return `🖼️ Image logged successfully!
-🔗 URL saved
-📌 ID: ${id}`;
+📌 Category: ${category.toUpperCase()}
+📄 ID: ${id}`;
 }
+
 
 
   // 🔹 GREETING CHECK
