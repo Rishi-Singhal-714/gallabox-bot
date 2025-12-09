@@ -212,35 +212,35 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
   const sheets = await getSheets();
 
 /* ----------------------------------
-   🔥 PROCESS IMAGE IF AVAILABLE (URL ONLY)
+   🔥 PROCESS IMAGE IF AVAILABLE (URL FROM SESSION)
 ---------------------------------- */
-if (webhookData.whatsapp?.image?.path) {
-  const imageUrl = webhookData.whatsapp.image.path;
-  const caption = webhookData.whatsapp.image.caption || "";
+if (session.lastMedia && session.lastMedia.type === "imageUrl") {
+  const imageUrl = session.lastMedia.data || "";
+  const caption = session.lastMedia.caption || "";
   const ts = new Date().toISOString();
   const phn = sessionId;
 
-  session.lastMedia = null; // Clear old base64 logic
+  session.lastMedia = null; // clear after use
 
   const logsSheet = `${phn}Billing_Logs`;
   await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
 
   const id = `IMG${Date.now()}`;
 
-  // Store Image URL + Caption as message
-  const messageData = `${caption} | ${imageUrl}`;
+  const msg = caption ? `${caption} | ${imageUrl}` : imageUrl;
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: `${logsSheet}!A:Z`,
     valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, messageData, ts]] }
+    requestBody: { values: [[id, phn, msg, ts]] }
   });
 
   return `🖼️ Image logged successfully!
-🔗 Saved: URL
+🔗 URL saved
 📌 ID: ${id}`;
 }
+
 
   // 🔹 GREETING CHECK
   if (isEmpGreeting(userMessage)) {
