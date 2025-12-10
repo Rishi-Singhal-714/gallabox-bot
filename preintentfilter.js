@@ -157,7 +157,17 @@ async function getNextBillingId(category, sheets) {
   const num = String(counters[colIndex]).padStart(6, "0");
   return `${prefix}${todayStr}${num}`;
 }
+// Get next empty row for a given column in a sheet
+async function getNextEmptyRowInColumn(sheets, spreadsheetId, sheetName, colLetter) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!${colLetter}:${colLetter}`
+  }).catch(() => ({ data: {} }));
 
+  const rows = res.data?.values || [];
+  // rows[0] is header, so next empty row index is rows.length + 1
+  return rows.length + 1;
+}
 /* ============================================================
    MAIN: EMPLOYEE MESSAGE FILTER
 ============================================================ */
@@ -209,16 +219,24 @@ if (session.lastMedia && session.lastMedia.type === "imageUrl") {
     const dataSheet = `${phn}Billing_Data`;
     await ensureSheet(sheets, dataSheet, billingCats);
 
-    const colIndex = billingCats.indexOf(category) + 1;
-    const colLetter = String.fromCharCode(64 + colIndex);
-    const rowNumber = parseInt(id.slice(-6), 10) + 1;
+const colIndex = billingCats.indexOf(category) + 1;
+const colLetter = String.fromCharCode(64 + colIndex);
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${dataSheet}!${colLetter}${rowNumber}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[`${id},${messageValue},${ts}`]] }
-    });
+// find next empty row in this category column
+const rowNumber = await getNextEmptyRowInColumn(
+  sheets,
+  process.env.GOOGLE_SHEET_ID,
+  dataSheet,
+  colLetter
+);
+
+await sheets.spreadsheets.values.update({
+  spreadsheetId: process.env.GOOGLE_SHEET_ID,
+  range: `${dataSheet}!${colLetter}${rowNumber}`,
+  valueInputOption: "RAW",
+  requestBody: { values: [[`${id},${messageValue},${ts}`]] }
+});
+
   }
 
   if (salesCats.includes(category)) {
@@ -295,14 +313,21 @@ if (session.lastMedia && session.lastMedia.type === "imageUrl") {
 
     const colIndex = billingCats.indexOf(category) + 1;
     const colLetter = String.fromCharCode(64 + colIndex);
-    const rowNumber = parseInt(id.slice(-6), 10) + 1;
+    // find next empty row in this category column
+    const rowNumber = await getNextEmptyRowInColumn(
+      sheets,
+      process.env.GOOGLE_SHEET_ID,
+      dataSheet,
+      colLetter
+);
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${dataSheet}!${colLetter}${rowNumber}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
-    });
+await sheets.spreadsheets.values.update({
+  spreadsheetId: process.env.GOOGLE_SHEET_ID,
+  range: `${dataSheet}!${colLetter}${rowNumber}`,
+  valueInputOption: "RAW",
+  requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
+});
+
 
     return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
   }
