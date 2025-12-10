@@ -37,10 +37,10 @@ let sellersData = []; // sellers CSV data
 // -------------------------
 // Google Sheets config (ADDED)
 // -------------------------
-// Name of the sheet/tab to store agent tickets — default to the tab you added (Sheet2)
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'Sheet1';
+// Name of the sheet/tab to store agent tickets — default to the tab you added (Tickets_History)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || 'History';
 // Override in production with env var AGENT_TICKETS_SHEET
-const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Sheet2';
+const AGENT_TICKETS_SHEET = process.env.AGENT_TICKETS_SHEET || 'Tickets_History';
 // Billing sheet/tab where employee billing issues must be stored
 const BILLING_SHEET_NAME = process.env.BILLING_SHEET_NAME || "Sheet3";
 const SA_JSON_B64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || '';
