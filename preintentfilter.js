@@ -183,7 +183,7 @@ module.exports = async function preIntentFilter(
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `Sales_Data!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, msg, ts]] }
+        requestBody: { values: [[id,phn, msg, ts]] }
       });
     }
 
@@ -193,10 +193,11 @@ module.exports = async function preIntentFilter(
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `Lead_Data!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, msg, ts]] }
+        requestBody: { values: [[id,phn, msg, ts]] }
       });
     }
 
+    
     return `🖼️ Image logged (ID: ${id})`;
   }
 
