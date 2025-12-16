@@ -233,7 +233,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${dataSheet}!${colLetter}${rowNumber}`,
         valueInputOption: "RAW",
-        requestBody: { values: [[`${id},${phn},${messageValue},${ts}`]] }
+        requestBody: { values: [[`${id},${messageValue}`]] }
       });
     }
 
@@ -322,7 +322,7 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${dataSheet}!${colLetter}${rowNumber}`,
       valueInputOption: "RAW",
-      requestBody: { values: [[`${id},${phn},${cleanMsg},${ts}`]] }
+      requestBody: { values: [[`${id},${cleanMsg}`]] }
     });
 
     return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
