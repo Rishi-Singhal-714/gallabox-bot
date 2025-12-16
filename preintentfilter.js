@@ -1,8 +1,20 @@
 const { OpenAI } = require("openai");
 const { google } = require("googleapis");
-const { Readable } = require("stream");
 
-/* -------------------- FUZZY MATCH HELPER -------------------- */
+/* ============================================================
+   CONSTANT SHEET NAMES (COMMON FOR ALL USERS)
+============================================================ */
+const SHEETS = {
+  BILLING_LOGS: "Billing_Logs",
+  BILLING_DATA: "Billing_Data",
+  SALES_DATA: "Sales_Data",
+  LEAD_DATA: "Lead_Data",
+  COUNTER: "Billing_Counter"
+};
+
+/* ============================================================
+   FUZZY MATCH HELPER
+============================================================ */
 function matchProbability(str, keyword) {
   if (!str || !keyword) return 0;
   str = str.toLowerCase();
@@ -24,11 +36,12 @@ function matchProbability(str, keyword) {
   }
 
   const dist = m[keyword.length][str.length];
-  const prob = 1 - dist / Math.max(keyword.length, str.length);
-  return Math.max(0, Math.min(prob, 1));
+  return Math.max(0, Math.min(1 - dist / Math.max(keyword.length, str.length), 1));
 }
 
-/* -------------------- MAIN BILLING CATEGORIES -------------------- */
+/* ============================================================
+   BILLING CATEGORIES
+============================================================ */
 const BILLING_MAIN = {
   operation: ["operation", "ops", "opration"],
   logistics: ["logistics", "logistic", "logi"],
@@ -50,7 +63,9 @@ const CODE_MAP = {
   Unknown: "UNK"
 };
 
-/* -------------------- DETECT INTENT -------------------- */
+/* ============================================================
+   INTENT DETECTION
+============================================================ */
 function detectIntent(text) {
   let best = { key: null, prob: 0 };
   for (const key in BILLING_MAIN) {
@@ -62,312 +77,202 @@ function detectIntent(text) {
   return best;
 }
 
-/* -------------------- EMPLOYEE GREETING CHECK -------------------- */
+/* ============================================================
+   GREETING CHECK
+============================================================ */
 function isEmpGreeting(text) {
   if (!text) return false;
   text = text.toLowerCase().trim();
-
-  const greetWords = [
-    "hi",
-    "hello",
-    "hey",
-    "gm",
-    "good morning",
-    "good evening",
-    "good night",
-    "gn",
-    "good afternoon"
-  ];
-
-  return greetWords.some(g =>
-    text === g || text.startsWith(g + " ")
-  );
+  return [
+    "hi","hello","hey","gm","good morning",
+    "good evening","good night","gn","good afternoon"
+  ].some(g => text === g || text.startsWith(g + " "));
 }
 
-/* -------------------- ENSURE SHEET EXISTS -------------------- */
+/* ============================================================
+   ENSURE SHEET EXISTS
+============================================================ */
 async function ensureSheet(sheets, sheetName, headers) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const found = meta.data.sheets.find(s => s.properties.title === sheetName);
-  if (found) return found.properties.sheetId;
+  if (found) return;
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
-    requestBody: {
-      requests: [{ addSheet: { properties: { title: sheetName } } }]
-    }
+    requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] }
   });
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${sheetName}!A1:${String.fromCharCode(65 + headers.length - 1)}1`,
+    range: `${sheetName}!A1`,
     valueInputOption: "RAW",
     requestBody: { values: [headers] }
   });
-
-  return true;
 }
 
-/* -------------------- DAILY ID COUNTER -------------------- */
+/* ============================================================
+   DAILY BILLING ID GENERATOR
+============================================================ */
 async function getNextBillingId(category, sheets) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-  const counterSheet = "Billing_Counter";
-  const headers = ["date", "OPS", "LOG", "INV", "MKT", "FIX", "SAL", "LED", "UNK"];
+  const headers = ["date","OPS","LOG","INV","MKT","FIX","SAL","LED","UNK"];
 
-  await ensureSheet(sheets, counterSheet, headers);
+  await ensureSheet(sheets, SHEETS.COUNTER, headers);
 
-  // Load all rows from counter sheet
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${counterSheet}!A2:I`
+    range: `${SHEETS.COUNTER}!A2:I`
   }).catch(() => ({ data: {} }));
 
   const rows = res.data?.values || [];
 
   const now = new Date();
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yy = String(now.getFullYear()).slice(-2);
-  const todayStr = `${dd}${mm}${yy}`;
+  const today =
+    String(now.getDate()).padStart(2, "0") +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getFullYear()).slice(-2);
 
   let counters = Array(headers.length - 1).fill(0);
 
-  if (rows.length > 0 && rows[0][0] === todayStr) {
-    // Same day → continue increment
-    counters = rows[0].slice(1).map(n => parseInt(n || "0", 10));
+  if (rows.length && rows[0][0] === today) {
+    counters = rows[0].slice(1).map(v => parseInt(v || "0", 10));
   } else {
-    // New day → Insert a NEW row at Row2 (push history down)
-    rows.unshift([todayStr, ...counters.map(() => "0")]);
+    rows.unshift([today, ...counters]);
   }
 
-  const prefix = CODE_MAP[category];
-  const colIndex = headers.indexOf(prefix) - 1; 
+  const prefix = CODE_MAP[category] || "UNK";
+  const colIndex = headers.indexOf(prefix) - 1;
   counters[colIndex]++;
+  rows[0] = [today, ...counters];
 
-  rows[0] = [todayStr, ...counters];
-
-  // Write full sheet back (with history)
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${counterSheet}!A2:I`,
+    range: `${SHEETS.COUNTER}!A2:I`,
     valueInputOption: "RAW",
     requestBody: { values: rows }
   });
 
-  const num = String(counters[colIndex]).padStart(6, "0");
-  return `${prefix}${todayStr}${num}`;
+  return `${prefix}${today}${String(counters[colIndex]).padStart(6, "0")}`;
 }
-// Get next empty row for a given column in a sheet
-async function getNextEmptyRowInColumn(sheets, spreadsheetId, sheetName, colLetter) {
+
+/* ============================================================
+   NEXT EMPTY ROW (COLUMN)
+============================================================ */
+async function getNextEmptyRowInColumn(sheets, spreadsheetId, sheet, col) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!${colLetter}:${colLetter}`
+    range: `${sheet}!${col}:${col}`
   }).catch(() => ({ data: {} }));
-
-  const rows = res.data?.values || [];
-  // rows[0] is header, so next empty row index is rows.length + 1
-  return rows.length + 1;
+  return (res.data?.values?.length || 0) + 1;
 }
+
 /* ============================================================
-   MAIN: EMPLOYEE MESSAGE FILTER
+   MAIN FILTER
 ============================================================ */
-module.exports = async function preIntentFilter(openai, session, sessionId, userMessage, getSheets) {
-  const ts = new Date().toISOString();
-  const phn = sessionId;
+module.exports = async function preIntentFilter(
+  openai, session, sessionId, userMessage, getSheets
+) {
   const sheets = await getSheets();
-
-/* ----------------------------------
-   📸 PROCESS IMAGE FROM WHATSAPP
----------------------------------- */
-if (session.lastMedia && session.lastMedia.type === "imageUrl") {
-  const imageUrl = session.lastMedia.data || "";
-  const caption = (session.lastMedia.caption || "").trim();
-  session.lastMedia = null;
-
   const ts = new Date().toISOString();
   const phn = sessionId;
 
-  // Detect category from caption text
-  const detect = detectIntent(caption.toLowerCase());
-  let category = detect.prob >= 0.55 ? detect.key : "Unknown";
-
-  // valid groups
-  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
-  const salesCats = ["SALES"];
-  const leadCats = ["Lead"];
-  if (!billingCats.includes(category) && !salesCats.includes(category) && !leadCats.includes(category)) {
-    category = "Unknown";
-  }
-
-  // Generate correct Image Billing ID
-  const id = await getNextBillingId(category, sheets);
-  const messageValue = caption ? `${caption} | ${imageUrl}` : imageUrl;
-
-  // Always log image in LOGS
-  const logsSheet = `${phn}Billing_Logs`;
-  await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${logsSheet}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, messageValue, ts]] }
-  });
-
-  // Also log category-specific
-  if (billingCats.includes(category)) {
-    const dataSheet = `${phn}Billing_Data`;
-    await ensureSheet(sheets, dataSheet, billingCats);
-
-const colIndex = billingCats.indexOf(category) + 1;
-const colLetter = String.fromCharCode(64 + colIndex);
-
-// find next empty row in this category column
-const rowNumber = await getNextEmptyRowInColumn(
-  sheets,
-  process.env.GOOGLE_SHEET_ID,
-  dataSheet,
-  colLetter
-);
-
-await sheets.spreadsheets.values.update({
-  spreadsheetId: process.env.GOOGLE_SHEET_ID,
-  range: `${dataSheet}!${colLetter}${rowNumber}`,
-  valueInputOption: "RAW",
-  requestBody: { values: [[`${id},${messageValue},${ts}`]] }
-});
-
-  }
-
-  if (salesCats.includes(category)) {
-    const sheet = `${phn}Sales_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, messageValue, ts]] }
-    });
-  }
-
-  if (leadCats.includes(category)) {
-    const sheet = `${phn}Lead_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[phn, messageValue, ts]] }
-    });
-  }
-
-  return `🖼️ Image logged successfully!
-📌 Category: ${category.toUpperCase()}
-📄 ID: ${id}`;
-}
-
-
-
-  // 🔹 GREETING CHECK
   if (isEmpGreeting(userMessage)) {
-    return `Hello boss! What would you like to do?`;
+    return "Hello boss! What would you like to do?";
   }
 
   const detect = detectIntent(userMessage.toLowerCase());
   let category = detect.prob >= 0.55 ? detect.key : "Unknown";
 
-  const billingCats = ["operation", "logistics", "inventory", "market", "fixed"];
+  const billingCats = ["operation","logistics","inventory","market","fixed"];
   const salesCats = ["SALES"];
   const leadCats = ["Lead"];
 
-  if (!billingCats.includes(category) && !salesCats.includes(category) && !leadCats.includes(category)) {
+  if (![...billingCats, ...salesCats, ...leadCats].includes(category)) {
     category = "Unknown";
   }
 
   const id = await getNextBillingId(category, sheets);
 
-  /* CLEAN MESSAGE */
-  let cleanMsg = userMessage.trim();
-  const allKeywords = Object.values(BILLING_MAIN).flat();
-  for (const kw of allKeywords) {
-    const regex = new RegExp(`^${kw}\\b[\\s:,-]*`, "i");
-    cleanMsg = cleanMsg.replace(regex, "").trim();
-  }
-  if (!cleanMsg) cleanMsg = userMessage.trim();
-
-  /* ALWAYS LOG MESSAGE */
-  const logsSheet = `${phn}Billing_Logs`;
-  await ensureSheet(sheets, logsSheet, ["id", "phn_no", "message", "time"]);
+  /* ---------------- LOGS ---------------- */
+  await ensureSheet(
+    sheets,
+    SHEETS.BILLING_LOGS,
+    ["id","phn_no","message","time"]
+  );
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${logsSheet}!A:Z`,
+    range: `${SHEETS.BILLING_LOGS}!A:Z`,
     valueInputOption: "RAW",
-    requestBody: { values: [[id, phn, cleanMsg, ts]] }
+    requestBody: { values: [[id, phn, userMessage, ts]] }
   });
 
-  /* SAME BEHAVIOR FOR CATEGORY BUSINESS LOGIC */
+  /* ---------------- BILLING DATA ---------------- */
   if (billingCats.includes(category)) {
-    const dataSheet = `${phn}Billing_Data`;
-    await ensureSheet(sheets, dataSheet, billingCats);
+    await ensureSheet(
+      sheets,
+      SHEETS.BILLING_DATA,
+      ["phn_no", ...billingCats]
+    );
 
-    const colIndex = billingCats.indexOf(category) + 1;
+    const colIndex = billingCats.indexOf(category) + 2;
     const colLetter = String.fromCharCode(64 + colIndex);
-    // find next empty row in this category column
-    const rowNumber = await getNextEmptyRowInColumn(
+
+    const row = await getNextEmptyRowInColumn(
       sheets,
       process.env.GOOGLE_SHEET_ID,
-      dataSheet,
+      SHEETS.BILLING_DATA,
       colLetter
-);
+    );
 
-await sheets.spreadsheets.values.update({
-  spreadsheetId: process.env.GOOGLE_SHEET_ID,
-  range: `${dataSheet}!${colLetter}${rowNumber}`,
-  valueInputOption: "RAW",
-  requestBody: { values: [[`${id},${cleanMsg},${ts}`]] }
-});
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: `${SHEETS.BILLING_DATA}!A${row}:${colLetter}${row}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[phn, `${id},${userMessage},${ts}`]]
+      }
+    });
 
-
-    return `📌 Logged under **${category.toUpperCase()}** (ID: ${id}).`;
+    return `📌 Logged under ${category.toUpperCase()} (ID: ${id})`;
   }
 
+  /* ---------------- SALES ---------------- */
   if (salesCats.includes(category)) {
-    const sheet = `${phn}Sales_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await ensureSheet(
+      sheets,
+      SHEETS.SALES_DATA,
+      ["id","phn_no","message","time"]
+    );
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
+      range: `${SHEETS.SALES_DATA}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
+      requestBody: { values: [[id, phn, userMessage, ts]] }
     });
 
-    return `📌 Saved under **SALES** (ID: ${id}).`;
+    return `📈 Sales saved (ID: ${id})`;
   }
 
+  /* ---------------- LEADS ---------------- */
   if (leadCats.includes(category)) {
-    const sheet = `${phn}Lead_Data`;
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time"]);
+    await ensureSheet(
+      sheets,
+      SHEETS.LEAD_DATA,
+      ["id","phn_no","message","time"]
+    );
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${sheet}!A:Z`,
+      range: `${SHEETS.LEAD_DATA}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts]] }
+      requestBody: { values: [[id, phn, userMessage, ts]] }
     });
 
-    return `🎯 Lead captured (ID: ${id}).`;
+    return `🎯 Lead captured (ID: ${id})`;
   }
 
-  return `⚠️ Category not recognized boss!
-📝 Logged as Unknown (ID: ${id})
-
-Please send like any of these formats 👇:
-
-Operation – message  
-Logistics – message  
-Inventory – message  
-Market – message  
-Fixed – message  
-Sales – message  
-Lead – message`;
+  return `⚠️ Category not recognized (ID: ${id})`;
 };
