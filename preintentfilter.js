@@ -176,26 +176,29 @@ module.exports = async function preIntentFilter(
         requestBody: { values: [[`${id},${msg},${ts}`]] }
       });
     }
+/* -------- SALES (TEXT) -------- */
+if (category === "SALES") {
+  await ensureSheet(sheets, "Sales_Data", ["id","phn_no","message","time"]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `Sales_Data!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[id, phn, cleanMsg, ts]] }
+  });
+  return `📌 Saved under SALES (ID: ${id})`;
+}
 
-    if (category === "SALES") {
-      await ensureSheet(sheets, "Sales_Data", ["id","phn_no","message","time"]);
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: `Sales_Data!A:Z`,
-        valueInputOption: "RAW",
-        requestBody: { values: [[id,phn, msg, ts]] }
-      });
-    }
-
-    if (category === "Lead") {
-      await ensureSheet(sheets, "Lead_Data", ["id","phn_no","message","time"]);
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: `Lead_Data!A:Z`,
-        valueInputOption: "RAW",
-        requestBody: { values: [[id,phn, msg, ts]] }
-      });
-    }
+/* -------- LEAD (TEXT) -------- */
+if (category === "Lead") {
+  await ensureSheet(sheets, "Lead_Data", ["id","phn_no","message","time"]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `Lead_Data!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[id, phn, cleanMsg, ts]] }
+  });
+  return `🎯 Lead captured (ID: ${id})`;
+}
 
     
     return `🖼️ Image logged (ID: ${id})`;
