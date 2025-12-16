@@ -239,23 +239,23 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
     if (salesCats.includes(category)) {
       const sheet = "Sales_Data";
-      await ensureSheet(sheets, sheet, ["phn_no", "message", "time", "id"]);
+      await ensureSheet(sheets, sheet, ["id", "phn_no", "message", "time"]);
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, messageValue, ts, id]] }
+        requestBody: { values: [[id, phn, messageValue, ts]] }
       });
     }
 
     if (leadCats.includes(category)) {
       const sheet = "Lead_Data";
-      await ensureSheet(sheets, sheet, ["phn_no", "message", "time", "id"]);
+      await ensureSheet(sheets, sheet, ["id", "phn_no", "message", "time"]);
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.GOOGLE_SHEET_ID,
         range: `${sheet}!A:Z`,
         valueInputOption: "RAW",
-        requestBody: { values: [[phn, messageValue, ts, id]] }
+        requestBody: { values: [[id, phn, messageValue, ts]] }
       });
     }
 
@@ -330,12 +330,12 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
   if (salesCats.includes(category)) {
     const sheet = "Sales_Data";
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time", "id"]);
+    await ensureSheet(sheets, sheet, [ "id", "phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${sheet}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts, id]] }
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
 
     return `📌 Saved under **SALES** (ID: ${id}).`;
@@ -343,12 +343,12 @@ module.exports = async function preIntentFilter(openai, session, sessionId, user
 
   if (leadCats.includes(category)) {
     const sheet = "Lead_Data";
-    await ensureSheet(sheets, sheet, ["phn_no", "message", "time", "id"]);
+    await ensureSheet(sheets, sheet, ["id", "phn_no", "message", "time"]);
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${sheet}!A:Z`,
       valueInputOption: "RAW",
-      requestBody: { values: [[phn, cleanMsg, ts, id]] }
+      requestBody: { values: [[id, phn, cleanMsg, ts]] }
     });
 
     return `🎯 Lead captured (ID: ${id}).`;
