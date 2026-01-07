@@ -7,11 +7,6 @@ const preIntentFilter = require('./preintentfilter');
 const { google } = require('googleapis'); 
 const app = express();
 const VOICE_AI_FORM_LINK = 'https://forms.gle/CiPAk6RqWxkd8uSKA';
-// Add this after EMPLOYEE_NUMBERS array (line 12-13 के बाद)
-const BLOCKED_NUMBERS = [
-  "919289909467"  // यहाँ और नंबर manually add कर सकते हैं
-];
-
 const EMPLOYEE_NUMBERS = [
   "918368127760",
   "919717350080",
@@ -320,11 +315,6 @@ async function sendMessage(to, name, message) {
     });
     throw error;
   }
-}// Add this function after BLOCKED_NUMBERS array
-function isNumberBlocked(phoneNumber) {
-  if (!phoneNumber) return false;
-  const cleanNumber = phoneNumber.replace(/\D/g, '');
-  return BLOCKED_NUMBERS.includes(cleanNumber);
 }
 /* -------------------------
    Agent ticket helpers
@@ -1508,16 +1498,7 @@ app.post('/webhook', async (req, res) => {
     let userMessage = webhookData.whatsapp?.text?.body?.trim() || "";
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || "Customer";
- // ✅ ADD THIS BLOCK CHECK HERE
-    if (userPhone && isNumberBlocked(userPhone)) {
-      console.log(`🚫 Blocked request from ${userPhone} (${userName})`);
-      return res.status(200).json({
-        status: 'blocked',
-        message: 'Number is blocked',
-        processed: false
-      });
-    }
-    // ✅ END OF BLOCK CHECK
+
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
 
     if (!userPhone) {
