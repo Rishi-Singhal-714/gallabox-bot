@@ -28,6 +28,10 @@ const gallaboxConfig = {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || ''
 });
+// Add this constant near the other number arrays
+const BLOCKED_NUMBERS = [
+  "919289909467"  // Add more numbers here as needed
+];
 // -------------------------
 // PERSISTED DATA: conversations, csvs
 // -------------------------
@@ -173,6 +177,12 @@ zulu.club + Zulu Club apps (Android + iOS).
 /* -------------------------
    CSV loaders: galleries + sellers
 --------------------------*/
+// Add this function to check if a number should be blocked
+function isNumberBlocked(phoneNumber) {
+  // Remove any non-digit characters and ensure proper format
+  const cleanNumber = phoneNumber.replace(/\D/g, '');
+  return BLOCKED_NUMBERS.includes(cleanNumber);
+}
 async function loadGalleriesData() {
   try {
     console.log('📥 Loading galleries CSV data...');
@@ -1490,6 +1500,7 @@ async function handleMessage(sessionId, userMessage) {
 /* -------------------------
    Webhook + endpoints
 --------------------------*/
+// Update the webhook handler to block numbers early
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Received webhook:', JSON.stringify(req.body, null, 2));
@@ -1498,6 +1509,17 @@ app.post('/webhook', async (req, res) => {
     let userMessage = webhookData.whatsapp?.text?.body?.trim() || "";
     const userPhone = webhookData.whatsapp?.from;
     const userName = webhookData.contact?.name || "Customer";
+
+    // BLOCK CHECK - Add this early in the webhook
+    if (userPhone && isNumberBlocked(userPhone)) {
+      console.log(`🚫 Blocked request from ${userPhone} (${userName})`);
+      // Still return 200 to prevent Gallabox from retrying
+      return res.status(200).json({
+        status: 'blocked',
+        message: 'Number is blocked',
+        processed: false
+      });
+    }
 
     console.log(`💬 Received message from ${userPhone} (${userName}): ${userMessage}`);
 
@@ -1513,19 +1535,19 @@ app.post('/webhook', async (req, res) => {
     createOrTouchSession(sessionId);
 
     // 🔹 IMAGE CHECK (prefer caption for category detection)
-if (webhookData.whatsapp?.image?.path) {
-  const imageUrl = webhookData.whatsapp.image.path;
-  const caption = webhookData.whatsapp.image.caption || "";
+    if (webhookData.whatsapp?.image?.path) {
+      const imageUrl = webhookData.whatsapp.image.path;
+      const caption = webhookData.whatsapp.image.caption || "";
 
-  conversations[sessionId].lastMedia = {
-    type: "imageUrl",
-    data: imageUrl,
-    caption
-  };
+      conversations[sessionId].lastMedia = {
+        type: "imageUrl",
+        data: imageUrl,
+        caption
+      };
 
-  userMessage = caption || "[IMAGE]";
-  console.log("📌 Image URL stored in session.lastMedia");
-}
+      userMessage = caption || "[IMAGE]";
+      console.log("📌 Image URL stored in session.lastMedia");
+    }
 
     console.log(`➡️ Handling message for session ${sessionId}`);
     const aiResponse = await handleMessage(sessionId, userMessage);
@@ -1548,6 +1570,95 @@ if (webhookData.whatsapp?.image?.path) {
     });
   }
 });
+// Also add a block check in the handleMessage function
+async function handleMessage(sessionId, userMessage) {
+  try {
+    // Add block check here too for extra security
+    if (isNumberBlocked(sessionId)) {
+      console.log(`🚫 Blocked session ${sessionId} from processing`);
+      return "Your number has been blocked from using this service.";
+    }
+    
+    // 1) Save incoming user message to session
+    appendToSessionHistory(sessionId, 'user', userMessage);
+    // ... rest of the function remains the same
+});
+
+// Optionally, add an endpoint to manage blocked numbers (for admin use)
+app.post('/admin/block-number', (req, res) => {
+  // Simple authentication check - you might want to add proper auth
+  const { authKey, phoneNumber } = req.body;
+  
+  if (authKey !== process.env.ADMIN_AUTH_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'Phone number required' });
+  }
+  
+  // Clean the phone number
+  const cleanNumber = phoneNumber.replace(/\D/g, '');
+  
+  if (!BLOCKED_NUMBERS.includes(cleanNumber)) {
+    BLOCKED_NUMBERS.push(cleanNumber);
+    console.log(`✅ Added ${cleanNumber} to blocked list`);
+    return res.json({ 
+      success: true, 
+      message: `Number ${cleanNumber} blocked successfully`,
+      blockedNumbers: BLOCKED_NUMBERS 
+    });
+  } else {
+    return res.json({ 
+      success: false, 
+      message: `Number ${cleanNumber} is already blocked` 
+    });
+  }
+});
+
+app.post('/admin/unblock-number', (req, res) => {
+  const { authKey, phoneNumber } = req.body;
+  
+  if (authKey !== process.env.ADMIN_AUTH_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'Phone number required' });
+  }
+  
+  const cleanNumber = phoneNumber.replace(/\D/g, '');
+  const index = BLOCKED_NUMBERS.indexOf(cleanNumber);
+  
+  if (index > -1) {
+    BLOCKED_NUMBERS.splice(index, 1);
+    console.log(`✅ Removed ${cleanNumber} from blocked list`);
+    return res.json({ 
+      success: true, 
+      message: `Number ${cleanNumber} unblocked successfully`,
+      blockedNumbers: BLOCKED_NUMBERS 
+    });
+  } else {
+    return res.json({ 
+      success: false, 
+      message: `Number ${cleanNumber} was not in blocked list` 
+    });
+  }
+});
+
+app.get('/admin/blocked-numbers', (req, res) => {
+  const { authKey } = req.query;
+  
+  if (authKey !== process.env.ADMIN_AUTH_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  return res.json({ 
+    blockedNumbers: BLOCKED_NUMBERS,
+    count: BLOCKED_NUMBERS.length
+  });
+});
+
 // ===============================
 // Zulu Club - TOUR STATUS ALERTS
 // ===============================
